@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="metadata.chronicle.python"
+       name="Chronicle Scraper"
+       version="1.0.0"
+       provider-name="Michael Beck">
+
+  <requires>
+    <!-- xbmc.metadata is the real dependency Kodi's own bundled scraper addons
+         declare for the xbmc.metadata.scraper.* extension point (confirmed
+         against Team Kodi's metadata.themoviedb.org.python addon.xml), not
+         xbmc.gui, which turned out not to be a real resolvable addon at all
+         when Chronicle_Scrobbler's install failed on it earlier. -->
+    <import addon="xbmc.metadata" version="2.1.0"/>
+    <import addon="xbmc.python"   version="3.0.0"/>
+  </requires>
+
+  <!-- The actual scraper: invoked directly by Kodi's library scanner via the
+       find/getdetails contract, never run interactively by the user. -->
+  <extension point="xbmc.metadata.scraper.movies"
+             library="python/scraper.py"/>
+
+  <!-- Companion script: connecting the addon to a Chronicle account (QR/PIN,
+       same flow as Chronicle_Scrobbler) and Settings. Kodi's own scraper
+       config screen also opens Settings directly via the gear icon, but this
+       script entry is what makes "Connect to Chronicle" reachable at all,
+       and what the addon browser runs when opened like any other addon. -->
+  <extension point="xbmc.python.script" library="default.py"/>
+
+  <extension point="xbmc.addon.metadata">
+    <platform>all</platform>
+    <license>MIT</license>
+    <source>https://github.com/thegoddamnbeckster/Chronicle_Scraper</source>
+    <assets>
+      <icon>icon.png</icon>
+    </assets>
+    <summary lang="en_GB">Chronicle Scraper</summary>
+    <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans.</description>
+    <news>v1.0.0 - Initial release: movie search/details backed by Chronicle's new /api/v1/scraper/movies endpoints. Connect to Chronicle via the same QR/PIN device-auth flow as Chronicle_Scrobbler.</news>
+  </extension>
+
+</addon>

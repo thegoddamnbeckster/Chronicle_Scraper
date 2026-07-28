@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<settings>
+
+    <!-- ============================================================================ -->
+    <!-- Connection -->
+    <!-- ============================================================================ -->
+    <category label="32001">
+        <!-- No default here on purpose — Chronicle's address is unique per
+             install (LAN IP, hostname, or domain, plus port); a plausible-
+             looking default risks silently pointing at the wrong thing. -->
+        <setting id="chronicle_url" type="text" label="32002" default=""/>
+        <setting id="authorization" type="action" label="32061" action="RunScript(metadata.chronicle.python,action=auth)"/>
+        <setting id="auth_status" type="text" label="32080" enable="false" default=""/>
+        <!-- Set automatically by the QR/PIN flow above — not meant to be typed by hand -->
+        <setting id="api_key" type="text" label="32003" visible="false"/>
+    </category>
+
+</settings>
