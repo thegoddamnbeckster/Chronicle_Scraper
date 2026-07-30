@@ -15,4 +15,12 @@
         <setting id="api_key" type="text" label="32003" visible="false"/>
     </category>
 
+    <!-- ============================================================================ -->
+    <!-- Local Files -->
+    <!-- ============================================================================ -->
+    <category label="32090">
+        <setting id="write_nfo" type="bool" label="32091" default="true" help="32092"/>
+        <setting id="rebuild_nfos" type="action" label="32093" action="RunScript(metadata.chronicle.python,action=rebuild_nfos)" help="32094"/>
+    </category>
+
 </settings>

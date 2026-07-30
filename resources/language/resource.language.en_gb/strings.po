@@ -102,3 +102,37 @@ msgstr ""
 msgctxt "#32084"
 msgid "Expires in {0}"
 msgstr ""
+
+# ── Local Files ──────────────────────────────────────────────────────────────
+
+msgctxt "#32090"
+msgid "Local Files"
+msgstr ""
+
+msgctxt "#32091"
+msgid "Recreate local NFO file from Chronicle's data"
+msgstr ""
+
+msgctxt "#32092"
+msgid "Kodi always prefers a movie's own local NFO file over asking this scraper, even during an automatic library scan -- so a movie already tagged by another tool (e.g. tinyMediaManager) may never actually reach Chronicle at all. Enabling this rewrites that NFO from Chronicle's own data every time this scraper does run, so Kodi's local-file preference works for Chronicle instead of against it. Disable if you want another tool to keep sole ownership of NFO files."
+msgstr ""
+
+msgctxt "#32093"
+msgid "Rebuild local NFOs from Chronicle"
+msgstr ""
+
+msgctxt "#32094"
+msgid "This will permanently DELETE every local .nfo file and every movieset-poster/fanart/etc. file for every movie in your library, then ask Chronicle to rebuild them one by one. This cannot be undone -- any data only some other tool (e.g. tinyMediaManager) put in those files will be lost. It can take a long time for a large library. Continue?"
+msgstr ""
+
+msgctxt "#32095"
+msgid "Delete and rebuild"
+msgstr ""
+
+msgctxt "#32096"
+msgid "Cancel"
+msgstr ""
+
+msgctxt "#32097"
+msgid "Processed {0} movies. Deleted {1} NFO file(s) and {2} movieset file(s). {3} refresh error(s)."
+msgstr ""

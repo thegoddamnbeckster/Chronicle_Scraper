@@ -16,6 +16,7 @@ import xbmcaddon
 from lib.logger import Logger
 from lib.chronicle_client import ChronicleClient
 from lib.device_auth import DeviceAuthManager
+from lib import nfo_rebuild
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('default')
@@ -78,6 +79,9 @@ def show_menu():
     if args.get('action') == 'auth':
         _connect_to_chronicle()
         return
+    if args.get('action') == 'rebuild_nfos':
+        _rebuild_nfos()
+        return
 
     if not _is_configured():
         _refresh_auth_status()
@@ -94,6 +98,7 @@ def show_menu():
     options = [
         ADDON.getLocalizedString(32012),  # Test Connection
         ADDON.getLocalizedString(32061),  # Connect to Chronicle
+        ADDON.getLocalizedString(32093),  # Rebuild local NFOs from Chronicle
         ADDON.getLocalizedString(32013),  # Open Settings
     ]
 
@@ -105,6 +110,8 @@ def show_menu():
     elif choice == 1:
         _connect_to_chronicle()
     elif choice == 2:
+        _rebuild_nfos()
+    elif choice == 3:
         _refresh_auth_status()
         ADDON.openSettings()
         _warn_if_localhost()
@@ -131,6 +138,41 @@ def _test_connection():
 def _connect_to_chronicle():
     """Launch the QR device-auth flow to obtain an API key."""
     DeviceAuthManager().run()
+
+
+def _rebuild_nfos():
+    """Warns the user clearly, then -- only on explicit confirmation -- runs
+    nfo_rebuild.run(): permanently deletes every local .nfo and movieset-*
+    file the whole movie library has, and refreshes each movie so Chronicle
+    repopulates them. See nfo_rebuild.py's module docstring for why this has
+    to be a deliberate, explicit action rather than automatic."""
+    dialog = xbmcgui.Dialog()
+    confirmed = dialog.yesno(
+        ADDON.getLocalizedString(32000),      # "Chronicle Scraper"
+        ADDON.getLocalizedString(32094),      # warning text
+        nolabel=ADDON.getLocalizedString(32096),
+        yeslabel=ADDON.getLocalizedString(32095),
+    )
+    if not confirmed:
+        return
+
+    progress = xbmcgui.DialogProgress()
+    progress.create(ADDON.getLocalizedString(32093))  # "Rebuild local NFOs from Chronicle"
+
+    def on_progress(index, total, label):
+        percent = int(index * 100 / total) if total else 0
+        progress.update(percent, '{0}/{1}: {2}'.format(index + 1, total, label))
+
+    try:
+        processed, nfo_deleted, movieset_deleted, refresh_errors = nfo_rebuild.run(
+            progress_callback=on_progress, is_cancelled=progress.iscanceled)
+    finally:
+        progress.close()
+
+    dialog.ok(
+        ADDON.getLocalizedString(32093),
+        ADDON.getLocalizedString(32097).format(processed, nfo_deleted, movieset_deleted, refresh_errors),
+    )
 
 
 if __name__ == '__main__':
