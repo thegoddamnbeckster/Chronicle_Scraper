@@ -347,13 +347,27 @@ def _resolve_lookup_id(params):
         return parse_lookup_string(raw)
 
 
+def _parse_year(raw):
+    """Kodi's find querystring carries year as a plain string (get_params()
+    never converts any value); year_tolerant_match() does int arithmetic on
+    it, so a raw string reaching that far throws 'unsupported operand
+    type(s) for -: int and str' and aborts the whole filename pre-check for
+    every title, not just ones with a genuinely missing/malformed year."""
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def run():
     params = get_params(sys.argv[1:])
     enddir = True
 
     action = params.get('action')
     if action == 'find' and 'title' in params:
-        search_for_movie(params['title'], params.get('year'), params['handle'])
+        search_for_movie(params['title'], _parse_year(params.get('year')), params['handle'])
     elif action == 'getdetails' and 'url' in params:
         enddir = not get_details(parse_lookup_string(params['url']), params['handle'])
     elif action == 'getartwork':
