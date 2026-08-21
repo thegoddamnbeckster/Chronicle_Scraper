@@ -3,7 +3,7 @@
 A Kodi metadata scraper for movies and TV shows, backed by your self-hosted [Chronicle](https://github.com/thegoddamnbeckster/Chronicle)
 server.
 
-**Addon ID:** `script.chronicle.scraper`
+**Addon ID:** `script.chronicle.scraper` (renamed from `metadata.chronicle.python` in v2.12.0)
 **Extension points:** `xbmc.metadata.scraper.movies`, `xbmc.metadata.scraper.tvshows`
 **Kodi:** 20 "Nexus" and later (uses the modern `InfoTagVideo` Python API throughout)
 **Auth:** QR code device authentication (same flow as [Chronicle_Scrobbler](https://github.com/thegoddamnbeckster/Chronicle_Scrobbler))
@@ -49,7 +49,8 @@ one doesn't talk to TMDB, TVDB, or anything else directly at all — it only eve
   - **movie sets** — a movie's Chronicle collection becomes a real Kodi movie set,
     complete with set overview and set artwork
   - **TV seasons and episodes** — every season and episode Chronicle already has
-    under a show, with its own art, cast, and ratings
+    under a show, with its own art, cast, and ratings, including show title/year,
+    air date, and runtime on each episode
 
 The practical effect: Kodi always ends up showing exactly what Chronicle itself would
 show for a title. There's no separate "which TMDB result do you want" disambiguation
@@ -57,14 +58,48 @@ step in Kodi — Chronicle has already picked one answer via its own confidence-
 resolution.
 
 Every field above is only ever sent when Chronicle actually has real data for it —
-nothing is invented to look more complete than it is. Chronicle currently has **no**
-provider-backed data for writers, movie studios (as opposed to TV networks), or sort
-titles, so this addon simply doesn't set those, even though Kodi's API supports them.
+nothing is invented to look more complete than it is.
 
 Every movie or episode Kodi's library scanner successfully resolves through this
 scraper also becomes trackable in Chronicle automatically (mirroring how scrobbling
 already auto-creates media items on first watch) — scanning your library with this
 scraper selected is, at the same time, populating your Chronicle library.
+
+## NFO files: local file richness, not just what Kodi asks for
+
+Beyond answering Kodi's scraper API calls, this addon writes real NFO files next to
+your movies, shows, and episodes — so the metadata survives independently of Kodi's
+own database, and other tools that read NFOs (or a future Kodi library rebuild) see
+the same richness Chronicle has.
+
+- **Legacy NFO preservation.** If a file already had an NFO before Chronicle ever
+  touched it, anything in that old NFO that Chronicle doesn't itself provide (a
+  hand-written plot tweak, a rare field, local-only tags) is preserved and merged
+  back in rather than silently discarded on the first overwrite.
+- **Streamdetails** (video/audio/subtitle codec, resolution, channels, language) are
+  read live from Kodi via `VideoLibrary`/`Files` JSON-RPC and written into the NFO —
+  gated behind the **Write file metadata (streamdetails)** setting, off by default,
+  since re-probing every file's stream info on every scan is unnecessary on
+  read-only library clients.
+- **Local art enumeration** — any art files already sitting next to a movie/show
+  (posters, fanarts, extrafanart, etc.) are listed in the NFO's own `<art>` block
+  alongside whatever Chronicle supplies, so Kodi doesn't lose track of local-only
+  images on a rebuild.
+- All of the above applies equally to **TV shows and episodes**, not just movies.
+
+NFO writing itself is gated behind the **Write NFO files** setting, off by default —
+this addon works purely through Kodi's scraper API without it; NFOs are an optional,
+opt-in richness layer for households running the same library across multiple Kodi
+instances where only one instance should be doing the (slower) write-back work.
+
+## Background service: rebuild NFOs, watch progress in the corner
+
+A background service (`service.py`) adds a **Rebuild NFO Cache** action that deletes
+and regenerates NFOs for the whole library through Chronicle, with a corner progress
+toast (matching Kodi's own file-scan indicator) so you can see it's still working —
+each scraper action (`find`/`getdetails`/`getepisodedetails`/`getartwork`) is a
+separate short-lived Kodi process, so the service polls a small cross-process
+heartbeat file to know something is happening.
 
 ## Setup
 
@@ -82,6 +117,8 @@ scraper selected is, at the same time, populating your Chronicle library.
 |---|---|---|
 | Chronicle URL | _(empty)_ | Required — your server's host/IP (and port, if not behind a reverse proxy) |
 | API Key | _(empty, hidden)_ | Set automatically by the QR device-auth flow |
+| Write NFO files | Off | Writes/refreshes local NFOs alongside the scraper API responses |
+| Write file metadata (streamdetails) | Off | Only shown when NFO writing is on; probes and writes stream/codec info per file |
 
 ## Repository Structure
 
@@ -89,6 +126,7 @@ scraper selected is, at the same time, populating your Chronicle library.
 Chronicle_Scraper/
 ├── addon.xml                      # xbmc.metadata.scraper.{movies,tvshows} + xbmc.python.script
 ├── default.py                     # Menu: Test Connection / Connect to Chronicle / Settings
+├── service.py                     # Background service: Rebuild NFO Cache, corner activity indicator
 ├── icon.png                       # Chronicle's own "C" icon
 ├── LICENSE
 ├── python/
@@ -99,7 +137,15 @@ Chronicle_Scraper/
 │   ├── chronicle_client.py        # HTTP client for Chronicle's scraper-facing API
 │   ├── kodi_video_info.py         # Shared InfoTagVideo helpers (ratings, artwork, trailer, common fields)
 │   ├── kodi_settings.py           # Reads Kodi's own live settings via JSON-RPC (never hardcoded)
-│   ├── collection_sync.py         # Fills missing set poster/fanart in Kodi's local movie-sets folder
+│   ├── collection_sync.py         # Fills/overwrites movie-set art and extrafanart in Kodi's local movie-sets folder
+│   ├── movie_art_sync.py          # Local poster/fanart sync + streamdetails lookup for movies
+│   ├── tvshow_location.py         # Locates a show/episode's files on disk
+│   ├── nfo_common.py              # Shared NFO XML-building blocks
+│   ├── nfo_writer.py              # Movie NFO writer
+│   ├── tv_nfo_writer.py           # Show/episode NFO writer
+│   ├── nfo_rebuild.py             # Rebuild-cache action: delete + regenerate across movies/shows/episodes
+│   ├── legacy_nfo.py              # Parses and stashes pre-existing NFO data for merge-back
+│   ├── activity_tracker.py        # Cross-process heartbeat file for the corner activity indicator
 │   ├── device_auth.py             # QR device-auth flow (shared design with Chronicle_Scrobbler)
 │   └── qr_dialog.py               # QR code + PIN display UI
 └── resources/
@@ -126,18 +172,19 @@ movie belongs to a collection:
   banner, clearlogo, clearart, discart, thumb), it downloads that pick and
   writes it into the set's own folder — **overwriting** whatever file is
   already there. Chronicle is authoritative here, the same way it already
-  is for an individual movie's own local poster/fanart (see
-  `movie_art_sync.py`) — this used to be fill-only, but that meant a
-  correction made in Chronicle (a language fix, a fallback pick) could
-  never actually reach this folder once *any* file was sitting there,
-  right or wrong.
+  is for an individual movie's own local poster/fanart.
 - If the folder can't be created or written to (unreachable share, read-only
   mount), Kodi shows a notification naming the configured base path (not any
   particular movie or set — the folder itself is the problem). A whole
   library scan can touch dozens of sets in seconds, so this is throttled to
   at most one popup roughly every 10 minutes rather than once per movie.
 
-## Known Limitations (v2.1.0)
+Note: Chronicle's server can *also* write collection art directly into a shared UNC
+folder (see the "Kodi Movie Collections" setting in Chronicle itself) — that path is
+independent of this addon and is meant for households where multiple Kodi instances
+share one library but only one should be doing scraper work.
+
+## Known Limitations (v2.13.0)
 
 - **No writers, no movie studios, no sort titles.** Kodi's API supports all three,
   but no metadata provider Chronicle currently has configured populates them for
