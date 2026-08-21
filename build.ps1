@@ -13,19 +13,24 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $addonXml    = Join-Path $projectRoot "addon.xml"
 
-# Read version from addon.xml
+# Read id/version from addon.xml -- never hardcoded here, so a future rename (like
+# metadata.chronicle.python -> script.chronicle.scraper) only ever needs to happen in one place.
 $xml     = [xml](Get-Content $addonXml -Encoding UTF8)
 $version = $xml.addon.version
 if (-not $version) {
     Write-Error "Could not read version from addon.xml"
     exit 1
 }
+$addonFolder = $xml.addon.id
+if (-not $addonFolder) {
+    Write-Error "Could not read addon id from addon.xml"
+    exit 1
+}
 
 $buildTemp   = Join-Path $projectRoot "build_temp"
-$addonFolder = "metadata.chronicle.python"
 $sourcePath  = Join-Path $buildTemp $addonFolder
 $outputDir   = "C:\Temp"
-$outputZip   = Join-Path $outputDir "metadata.chronicle.python-$version.zip"
+$outputZip   = Join-Path $outputDir "$addonFolder-$version.zip"
 
 Write-Host "======================================"
 Write-Host " Chronicle Scraper v$version - Build"
@@ -42,7 +47,7 @@ if (Test-Path $buildTemp) {
 New-Item -ItemType Directory -Path $sourcePath -Force | Out-Null
 
 # Copy root addon files
-$rootFiles = @("addon.xml", "default.py", "icon.png", "LICENSE")
+$rootFiles = @("addon.xml", "default.py", "service.py", "icon.png", "LICENSE")
 foreach ($f in $rootFiles) {
     $src = Join-Path $projectRoot $f
     if (Test-Path $src) {

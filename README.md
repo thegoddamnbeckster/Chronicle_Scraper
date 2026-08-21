@@ -3,7 +3,7 @@
 A Kodi metadata scraper for movies and TV shows, backed by your self-hosted [Chronicle](https://github.com/thegoddamnbeckster/Chronicle)
 server.
 
-**Addon ID:** `metadata.chronicle.python`
+**Addon ID:** `script.chronicle.scraper`
 **Extension points:** `xbmc.metadata.scraper.movies`, `xbmc.metadata.scraper.tvshows`
 **Kodi:** 20 "Nexus" and later (uses the modern `InfoTagVideo` Python API throughout)
 **Auth:** QR code device authentication (same flow as [Chronicle_Scrobbler](https://github.com/thegoddamnbeckster/Chronicle_Scrobbler))
@@ -122,11 +122,15 @@ movie belongs to a collection:
 
 - If the setting isn't configured at all, it does nothing — that's a
   deliberate choice, not a problem to flag.
-- If the set's folder or poster/fanart is **missing**, it downloads
-  Chronicle's current picks and writes them there, so the set stops showing
-  a blank/broken card.
-- If a poster or fanart file **already exists** there, it's left alone —
-  this never overwrites artwork you (or a previous scraper) already placed.
+- Whenever Chronicle has a candidate for a given art type (poster, fanart,
+  banner, clearlogo, clearart, discart, thumb), it downloads that pick and
+  writes it into the set's own folder — **overwriting** whatever file is
+  already there. Chronicle is authoritative here, the same way it already
+  is for an individual movie's own local poster/fanart (see
+  `movie_art_sync.py`) — this used to be fill-only, but that meant a
+  correction made in Chronicle (a language fix, a fallback pick) could
+  never actually reach this folder once *any* file was sitting there,
+  right or wrong.
 - If the folder can't be created or written to (unreachable share, read-only
   mount), Kodi shows a notification naming the configured base path (not any
   particular movie or set — the folder itself is the problem). A whole
@@ -152,9 +156,9 @@ movie belongs to a collection:
 ## Installation
 
 Zip this directory (or clone it directly into Kodi's addons folder as
-`metadata.chronicle.python`), then install via Kodi's "Install from zip file" option,
+`script.chronicle.scraper`), then install via Kodi's "Install from zip file" option,
 or copy the folder directly into Kodi's `addons/` directory and restart Kodi.
 
 ```
-<Kodi userdata>/addons/metadata.chronicle.python/
+<Kodi userdata>/addons/script.chronicle.scraper/
 ```

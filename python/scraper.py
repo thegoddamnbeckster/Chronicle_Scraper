@@ -36,6 +36,7 @@ import os
 import sys
 from urllib.parse import parse_qsl
 
+import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcplugin
@@ -48,12 +49,14 @@ import xbmcplugin
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.logger import Logger
+from lib import activity_tracker
+from lib import legacy_nfo
 from lib.chronicle_client import ChronicleClient
 from lib.kodi_video_info import (
     apply_common_video_info, apply_ratings, apply_artwork, youtube_trailer_uri,
 )
 from lib.collection_sync import sync_collection_art
-from lib.movie_art_sync import sync_movie_art, find_movie_location
+from lib.movie_art_sync import sync_movie_art, find_movie_location, get_streamdetails
 from lib.nfo_writer import sync_movie_nfo
 
 log = Logger('scraper')
@@ -88,7 +91,27 @@ def parse_lookup_string(value):
 
 def search_for_movie(title, year, handle):
     log.info('find: title={0!r} year={1!r}'.format(title, year))
-    result = ChronicleClient().search_movie(title, year)
+    activity_tracker.mark_active(title)
+
+    # Confirmation by filename: title-only matching misses whenever the folder
+    # name Kodi derives its title from doesn't match Chronicle's own stored
+    # title for an item it already has (e.g. a fan edit filed under a
+    # franchise-prefixed folder, "Alien - Derelict" vs the real item's own
+    # title "Derelict") -- Chronicle used to just create a second, wrongly-
+    # typed, posterless duplicate every time that happened. find_movie_location
+    # is the same VideoLibrary/source-browsing lookup get_details() already
+    # uses to place local art -- reused here, before the title search, purely
+    # to discover the real physical file's basename if it's findable this
+    # early, so Chronicle can check "does this exact file already belong to
+    # some other item" before ever considering creating a new one.
+    try:
+        _, _, full_filename, _ = find_movie_location(title, year)
+    except Exception as exc:
+        log.warning('find: filename pre-check failed for {0!r} ({1}) -- continuing by title only'.format(
+                    title, exc))
+        full_filename = None
+
+    result = ChronicleClient().search_movie(title, year, filename=full_filename)
     if not result:
         log.warning('find: Chronicle returned no candidate for title={0!r} year={1!r} -- '
                     'this title will not appear as a match in Kodi at all'.format(title, year))
@@ -151,6 +174,26 @@ def _log_details_summary(action, media_item_id, details):
                     action, media_item_id, details.get('title')))
 
 
+def _merge_legacy_nfo_gaps(details, legacy_data):
+    """Fills in any field Chronicle's own `details` has nothing for using
+    whatever a previous local NFO (about to be/already overwritten)
+    contained -- see lib/legacy_nfo.py. Chronicle's own data always wins
+    where it has any; this only plugs genuine gaps, mutating `details` in
+    place so every downstream consumer (the Kodi ListItem built below, and
+    the NFO sync_movie_nfo() writes) benefits, not just the NFO."""
+    for key in ('title', 'overview', 'tagline', 'year', 'runtimeMinutes', 'mpaa',
+                'premiered', 'country', 'studio', 'trailerUrl'):
+        if not details.get(key) and legacy_data.get(key):
+            details[key] = legacy_data[key]
+    for list_key in ('genres', 'tags', 'cast', 'crew'):
+        if not details.get(list_key) and legacy_data.get(list_key):
+            details[list_key] = legacy_data[list_key]
+    if not details.get('ratings') and legacy_data.get('ratings'):
+        details['ratings'] = legacy_data['ratings']
+    if not (details.get('collection') or {}).get('name') and legacy_data.get('collection'):
+        details['collection'] = legacy_data['collection']
+
+
 def get_details(media_item_id, handle):
     if media_item_id is None:
         log.warning('getdetails: called with no resolvable media_item_id -- lookup string could not be parsed')
@@ -160,6 +203,38 @@ def get_details(media_item_id, handle):
     _log_details_summary('getdetails', media_item_id, details)
     if not details:
         return False
+    activity_tracker.mark_active(details.get('title') or str(media_item_id))
+
+    # Resolved once, here, and reused by everything below -- both because
+    # sync_movie_art/sync_movie_nfo would otherwise each independently
+    # browse Kodi's video sources for the same folder, and because the
+    # legacy-NFO merge just below needs video_basename BEFORE the Kodi
+    # ListItem is built from `details`, not after -- mutating `details` in
+    # place only helps fields that haven't already been read out of it yet.
+    # knownFileName (when Chronicle has it) short-circuits straight to the
+    # real file instead of re-deriving the folder from title/year -- see
+    # find_movie_location()'s own docstring. When it had to fall back to
+    # title/year matching anyway, report the discovered filename back so the
+    # NEXT scrape gets to use the fast path too.
+    folder, video_basename, full_filename, discovered_via_fallback = find_movie_location(
+        details.get('title'), details.get('year'), known_filename=details.get('knownFileName'))
+    location = (folder, video_basename)
+    if discovered_via_fallback and full_filename:
+        ChronicleClient().report_resolved_file(media_item_id, full_filename)
+
+    # If nfo_rebuild.py's "delete local NFO, force a re-scrape" action ran
+    # against this movie, whatever its previous local NFO contained (e.g.
+    # from tinyMediaManager) was harvested and stashed before deletion --
+    # see lib/legacy_nfo.py. Pick it up now (one-shot: this also clears the
+    # stash), use it to fill any gap Chronicle's own data has, and feed it
+    # back into Chronicle itself so it isn't lost. Done before the ListItem
+    # below is built so every downstream consumer of `details` -- Kodi's own
+    # display, the artwork sync, the NFO -- sees the gap-filled version, not
+    # just the NFO.
+    legacy_data = legacy_nfo.load_and_clear_stash(video_basename) if video_basename else None
+    if legacy_data:
+        _merge_legacy_nfo_gaps(details, legacy_data)
+        ChronicleClient().contribute_metadata(media_item_id, 'chronicle_scraper.legacy_nfo', legacy_data)
 
     listitem = xbmcgui.ListItem(details.get('title') or '', offscreen=True)
     vtag = listitem.getVideoInfoTag()
@@ -171,8 +246,14 @@ def get_details(media_item_id, handle):
         vtag.setTagLine(details['tagline'])
     if details.get('runtimeMinutes'):
         vtag.setDuration(details['runtimeMinutes'] * 60)
-    if details.get('directors'):
-        vtag.setDirectors(details['directors'])
+    crew = [m for m in (details.get('crew') or []) if isinstance(m, dict)]
+    directors = [m.get('name') for m in crew if (m.get('job') or '').lower() == 'director']
+    writers = [m.get('name') for m in crew
+               if (m.get('job') or '').lower() in ('writer', 'screenplay', 'story', 'teleplay')]
+    if directors:
+        vtag.setDirectors(directors)
+    if writers:
+        vtag.setWriters(writers)
 
     collection = details.get('collection')
     if collection:
@@ -188,18 +269,27 @@ def get_details(media_item_id, handle):
     apply_ratings(vtag, details.get('ratings'))
     apply_artwork(listitem, details.get('artwork'))
 
-    # Resolved once and reused by both syncs below -- both would otherwise
-    # independently browse Kodi's video sources to find the same folder.
-    location = find_movie_location(details.get('title'), details.get('year'))
+    # Kodi's own per-file technical info (codec/resolution/HDR/audio tracks/
+    # subtitle languages) -- Chronicle has no way to know this, only Kodi
+    # does, from actually having opened the file. A genuine extra JSON-RPC
+    # round-trip on top of the normal scrape, so it's opt-in (write_streamdetails,
+    # off by default) -- on a shared library with several Kodi instances, only
+    # whichever one maintains the shared NFOs needs this; the others just read
+    # what it already wrote.
+    streamdetails = None
+    if folder and full_filename and ADDON.getSettingBool('write_streamdetails'):
+        streamdetails = get_streamdetails(folder + full_filename)
+
     sync_movie_art(details.get('title'), details.get('year'), details.get('artwork'), location=location)
 
     if ADDON.getSettingBool('write_nfo'):
-        sync_movie_nfo(details.get('title'), details.get('year'), details, location=location)
+        sync_movie_nfo(details.get('title'), details.get('year'), details, location=location,
+                        streamdetails=streamdetails)
 
     if details.get('cast'):
-        listitem.setCast([
-            {'name': name, 'role': '', 'order': i}
-            for i, name in enumerate(details['cast'])
+        vtag.setCast([
+            xbmc.Actor(name=actor.get('name') or '', role=actor.get('role') or '', order=i)
+            for i, actor in enumerate(details['cast'])
         ])
 
     trailer_uri = youtube_trailer_uri(details.get('trailerUrl'))
@@ -225,6 +315,7 @@ def get_artwork(media_item_id, handle):
     _log_details_summary('getartwork', media_item_id, details)
     if not details:
         return False
+    activity_tracker.mark_active(details.get('title') or str(media_item_id))
 
     listitem = xbmcgui.ListItem(details.get('title') or '', offscreen=True)
     apply_artwork(listitem, details.get('artwork'))

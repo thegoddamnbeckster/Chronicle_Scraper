@@ -38,14 +38,20 @@ Deliberately does NOT try to detect or special-case a TMM-authored NFO --
 treats any existing local NFO the same way (an opportunity to refresh it
 with Chronicle's own data), consistent with movie_art_sync.py's own decision
 to always overwrite rather than preserve.
+
+See lib/nfo_common.py for the XML-building blocks shared with
+tv_nfo_writer.py (actors, uniqueid, ratings, streamdetails, art block, local
+art file lookup) -- only the movie-specific field layout lives here.
 """
 
+import posixpath
 import xml.etree.ElementTree as ET
 
 import xbmcvfs
 
 from lib.logger import Logger
 from lib.movie_art_sync import find_movie_location
+from lib import nfo_common
 
 log = Logger('nfo_writer')
 
@@ -59,102 +65,99 @@ _ART_TAGS = (
     ('characterart', 'characterart'),
 )
 
-_UNIQUEID_TYPES = ('imdb', 'tmdb', 'tvdb', 'trakt')
+# Local-file suffix -> the same art_type keys used in _ART_TAGS above, so a
+# file found on disk slots into exactly the same NFO tag Chronicle's own
+# remote candidates would use. Excludes 'poster'/'fanart' matches that are
+# actually numbered fanart alternates -- those are recognised separately by
+# nfo_common's own fanart-suffix pattern.
+_LOCAL_ART_SUFFIXES = (
+    ('poster', 'poster'),
+    ('clearlogo', 'clearlogo'),
+    ('banner', 'banner'),
+    ('clearart', 'clearart'),
+    ('discart', 'discart'),
+    ('characterart', 'characterart'),
+)
 
 
-def _add_text(parent, tag, text):
-    if text is None or text == '':
-        return None
-    el = ET.SubElement(parent, tag)
-    el.text = str(text)
-    return el
-
-
-def _build_movie_nfo(details):
+def _build_movie_nfo(details, streamdetails=None, local_art=None):
     root = ET.Element('movie')
 
-    _add_text(root, 'title', details.get('title'))
-    _add_text(root, 'originaltitle', details.get('title'))
-    _add_text(root, 'year', details.get('year'))
-    _add_text(root, 'plot', details.get('overview'))
-    _add_text(root, 'tagline', details.get('tagline'))
+    nfo_common.add_text(root, 'title', details.get('title'))
+    nfo_common.add_text(root, 'originaltitle', details.get('title'))
+    nfo_common.add_text(root, 'year', details.get('year'))
+    nfo_common.add_text(root, 'plot', details.get('overview'))
+    nfo_common.add_text(root, 'tagline', details.get('tagline'))
     if details.get('runtimeMinutes'):
-        _add_text(root, 'runtime', details['runtimeMinutes'])
-    _add_text(root, 'mpaa', details.get('mpaa'))
-    _add_text(root, 'premiered', details.get('premiered'))
-    _add_text(root, 'country', details.get('country'))
-    _add_text(root, 'studio', details.get('studio'))
+        nfo_common.add_text(root, 'runtime', details['runtimeMinutes'])
+    nfo_common.add_text(root, 'mpaa', details.get('mpaa'))
+    nfo_common.add_text(root, 'premiered', details.get('premiered'))
+    nfo_common.add_text(root, 'country', details.get('country'))
+    nfo_common.add_text(root, 'studio', details.get('studio'))
 
     for genre in details.get('genres') or []:
-        _add_text(root, 'genre', genre)
+        nfo_common.add_text(root, 'genre', genre)
     for tag in details.get('tags') or []:
-        _add_text(root, 'tag', tag)
+        nfo_common.add_text(root, 'tag', tag)
 
     collection = details.get('collection') or {}
     if collection.get('name'):
         set_el = ET.SubElement(root, 'set')
-        _add_text(set_el, 'name', collection['name'])
-        _add_text(set_el, 'overview', collection.get('overview'))
+        nfo_common.add_text(set_el, 'name', collection['name'])
+        nfo_common.add_text(set_el, 'overview', collection.get('overview'))
 
-    for director in details.get('directors') or []:
-        _add_text(root, 'director', director)
-
-    for i, actor in enumerate(details.get('cast') or []):
-        actor_el = ET.SubElement(root, 'actor')
-        _add_text(actor_el, 'name', actor)
-        _add_text(actor_el, 'order', i)
-
-    external_ids = details.get('externalIds') or {}
-    for id_type in _UNIQUEID_TYPES:
-        value = external_ids.get(id_type)
-        if not value:
-            continue
-        uid_el = ET.SubElement(root, 'uniqueid', {'type': id_type})
-        if id_type == 'imdb':
-            uid_el.set('default', 'true')
-        uid_el.text = str(value)
-
-    ratings = details.get('ratings') or {}
-    if ratings:
-        ratings_el = ET.SubElement(root, 'ratings')
-        for source, rating in ratings.items():
-            rating_el = ET.SubElement(ratings_el, 'rating', {'name': source, 'max': '10'})
-            _add_text(rating_el, 'value', rating.get('rating'))
-            _add_text(rating_el, 'votes', rating.get('votes') or 0)
-
-    artwork = details.get('artwork') or {}
-    art_el = ET.SubElement(root, 'art')
-    for art_type, tag in _ART_TAGS:
-        candidates = artwork.get(art_type)
-        if candidates:
-            _add_text(art_el, tag, candidates[0]['url'])
-    if len(art_el) == 0:
-        root.remove(art_el)
+    nfo_common.add_directors_and_writers(root, details.get('crew'))
+    nfo_common.add_actors(root, details.get('cast'))
+    nfo_common.add_uniqueids(root, details.get('externalIds'))
+    nfo_common.add_ratings(root, details.get('ratings'))
+    nfo_common.build_art_block(root, details.get('artwork'), local_art, _ART_TAGS)
 
     if details.get('trailerUrl'):
-        _add_text(root, 'trailer', details['trailerUrl'])
+        nfo_common.add_text(root, 'trailer', details['trailerUrl'])
+
+    nfo_common.add_streamdetails(root, streamdetails)
 
     return root
 
 
-def sync_movie_nfo(title, year, details, location=None):
+def sync_movie_nfo(title, year, details, location=None, streamdetails=None):
     """Writes a fresh Kodi-native NFO for this movie from Chronicle's
     `details` dict (the same one ScraperController's /movies/details
     returns), overwriting whatever was there before -- see module docstring
-    for why this deliberately doesn't try to preserve an existing NFO.
+    for why this deliberately doesn't try to detect/special-case a prior
+    NFO's own authorship. Preserving a prior NFO's *data* is handled one
+    layer up: see lib/legacy_nfo.py and lib/nfo_rebuild.py's delete step,
+    plus scraper.py's get_details(), which merges any harvested data into
+    `details` before ever calling this.
 
-    location, if given, is a pre-resolved (folder, video_basename) tuple from
-    find_movie_location() -- pass this when the caller already looked the
-    movie up for another reason (e.g. also syncing local art) so this
-    doesn't repeat the same source-browsing/listdir work a second time."""
-    folder, video_basename = location if location else find_movie_location(title, year)
+    location, if given, is a pre-resolved (folder, video_basename) tuple --
+    pass this when the caller already looked the movie up for another reason
+    (e.g. also syncing local art) so this doesn't repeat the same
+    VideoLibrary/source-browsing lookup a second time.
+
+    streamdetails, if given, is Kodi's own per-file technical info (see
+    lib/movie_art_sync.py's get_streamdetails()) -- written into a
+    <fileinfo><streamdetails> block Chronicle itself has no way to supply."""
+    if location:
+        folder, video_basename = location
+    else:
+        folder, video_basename, _full_filename, _via_fallback = find_movie_location(title, year)
     if not folder:
         return
 
     filename = (video_basename or 'movie') + '.nfo'
     dest = folder + filename
 
-    root = _build_movie_nfo(details)
+    # A movie's local art may be named after either the real video file's
+    # own basename or the containing folder's name -- movie_art_sync.py's
+    # own sync_movie_art() writes using the folder name, while other tools
+    # (tinyMediaManager and others) commonly use the video basename instead;
+    # both are legitimate conventions Kodi recognises, so both are checked.
+    folder_name = posixpath.basename(folder.rstrip('/'))
+    prefixes = [p for p in (video_basename, folder_name) if p]
+    local_art = nfo_common.list_local_art_prefixed(folder, prefixes, _LOCAL_ART_SUFFIXES)
+
+    root = _build_movie_nfo(details, streamdetails=streamdetails, local_art=local_art)
     xml_bytes = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + ET.tostring(root, encoding='utf-8')
 
     try:

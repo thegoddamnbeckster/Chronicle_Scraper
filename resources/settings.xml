@@ -9,7 +9,7 @@
              install (LAN IP, hostname, or domain, plus port); a plausible-
              looking default risks silently pointing at the wrong thing. -->
         <setting id="chronicle_url" type="text" label="32002" default=""/>
-        <setting id="authorization" type="action" label="32061" action="RunScript(metadata.chronicle.python,action=auth)"/>
+        <setting id="authorization" type="action" label="32061" action="RunScript(script.chronicle.scraper,action=auth)"/>
         <setting id="auth_status" type="text" label="32080" enable="false" default=""/>
         <!-- Set automatically by the QR/PIN flow above — not meant to be typed by hand -->
         <setting id="api_key" type="text" label="32003" visible="false"/>
@@ -19,8 +19,10 @@
     <!-- Local Files -->
     <!-- ============================================================================ -->
     <category label="32090">
-        <setting id="write_nfo" type="bool" label="32091" default="true" help="32092"/>
-        <setting id="rebuild_nfos" type="action" label="32093" action="RunScript(metadata.chronicle.python,action=rebuild_nfos)" help="32094"/>
+        <setting id="write_nfo" type="bool" label="32091" default="false" help="32092"/>
+        <setting id="write_streamdetails" type="bool" label="32105" default="false" help="32106" enable="eq(-1,true)"/>
+        <setting id="rebuild_nfos" type="action" label="32093" action="RunScript(script.chronicle.scraper,action=rebuild_nfos)" help="32094"/>
+        <setting id="auto_rebuild_on_scan" type="bool" label="32098" default="false" help="32099"/>
     </category>
 
 </settings>

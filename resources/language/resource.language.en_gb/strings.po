@@ -114,7 +114,7 @@ msgid "Recreate local NFO file from Chronicle's data"
 msgstr ""
 
 msgctxt "#32092"
-msgid "Kodi always prefers a movie's own local NFO file over asking this scraper, even during an automatic library scan -- so a movie already tagged by another tool (e.g. tinyMediaManager) may never actually reach Chronicle at all. Enabling this rewrites that NFO from Chronicle's own data every time this scraper does run, so Kodi's local-file preference works for Chronicle instead of against it. Disable if you want another tool to keep sole ownership of NFO files."
+msgid "Kodi always prefers a movie, TV show, or episode's own local NFO file over asking this scraper, even during an automatic library scan -- so anything already tagged by another tool (e.g. tinyMediaManager) may never actually reach Chronicle at all. Enabling this rewrites that NFO from Chronicle's own data every time this scraper does run, so Kodi's local-file preference works for Chronicle instead of against it. Off by default -- if you have more than one Kodi instance pointed at the same shared library, you only need this ON for whichever one is responsible for maintaining the shared NFOs (e.g. your main box); the others just read the NFO that instance already wrote, so leaving it off on them avoids redundant work every time they also scan the same library."
 msgstr ""
 
 msgctxt "#32093"
@@ -122,7 +122,7 @@ msgid "Rebuild local NFOs from Chronicle"
 msgstr ""
 
 msgctxt "#32094"
-msgid "This will permanently DELETE every local .nfo file and every movieset-poster/fanart/etc. file for every movie in your library, then ask Chronicle to rebuild them one by one. This cannot be undone -- any data only some other tool (e.g. tinyMediaManager) put in those files will be lost. It can take a long time for a large library. Continue?"
+msgid "This will delete every local .nfo/tvshow.nfo file and every movieset-poster/fanart/etc. file for every movie, TV show, and episode in your library, then ask Chronicle to rebuild them one by one. Before deleting, any data a local NFO has that Chronicle doesn't is saved and folded back in (and sent to Chronicle), and any movieset-* art is copied into your Movie Set Information folder if nothing is there already -- so a previous tool's (e.g. tinyMediaManager) data is preserved, not lost. It can take a long time for a large library. Continue?"
 msgstr ""
 
 msgctxt "#32095"
@@ -134,5 +134,45 @@ msgid "Cancel"
 msgstr ""
 
 msgctxt "#32097"
-msgid "Processed {0} movies. Deleted {1} NFO file(s) and {2} movieset file(s). {3} refresh error(s)."
+msgid "All {0} items (movies, TV shows, and episodes) were rebuilt successfully."
+msgstr ""
+
+msgctxt "#32100"
+msgid "Chronicle has been asked to rebuild {0} item(s). Kodi will keep working through the list in the background -- you don't need to keep watching this, and can carry on using Kodi normally (including playback) while it finishes. Estimated time to finish: {1}."
+msgstr ""
+
+msgctxt "#32101"
+msgid "Rebuilt {0} of {1} items -- {2} didn't complete. See kodi.log for details."
+msgstr ""
+
+msgctxt "#32102"
+msgid "You stopped this before it finished -- Chronicle had gotten through {0} of {1} items. Whatever was already in progress keeps running in the background even now this is closed. Run it again later if you want to make sure everything gets covered."
+msgstr ""
+
+msgctxt "#32103"
+msgid "Waiting for Kodi to work through the list -- {0}/{1} confirmed. Estimated time remaining: {2}"
+msgstr ""
+
+msgctxt "#32104"
+msgid "less than a minute"
+msgstr ""
+
+msgctxt "#32098"
+msgid "Automatically rebuild NFOs after every library scan"
+msgstr ""
+
+msgctxt "#32099"
+msgid "Runs the same delete-and-rebuild as \"Rebuild local NFOs from Chronicle\" above, automatically, every time a video library scan finishes -- no need to remember to click the button. Every local .nfo/tvshow.nfo and movieset-poster/fanart/etc. file for every movie, TV show, and episode is deleted and repopulated from Chronicle each time, with NO confirmation prompt (there's no one there to ask). Data only some other tool put in those files is preserved and folded back in rather than lost, but this still means a large library can take a long time to process on every single scan. Off by default -- only turn this on if you want Chronicle to be the sole, permanent owner of every local NFO/set-art file."
+msgstr ""
+
+msgctxt "#32105"
+msgid "Include technical file info (resolution, codec, HDR, audio, subtitles)"
+msgstr ""
+
+msgctxt "#32106"
+msgid "Adds a <fileinfo><streamdetails> block to the NFO with Kodi's own probe of the real file -- video codec/resolution/HDR type, audio codec/language/channels, subtitle track languages. This is data only Kodi itself has; Chronicle has no way to supply it. Requires an extra lookup against Kodi's own library on top of the normal NFO write, so it's off by default -- if you run this addon on more than one Kodi instance pointed at the same shared library, you only need this ON for whichever one is responsible for maintaining the shared NFOs; the others just read the NFO that instance already wrote, streamdetails included, so there's nothing to gain (and real extra work to lose) by also turning this on for them."
+msgstr ""
+
+msgctxt "#32107"
+msgid "{0} item(s) processed so far{1}"
 msgstr ""

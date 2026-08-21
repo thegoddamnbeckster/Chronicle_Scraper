@@ -15,11 +15,30 @@ The base folder itself (videolibrary.moviesetsfolder) is different per
 install and per user's own NAS layout, so it's always read live from Kodi's
 own Settings API (see kodi_settings.py) -- never hardcoded here.
 
-Deliberately conservative: this only fills in a MISSING poster/fanart for a
-set. It never overwrites a file that's already there, so it won't clobber
-artwork a user has manually curated (several of this addon's own test sets
-already have hand-picked banner/clearart/clearlogo/disc art alongside the
-poster -- none of that is touched).
+Chronicle is authoritative here, the same way movie_art_sync.py already
+treats it as authoritative for an individual movie's own poster/fanart:
+whenever Chronicle has a candidate for a given art type, it overwrites
+whatever local file is already there. This was previously fill-only (never
+touch a file that's already there), specifically to protect hand-picked
+art -- but that meant a wrong or stale local file (a mismatched-language
+poster, an old pick from before a collection was corrected) could sit there
+forever with no way for Chronicle's own, corrected answer to ever actually
+reach Kodi: this dedicated folder is what Kodi reads on refresh, not
+anything the scraper offers live via addAvailableArtwork. Confirmed
+directly (2026-08-21) that this was hiding real fixes -- a collection
+poster-language correction and a poster-fallback fix both landed in
+Chronicle but never appeared in this folder, because every slot already had
+*a* file sitting there, right or not.
+
+pinnedSlots (a user's explicit pin in Chronicle) no longer changes the
+write itself -- everything overwrites now -- but is still reported in the
+log, since a pinned choice and an auto-resolved one are worth being able to
+tell apart after the fact.
+
+Overwriting a file isn't enough on its own: Kodi caches every image it has
+loaded and only re-checks a local file's hash about once a day, so a replaced
+poster.jpg would keep rendering the old picture until then. Each overwrite is
+therefore followed by a Textures.RemoveTexture call for that path.
 """
 
 import json
@@ -38,14 +57,28 @@ from lib.kodi_settings import get_setting_value
 
 log = Logger('collection_sync')
 
+# (local filename, Chronicle field on the collection payload, Chronicle's
+# canonical slot name, Kodi's art type). The slot name is what "pinnedSlots"
+# reports, and the art type is what Kodi's own library calls the same image.
+#
+# Kodi accepts more set art than poster/fanart, and Chronicle now resolves all
+# of it for collections, so every one of these is written -- previously only
+# the first two were, which meant a collection's logo/banner/disc art existed
+# in Chronicle and simply never reached Kodi.
 _ART_FILES = (
-    ('poster.jpg', 'posterUrl'),
-    ('fanart.jpg', 'backdropUrl'),
+    ('poster.jpg',    'posterUrl',    'poster_url',   'poster'),
+    ('fanart.jpg',    'backdropUrl',  'backdrop_url', 'fanart'),
+    ('banner.jpg',    'bannerUrl',    'banner_url',   'banner'),
+    ('clearlogo.png', 'logoUrl',      'logo_url',     'clearlogo'),
+    ('clearart.png',  'clearartUrl',  'clearart_url', 'clearart'),
+    ('discart.png',   'discUrl',      'disc_url',     'discart'),
+    ('thumb.jpg',     'thumbUrl',     'thumb_url',    'thumb'),
 )
 
 # Every local-art filename Kodi recognises for a movie set, and which "art"
-# type each maps to -- used only by the stale-art repair below, not by the
-# existing fill-missing logic above (which only ever handles poster/fanart).
+# type each maps to -- used by the stale-art repair below, which has to
+# recognise files this module never writes itself (logo.png, landscape.jpg)
+# because a user may well have put them there by hand.
 _SET_ART_FILENAMES = {
     'poster.jpg': 'poster', 'fanart.jpg': 'fanart', 'banner.jpg': 'banner',
     'clearlogo.png': 'clearlogo', 'logo.png': 'logo', 'clearart.png': 'clearart',
@@ -67,7 +100,11 @@ def sync_collection_art(collection):
     """collection is the same dict the /movies/details response returns under
     "collection" -- {id, name, overview, posterUrl, backdropUrl}. No-ops
     entirely if Kodi's movie-sets folder setting isn't configured; an empty
-    setting is a deliberate choice, not something to warn about."""
+    setting is a deliberate choice, not something to warn about.
+
+    Overwrites whatever local file is already there for every art type
+    Chronicle currently has a candidate for -- see the module docstring for
+    why this is no longer fill-only."""
     name = collection.get('name')
     if not name:
         return
@@ -90,30 +127,36 @@ def sync_collection_art(collection):
             return
         log.info('Created missing movie set folder: {0}'.format(folder))
 
-    for filename, field in _ART_FILES:
+    pinned = set(collection.get('pinnedSlots') or ())
+    refreshed = {}
+
+    for filename, field, slot, art_type in _ART_FILES:
         url = collection.get(field)
         if not url:
             log.info('sync_collection_art: set "{0}" -- Chronicle has no {1}, nothing to fill'.format(
                 name, field))
             continue
-        dest = folder + filename
-        if xbmcvfs.exists(dest):
-            # This is the single most likely explanation for a set poster that never
-            # updates: this module is deliberately fill-only (see module docstring),
-            # so a stale/broken local file here silently wins forever with zero log
-            # trace until now. If the set looks wrong, check this file manually --
-            # it's what's actually being shown, not whatever Chronicle currently has.
-            log.info('sync_collection_art: set "{0}" -- {1} already exists locally at {2}, '
-                     'leaving it alone (this module never overwrites) -- Chronicle currently '
-                     'has {3} for this field if that local file turns out to be stale'.format(
-                     name, filename, dest, url))
-            continue
 
-        log.info('sync_collection_art: set "{0}" -- {1} missing locally, downloading {2} to {3}'.format(
-            name, filename, url, dest))
+        dest = folder + filename
+        exists = xbmcvfs.exists(dest)
+        is_pinned = slot in pinned
+
+        action = 'refreshing (pinned in Chronicle)' if (exists and is_pinned) \
+            else 'refreshing existing' if exists else 'missing locally, downloading'
+        log.info('sync_collection_art: set "{0}" -- {1} {2}: {3} -> {4}'.format(
+            name, filename, action, url, dest))
+
         result = _write_remote_file(dest, url)
         if result == 'ok':
-            log.info('Filled missing {0} for set "{1}" from Chronicle'.format(filename, name))
+            if exists:
+                # Same path, new bytes: Kodi would keep serving the cached copy for up
+                # to a day without this.
+                _invalidate_texture(dest)
+                refreshed[art_type] = dest
+                log.info('Refreshed {0} for set "{1}" from Chronicle{2}'.format(
+                    filename, name, ' (pinned)' if is_pinned else ''))
+            else:
+                log.info('Filled missing {0} for set "{1}" from Chronicle'.format(filename, name))
         elif result == 'write_failed':
             # Only an actual write failure implicates the folder itself -- a
             # download failure (dead/expired URL, upstream outage, etc.) says
@@ -122,6 +165,69 @@ def sync_collection_art(collection):
             _notify_unreachable(base)
         # 'download_failed' already logged its own reason in _write_remote_file;
         # nothing further to do here, and definitely not a folder-writability signal.
+
+    if refreshed:
+        # A set that already had art registered keeps pointing at the old cached
+        # texture until it's re-registered, even though the file underneath changed.
+        setid, _ = _find_set(name)
+        if setid is not None:
+            _set_movie_set_art(setid, refreshed)
+
+
+def preserve_local_movieset_file(set_name, source_path, filename):
+    """Copies a movie-folder-embedded "movieset-<type>" local art file (e.g.
+    "movieset-poster.jpg", written by tinyMediaManager or another tool
+    directly alongside a movie -- a separate, independent local-art
+    convention from this module's own dedicated Movie Set Information
+    folder) into that dedicated folder, before nfo_rebuild.py's bulk
+    rebuild permanently deletes the original. Without this, that data was
+    simply gone with no way back -- the same class of loss the movie NFO
+    preservation (lib/legacy_nfo.py) fixes for .nfo files, applied to this
+    other spot nfo_rebuild.py's own delete step also touches.
+
+    Fill-only, same rule as sync_collection_art itself: only writes when
+    the dedicated folder doesn't already have a file for this same slot,
+    so a real (or user-pinned) image already there is never clobbered by
+    an older file salvaged from one particular movie's own folder. Returns
+    True if it copied something, False otherwise (nothing to salvage,
+    the slot's already covered, or the dedicated folder isn't configured/
+    writable)."""
+    if not set_name or not filename.lower().startswith('movieset-'):
+        return False
+
+    base = get_setting_value('videolibrary.moviesetsfolder')
+    if not base:
+        return False
+
+    dest_filename = filename[len('movieset-'):]
+    folder = base.rstrip('/') + '/' + set_name + '/'
+    dest = folder + dest_filename
+
+    if xbmcvfs.exists(dest):
+        return False
+
+    if not xbmcvfs.exists(folder) and not xbmcvfs.mkdirs(folder):
+        log.warning("Couldn't create set folder {0} to salvage {1}".format(folder, filename))
+        return False
+
+    try:
+        f_in = xbmcvfs.File(source_path, 'r')
+        try:
+            data = f_in.readBytes()
+        finally:
+            f_in.close()
+        f_out = xbmcvfs.File(dest, 'w')
+        try:
+            f_out.write(data)
+        finally:
+            f_out.close()
+    except Exception as exc:
+        log.warning("Couldn't salvage {0} to {1}: {2}".format(source_path, dest, exc))
+        return False
+
+    log.info('nfo_rebuild: salvaged local "{0}" for set "{1}" into the dedicated set folder '
+             'before deleting the movie-folder copy'.format(filename, set_name))
+    return True
 
 
 def _repair_stale_set_art(name, folder):
@@ -225,6 +331,56 @@ def _set_movie_set_art(setid, art):
     if response.get('result') != 'OK':
         log.warning('SetMovieSetDetails for setid {0} returned unexpected response: {1}'.format(
             setid, response))
+
+
+def _invalidate_texture(path):
+    """Drops Kodi's cached copy of an image so a replaced file at the same path
+    is actually re-read.
+
+    Kodi's texture cache is keyed by path, and for a local file it only
+    re-hashes on a roughly daily interval -- so overwriting poster.jpg leaves
+    the old picture on screen until that check happens to come round. Removing
+    the cache entry forces a re-read on next display.
+
+    Best-effort throughout: a miss here costs a stale thumbnail, never correct
+    artwork, so nothing about it should interrupt the sync."""
+    # Kodi may have cached the path with credentials in it, or url-encoded
+    # inside an image:// wrapper; match on the bare filename to catch those,
+    # then confirm the full path below before removing anything.
+    request = {
+        'jsonrpc': '2.0', 'id': 1, 'method': 'Textures.GetTextures',
+        'params': {
+            'filter': {'field': 'url', 'operator': 'contains',
+                       'value': path.rsplit('/', 1)[-1]},
+            'properties': ['url'],
+        },
+    }
+    try:
+        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+    except Exception as exc:
+        log.warning("Couldn't query Textures.GetTextures for {0}: {1}".format(path, exc))
+        return
+
+    removed = 0
+    for texture in response.get('result', {}).get('textures', []):
+        url = texture.get('url') or ''
+        decoded = urllib.parse.unquote(url)
+        # Filename-contains is a broad filter on purpose (see above); confirm the
+        # full path really is this file before removing anyone else's texture.
+        if path not in decoded and path not in url:
+            continue
+        remove = {
+            'jsonrpc': '2.0', 'id': 1, 'method': 'Textures.RemoveTexture',
+            'params': {'textureid': texture.get('textureid')},
+        }
+        try:
+            xbmc.executeJSONRPC(json.dumps(remove))
+            removed += 1
+        except Exception as exc:
+            log.warning("Couldn't remove cached texture {0}: {1}".format(
+                texture.get('textureid'), exc))
+
+    log.info('Invalidated {0} cached texture(s) for {1}'.format(removed, path))
 
 
 def _write_remote_file(dest_path, url):

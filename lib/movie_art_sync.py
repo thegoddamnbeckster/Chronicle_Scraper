@@ -98,16 +98,19 @@ def sync_movie_art(title, year, artwork, location=None):
     poster/fanart files (if its folder can be found) with Chronicle's first
     (authoritative) candidate for each type.
 
-    location, if given, is a pre-resolved (folder, video_basename) tuple from
-    find_movie_location() -- pass this when the caller already looked the
-    movie up for another reason (e.g. also writing an NFO) so this doesn't
-    repeat the same source-browsing/listdir work a second time."""
+    location, if given, is a pre-resolved (folder, video_basename) tuple --
+    pass this when the caller already looked the movie up for another reason
+    (e.g. also writing an NFO) so this doesn't repeat the same VideoLibrary/
+    source-browsing lookup a second time."""
     if not artwork:
         log.warning('sync_movie_art: "{0}" ({1}) -- Chronicle sent no artwork dict at all, '
                     'nothing to sync'.format(title, year))
         return
 
-    folder, _video_basename = location if location else find_movie_location(title, year)
+    if location:
+        folder, _video_basename = location
+    else:
+        folder, _video_basename, _full_filename, _via_fallback = find_movie_location(title, year)
     if not folder:
         return
 
@@ -131,35 +134,133 @@ def sync_movie_art(title, year, artwork, location=None):
             log.info('Synced local {0} for "{1}" from Chronicle'.format(art_type, title))
 
 
-def find_movie_location(title, year):
-    """Returns (folder, video_basename) or (None, None). folder is the movie's
-    own folder path (trailing slash); video_basename is the real video file's
-    own name with its extension stripped, when known -- this is what Kodi
-    actually expects a local NFO to be named to take highest precedence
-    (a bare 'movie.nfo' is also valid but loses to a real <video-name>.nfo
-    that another tool, e.g. tinyMediaManager, may have already left behind
-    under the true video filename), so callers writing an NFO need this, not
-    just the folder name movie_art_sync itself is content with for images.
+def find_movie_location(title, year, known_filename=None):
+    """Returns (folder, video_basename, full_filename, discovered_via_fallback).
+    folder is the movie's own folder path (trailing slash); video_basename is
+    the real video file's own name with its extension stripped -- this is
+    what Kodi actually expects a local NFO to be named to take highest
+    precedence (a bare 'movie.nfo' is also valid but loses to a real
+    <video-name>.nfo that another tool, e.g. tinyMediaManager, may have
+    already left behind under the true video filename), so callers writing an
+    NFO need this, not just the folder name movie_art_sync itself is content
+    with for images. full_filename is the same name WITH its extension, for
+    callers that need to report the exact original filename back (see
+    discovered_via_fallback below) rather than Kodi's NFO-naming convention.
+    discovered_via_fallback is True when title/year matching had to be used
+    (see below) -- callers can report full_filename back to Chronicle via
+    POST .../resolved-file so it becomes a known fact for next time instead
+    of a re-derived guess on every future scrape.
 
-    Tries the VideoLibrary fast path first, then falls back to browsing
-    Kodi's own configured video sources directly -- see module docstring for
-    why both exist and why the fallback is the one that's actually reliable."""
+    known_filename, when given, is the real file's own basename exactly as
+    Chronicle already recorded it -- a verified fact, not a re-derived title/
+    year guess. Confirmed directly (2026-08-04) this is worth trying FIRST:
+    title+year matching against a folder name fails whenever Chronicle's
+    resolved year, the folder's own year, and the file's own year disagree
+    (common in practice -- a folder named "(2023)" containing a file named
+    "(2024).mkv" is exactly the kind of real-world inconsistency exact-year
+    matching can never bridge no matter how it's tuned), while a verified
+    filename sidesteps the whole problem: it doesn't matter what year anyone
+    thinks this is, only that the file exists.
+
+    When no known_filename is available (item was never scanned by Chronicle's
+    file scanner, and no prior scrape has reported one back yet) -- or it is
+    given but not found (movie not yet committed to VideoLibrary) -- falls
+    back to the VideoLibrary fast path, then to browsing Kodi's own configured
+    video sources directly. See module docstring for why both of those exist
+    and why the source-browsing fallback is the one that's actually reliable."""
+    if known_filename:
+        file_path = _lookup_by_known_filename(known_filename)
+        if file_path:
+            folder = posixpath.dirname(file_path) + '/'
+            basename = posixpath.basename(file_path)
+            return folder, strip_video_ext(basename), basename, False
+
     file_path = _lookup_via_video_library(title, year)
     if file_path:
         folder = posixpath.dirname(file_path) + '/'
-        return folder, _strip_video_ext(posixpath.basename(file_path))
+        basename = posixpath.basename(file_path)
+        return folder, strip_video_ext(basename), basename, (known_filename is None)
 
     result = _search_sources_for_movie(title, year)
     if result:
         folder, video_name = result
-        return folder, (_strip_video_ext(video_name) if video_name else None)
+        stripped = strip_video_ext(video_name) if video_name else None
+        return folder, stripped, video_name, True
 
     log.info('No folder found for {0!r} ({1}) via VideoLibrary or source browsing -- '
              'will not sync local art/NFO this pass'.format(title, year))
-    return None, None
+    return None, None, None, False
 
 
-def _strip_video_ext(filename):
+def _lookup_by_known_filename(filename):
+    """Searches Kodi's VideoLibrary for a movie whose real file has this exact
+    basename -- a verified fact Chronicle already recorded (or a prior
+    scrape already discovered and reported back), not a re-derived title+
+    year guess. Cheap: one VideoLibrary.GetMovies call already returns every
+    movie's real file path; this just looks for an exact basename match.
+    Returns None if the file isn't in Kodi's library yet (e.g. this is the
+    very first scrape for a brand-new addition) -- callers fall back to the
+    title/year-based chain in that case, same as having no known filename."""
+    request = {
+        'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetMovies',
+        'params': {'properties': ['file']},
+    }
+    try:
+        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+    except Exception as exc:
+        log.warning("Couldn't query VideoLibrary for known filename {0!r}: {1}".format(filename, exc))
+        return None
+    if 'error' in response:
+        return None
+    for movie in response.get('result', {}).get('movies') or []:
+        file_path = movie.get('file') or ''
+        if posixpath.basename(file_path) == filename:
+            return file_path
+    return None
+
+
+def get_streamdetails(file_path):
+    """Returns Kodi's own streamdetails dict ({'video': [...], 'audio': [...],
+    'subtitle': [...]}) for the movie whose real file matches file_path
+    exactly, or None if Kodi's VideoLibrary doesn't have this file yet (a
+    brand-new addition being scraped for the first time -- Kodi does not
+    guarantee streamdetails has finished probing by getdetails() time) or
+    doesn't have it at all. Kodi's own scan is the only source for this:
+    Chronicle's server has no way to know a file's own codec, resolution,
+    HDR type, or audio/subtitle tracks -- only the player that actually
+    opened the file does.
+
+    Matched by exact file path (the same VideoLibrary.GetMovies call
+    already used elsewhere in this module for "is this filename known"
+    lookups) rather than by movieid, since the scraper's find/getdetails
+    contract never hands this script a Kodi movieid on any channel -- see
+    the module docstring."""
+    if not file_path:
+        return None
+    request = {
+        'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetMovies',
+        'params': {'properties': ['file', 'streamdetails']},
+    }
+    try:
+        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+    except Exception as exc:
+        log.warning("Couldn't query VideoLibrary for streamdetails of {0}: {1}".format(file_path, exc))
+        return None
+    if 'error' in response:
+        return None
+
+    for movie in response.get('result', {}).get('movies') or []:
+        if movie.get('file') != file_path:
+            continue
+        details = movie.get('streamdetails') or {}
+        if details.get('video') or details.get('audio') or details.get('subtitle'):
+            return details
+        return None
+
+    return None
+
+
+def strip_video_ext(filename):
     if not filename:
         return None
     lower = filename.lower()
@@ -230,12 +331,9 @@ def _lookup_movie_file(title, year):
         return None
 
     folder_name = posixpath.basename(posixpath.dirname(file_path).rstrip('/'))
-    target = _normalize(title)
-    target_with_year = target + str(year) if year else None
-    folder_norm = _normalize(folder_name)
-    matches = (target_with_year and folder_norm == target_with_year) or \
-              (not target_with_year and folder_norm == target)
-    if not matches:
+    target = normalize(title)
+    folder_norm = normalize(folder_name)
+    if not year_tolerant_match(folder_norm, target, year):
         log.warning('VideoLibrary lookup for {0!r} ({1}) returned {2!r} -- folder name doesn\'t '
                     'match the searched title, Kodi\'s own stored title for this entry is '
                     'likely wrong; refusing to trust it, falling back to source browsing '
@@ -245,7 +343,7 @@ def _lookup_movie_file(title, year):
     return file_path
 
 
-def _normalize(text):
+def normalize(text):
     """Lowercases and strips everything but letters/digits, so folder-naming
     variations (colons, periods, apostrophes, ampersands, spacing) don't
     prevent a real match -- e.g. "Mar.IA" and "Mar IA" both normalize to
@@ -253,7 +351,38 @@ def _normalize(text):
     return re.sub(r'[^a-z0-9]', '', (text or '').lower())
 
 
-def _get_video_sources():
+def year_tolerant_match(folder_norm, target, year):
+    """True if folder_norm is exactly target's normalized title, optionally
+    followed by a year within +/-1 of the given year (or no year suffix at
+    all, when the folder has none).
+
+    The title portion must match at the EXACT length of target, not merely
+    via startswith() -- that distinction is what keeps this safe. "alien" is
+    a literal string-prefix of "alienromulus2024", but the leftover suffix
+    ("romulus2024") isn't a bare year, so it's correctly rejected; a genuine
+    prefix relationship between two different titles can never satisfy this
+    check, only a real title match with an adjacent year can.
+
+    Confirmed directly (2026-08-04, live library scan): several real movies
+    have a folder year one off from what Chronicle/the video filename inside
+    actually reports (e.g. "Arctic Armageddon (2023)" containing "Arctic
+    Armageddon (2024).mkv") -- exact-year-only matching silently skipped
+    every one of these even though the title match was perfect. This +/-1
+    tolerance fixes that real, common case without reopening the prefix-
+    corruption risk (Alien (1979) matching Alien Romulus (2024)) the exact-
+    title requirement exists to prevent -- that was a title mismatch, not a
+    year mismatch, and this tolerance only ever relaxes the year."""
+    if not folder_norm.startswith(target):
+        return False
+    suffix = folder_norm[len(target):]
+    if not suffix:
+        return True
+    if year is None or not suffix.isdigit():
+        return False
+    return abs(int(suffix) - year) <= 1
+
+
+def get_video_sources():
     """Every configured video source path, via Kodi's own cross-platform
     Files.GetSources -- with any multipath:// virtual source (bundling several
     real shares into one browsable "Movies" entry, confirmed to be exactly how
@@ -369,35 +498,72 @@ def _search_sources_for_movie(title, year):
     first source with no match -- the previous per-source-only exact check
     already had this same "wrong source checked first" exposure even before
     the weak fallback is considered.
+
+    A real, legitimate title+year match always wins globally over a title-
+    only one from ANY source -- confirmed directly (2026-07-30) that a folder
+    genuinely missing its year (e.g. "Toy Story 5 ()" instead of
+    "Toy Story 5 (2026)", inconsistent with every one of its sibling movie
+    folders) otherwise never matches once Chronicle has resolved a real year
+    for the title, since requiring title+year together was the whole fix for
+    the Alien/Alien-Romulus-style corruption above. Each tier below is still
+    a full EXACT match on the title portion of the folder's normalized name
+    -- not the old "starts with" fuzzy match -- so none of them reopen that
+    same cross-contamination risk; they only ever help when no source
+    anywhere has a higher-tier match.
+
+    Three tiers, tried in order, first hit across ALL sources wins:
+      1. Exact title + exact year.
+      2. Exact title, no year in the folder at all (Toy-Story-5-() case above).
+      3. Exact title + year within +/-1 -- confirmed directly (2026-08-04,
+         live library scan) that several real movies have a folder year one
+         off from what Chronicle/the video filename inside actually reports
+         (e.g. "Arctic Armageddon (2023)" containing "Arctic Armageddon
+         (2024).mkv"); tiers 1-2 alone silently skipped every one of these
+         despite a perfect title match. Tier 3 is deliberately checked LAST,
+         after every source has had a chance at an exact-year match, so a
+         genuine exact match anywhere is never displaced by a looser one.
     """
-    target = _normalize(title)
+    target = normalize(title)
     if not target:
         return None
     target_with_year = target + str(year) if year else None
 
-    for source in _get_video_sources():
+    listings = []
+    for source in get_video_sources():
         dirs, _files = listdir_with_timeout(source)
-        if dirs is None:
-            continue
+        if dirs is not None:
+            listings.append((source, dirs))
 
-        best = None
+    if target_with_year:
+        for source, dirs in listings:
+            for name in dirs:
+                if normalize(name) == target_with_year:
+                    result = _resolve_movie_folder(source, name)
+                    if result:
+                        return result
+
+    for source, dirs in listings:
         for name in dirs:
-            normalized = _normalize(name)
-            if target_with_year and normalized == target_with_year:
-                best = name
-                break  # exact title+year match -- can't do better than this
-            if best is None and not target_with_year and normalized == target:
-                best = name  # no year to disambiguate with -- exact title match only
+            if normalize(name) == target:
+                result = _resolve_movie_folder(source, name)
+                if result:
+                    return result
 
-        if not best:
-            continue
-
-        folder = source.rstrip('/') + '/' + best + '/'
-        video_name = _find_video_filename(folder)
-        if video_name:
-            return folder, video_name
+    if year is not None:
+        for source, dirs in listings:
+            for name in dirs:
+                if year_tolerant_match(normalize(name), target, year):
+                    result = _resolve_movie_folder(source, name)
+                    if result:
+                        return result
 
     return None
+
+
+def _resolve_movie_folder(source, name):
+    folder = source.rstrip('/') + '/' + name + '/'
+    video_name = _find_video_filename(folder)
+    return (folder, video_name) if video_name else None
 
 
 def _find_video_filename(folder):

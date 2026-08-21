@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""metadata.chronicle.python — Script entry point.
+"""script.chronicle.scraper — Script entry point.
 
 Shown when the user opens the addon from the Kodi add-on browser, or when
 Kodi's "Change Content" scraper-configuration screen opens this addon's
@@ -22,6 +22,21 @@ ADDON = xbmcaddon.Addon()
 log   = Logger('default')
 
 
+def _format_duration(seconds):
+    """Renders a countdown as 'Xh Ym' / 'Ym' / 'less than a minute', for the
+    NFO rebuild's wait-phase ETA -- always rounds up so a shown estimate
+    never expires before the thing it's estimating actually can."""
+    minutes = int(seconds // 60) + (1 if seconds % 60 else 0)
+    if minutes <= 0:
+        return ADDON.getLocalizedString(32104)  # "less than a minute"
+    hours, minutes = divmod(minutes, 60)
+    if hours and minutes:
+        return '{0}h {1}m'.format(hours, minutes)
+    if hours:
+        return '{0}h'.format(hours)
+    return '{0}m'.format(minutes)
+
+
 def _is_configured():
     """True once a server URL and API key are both present.
 
@@ -34,7 +49,7 @@ def _is_configured():
 
 
 def _get_args():
-    """Parse action=... from RunScript(metadata.chronicle.python,action=...) calls."""
+    """Parse action=... from RunScript(script.chronicle.scraper,action=...) calls."""
     args = {}
     for arg in sys.argv[1:]:
         if '=' in arg:
@@ -142,10 +157,12 @@ def _connect_to_chronicle():
 
 def _rebuild_nfos():
     """Warns the user clearly, then -- only on explicit confirmation -- runs
-    nfo_rebuild.run(): permanently deletes every local .nfo and movieset-*
-    file the whole movie library has, and refreshes each movie so Chronicle
-    repopulates them. See nfo_rebuild.py's module docstring for why this has
-    to be a deliberate, explicit action rather than automatic."""
+    nfo_rebuild.run(): deletes every local .nfo/tvshow.nfo and movieset-*
+    file across the whole movie and TV library (preserving whatever data
+    they held first -- see lib/legacy_nfo.py and
+    collection_sync.preserve_local_movieset_file), and refreshes each item
+    so Chronicle repopulates them. See nfo_rebuild.py's module docstring for
+    why this has to be a deliberate, explicit action rather than automatic."""
     dialog = xbmcgui.Dialog()
     confirmed = dialog.yesno(
         ADDON.getLocalizedString(32000),      # "Chronicle Scraper"
@@ -156,22 +173,89 @@ def _rebuild_nfos():
     if not confirmed:
         return
 
+    # Issue phase: a real foreground DialogProgress, Cancel available -- the
+    # addon script is actively doing something here (issuing delete+refresh
+    # per movie) that's worth a Cancel button and worth blocking on.
     progress = xbmcgui.DialogProgress()
     progress.create(ADDON.getLocalizedString(32093))  # "Rebuild local NFOs from Chronicle"
+    state = {'modal_closed': False, 'bg': None}
 
     def on_progress(index, total, label):
         percent = int(index * 100 / total) if total else 0
         progress.update(percent, '{0}/{1}: {2}'.format(index + 1, total, label))
 
-    try:
-        processed, nfo_deleted, movieset_deleted, refresh_errors = nfo_rebuild.run(
-            progress_callback=on_progress, is_cancelled=progress.iscanceled)
-    finally:
+    def on_issuing_complete(pending_total, budget_seconds):
+        # From here on, the only thing left is Kodi's own library queue
+        # draining -- nothing the user could usefully Cancel, and nothing
+        # that needs them watching. Close the modal, tell them once, then
+        # switch to a background (non-blocking) indicator so Kodi stays
+        # fully usable -- including playback -- for however long this takes.
         progress.close()
+        state['modal_closed'] = True
+        xbmcgui.Dialog().ok(
+            ADDON.getLocalizedString(32093),
+            ADDON.getLocalizedString(32100).format(
+                pending_total, _format_duration(budget_seconds)),
+        )
+        bg = xbmcgui.DialogProgressBG()
+        bg.create(ADDON.getLocalizedString(32093))
+        state['bg'] = bg
 
-    dialog.ok(
+    def on_wait_progress(confirmed, pending_total, waited_seconds, budget_seconds):
+        bg = state['bg']
+        if bg is None:
+            return
+        # budget_seconds is nfo_rebuild's own ceiling, already sized off the
+        # pending count (floor + N seconds/movie), so "budget - elapsed" is
+        # an honest worst-case remaining estimate -- it can only under-run,
+        # never blow past what's shown, since confirmations that arrive
+        # faster than the per-movie budget just end the wait early.
+        remaining = max(0, budget_seconds - waited_seconds)
+        percent = int(confirmed * 100 / pending_total) if pending_total else 100
+        bg.update(percent, message=ADDON.getLocalizedString(32103).format(
+            confirmed, pending_total, _format_duration(remaining)))
+
+    try:
+        result = nfo_rebuild.run(
+            progress_callback=on_progress, is_cancelled=progress.iscanceled,
+            wait_progress_callback=on_wait_progress, on_issuing_complete=on_issuing_complete)
+    finally:
+        if not state['modal_closed']:
+            progress.close()
+        if state['bg'] is not None:
+            state['bg'].close()
+
+    # Two genuinely different outcomes get genuinely different messages,
+    # rather than one line trying to carry every number at once (deleted
+    # counts, confirmed counts, errors) with no explanation of how they
+    # relate -- that was the actual problem with the old single summary.
+    if result['cancelled']:
+        # An explicit interruption, not a routine background finish -- worth
+        # a modal the user has to acknowledge, since it's telling them
+        # something they didn't expect (the run stopped short) rather than
+        # just confirming something they were already told to expect.
+        xbmcgui.Dialog().ok(
+            ADDON.getLocalizedString(32093),
+            ADDON.getLocalizedString(32102).format(result['processed'], result['total']),
+        )
+        return
+
+    problem_count = result['unconfirmed_count'] + result['refresh_errors']
+    if problem_count == 0:
+        message = ADDON.getLocalizedString(32097).format(result['total'])
+    else:
+        message = ADDON.getLocalizedString(32101).format(
+            result['nfo_confirmed'], result['pending_total'], problem_count)
+
+    # A notification, not a modal dialog.ok() -- by the time this fires the
+    # user was told to go do something else, quite possibly playback, and a
+    # blocking dialog here would rudely interrupt whatever that turned out
+    # to be. Kodi's own notification popup is enough to confirm it's done.
+    xbmcgui.Dialog().notification(
         ADDON.getLocalizedString(32093),
-        ADDON.getLocalizedString(32097).format(processed, nfo_deleted, movieset_deleted, refresh_errors),
+        message,
+        icon=xbmcgui.NOTIFICATION_INFO,
+        time=10000,
     )
 
 
