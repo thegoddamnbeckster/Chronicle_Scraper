@@ -65,6 +65,8 @@ from urllib.parse import unquote
 import xbmc
 import xbmcvfs
 
+from lib import art_sync_cache
+from lib import location_cache
 from lib.logger import Logger
 
 log = Logger('movie_art_sync')
@@ -96,7 +98,9 @@ def sync_movie_art(title, year, artwork, location=None):
     """artwork is the same dict ScraperController's /movies/details returns --
     {arttype: [{url, source}, ...]}. Overwrites the movie's own local
     poster/fanart files (if its folder can be found) with Chronicle's first
-    (authoritative) candidate for each type.
+    (authoritative) candidate for each type -- except when art_sync_cache
+    already confirms that exact URL is what's sitting there right now, in
+    which case the download is skipped entirely (see lib/art_sync_cache.py).
 
     location, if given, is a pre-resolved (folder, video_basename) tuple --
     pass this when the caller already looked the movie up for another reason
@@ -128,9 +132,16 @@ def sync_movie_art(title, year, artwork, location=None):
             continue
         url = candidates[0]['url']
         dest = '{0}{1}-{2}.{3}'.format(folder, folder_name, art_type, ext)
+
+        if art_sync_cache.already_synced(dest, url):
+            log.info('sync_movie_art: "{0}" ({1}) -- {2} already matches Chronicle\'s current '
+                     'pick, skipping download'.format(title, year, art_type))
+            continue
+
         log.info('sync_movie_art: "{0}" ({1}) -- writing {2} from {3} to {4}'.format(
             title, year, art_type, url, dest))
         if _write_remote_file(dest, url):
+            art_sync_cache.remember(dest, url)
             log.info('Synced local {0} for "{1}" from Chronicle'.format(art_type, title))
 
 
@@ -181,10 +192,24 @@ def find_movie_location(title, year, known_filename=None):
         basename = posixpath.basename(file_path)
         return folder, strip_video_ext(basename), basename, (known_filename is None)
 
+    # Bridges find() and getdetails() for the SAME movie -- see
+    # lib/location_cache.py's own docstring. A brand-new movie isn't in
+    # VideoLibrary at either call, so without this, getdetails() would
+    # silently redo the exact same slow source-browse find() just finished
+    # doing a moment ago, for the same file, for no new information.
+    cached = location_cache.recall(title, year)
+    if cached:
+        folder, video_basename, full_filename = cached
+        if folder:
+            log.info('find_movie_location: {0!r} ({1}) -- reusing location already '
+                     'discovered by this scrape\'s own find() step'.format(title, year))
+            return folder, video_basename, full_filename, True
+
     result = _search_sources_for_movie(title, year)
     if result:
         folder, video_name = result
         stripped = strip_video_ext(video_name) if video_name else None
+        location_cache.remember(title, year, folder, stripped, video_name)
         return folder, stripped, video_name, True
 
     log.info('No folder found for {0!r} ({1}) via VideoLibrary or source browsing -- '
