@@ -138,12 +138,11 @@ def _build_episode_nfo(details, streamdetails=None, local_art=None):
     nfo_common.add_uniqueids(root, details.get('externalIds'))
     nfo_common.add_ratings(root, details.get('ratings'))
 
-    # thumbUrl is a single URL, not a candidate-list dict the way movie/show
-    # artwork is -- wrap it into the {art_type: [{'url': ...}]} shape
-    # build_art_block expects so the local-thumb fallback logic still
-    # applies uniformly.
-    artwork = {'thumb': [{'url': details['thumbUrl']}]} if details.get('thumbUrl') else {}
-    nfo_common.build_art_block(root, artwork, local_art, _EPISODE_ART_TAGS)
+    # A full {art_type: [{'url': ...}, ...]} candidate-list dict, same shape
+    # movie/show artwork already uses -- ScraperController.CollectEpisodeArtwork
+    # re-keys what it calls "poster" server-side to "thumb" specifically so
+    # this lines up without any translation needed here.
+    nfo_common.build_art_block(root, details.get('artwork'), local_art, _EPISODE_ART_TAGS)
 
     nfo_common.add_streamdetails(root, streamdetails)
 

@@ -46,6 +46,7 @@ from lib import legacy_nfo
 from lib.chronicle_client import ChronicleClient
 from lib.kodi_video_info import apply_common_video_info, apply_ratings, apply_artwork
 from lib.movie_art_sync import strip_video_ext
+from lib.tv_art_sync import sync_show_art, sync_season_art, sync_episode_art
 from lib.tv_nfo_writer import sync_show_nfo, sync_episode_nfo
 from lib.tvshow_location import find_show_location, get_episode
 
@@ -165,8 +166,16 @@ def get_details(show_id, handle):
         if number is None:
             continue
         vtag.addSeason(number, season.get('name') or '')
-        if season.get('posterUrl'):
-            vtag.addAvailableArtwork(season['posterUrl'], 'poster', season=number)
+        # Every candidate for every art type this season has, not just the top
+        # poster pick -- same "offer every real alternate" treatment
+        # apply_artwork() gives movies/shows, just via InfoTagVideo's
+        # per-season overload instead (there's no per-season setArt(), so
+        # Chronicle's own top pick still only reaches Kodi's active season
+        # art via sync_season_art's local file below).
+        for art_type, candidates in (season.get('artwork') or {}).items():
+            for candidate in candidates:
+                vtag.addAvailableArtwork(candidate['url'], art_type, season=number)
+        sync_season_art(details.get('title'), folder, number, season.get('artwork'))
 
     apply_ratings(vtag, details.get('ratings'))
     apply_artwork(listitem, details.get('artwork'))
@@ -176,6 +185,12 @@ def get_details(show_id, handle):
             xbmc.Actor(name=actor.get('name') or '', role=actor.get('role') or '', order=i)
             for i, actor in enumerate(details['cast'])
         ])
+
+    # Unconditional, same as movies' sync_movie_art -- Kodi re-applies a
+    # show's local poster/fanart on its own schedule regardless of the
+    # write_nfo setting, so the local file has to already be correct or
+    # Kodi will keep showing something stale no matter what setArt() said.
+    sync_show_art(details.get('title'), details.get('year'), details.get('artwork'), location=location)
 
     if ADDON.getSettingBool('write_nfo'):
         sync_show_nfo(details.get('title'), details.get('year'), details, location=location)
@@ -297,9 +312,15 @@ def get_episode_details(encoded_ids, handle):
             xbmc.Actor(name=actor.get('name') or '', role=actor.get('role') or '', order=i)
             for i, actor in enumerate(details['cast'])
         ])
-    if details.get('thumbUrl'):
-        listitem.setArt({'thumb': details['thumbUrl']})
-        vtag.addAvailableArtwork(details['thumbUrl'], 'thumb')
+    # Shared with movies/shows -- offers every thumb candidate Chronicle has
+    # (ScraperController.CollectEpisodeArtwork already re-keys "poster" to
+    # "thumb" server-side, so this dict uses the same art-type name Kodi's
+    # episode picker expects), not just a single URL.
+    apply_artwork(listitem, details.get('artwork'))
+
+    # Unconditional, same as movies' sync_movie_art and this file's own
+    # sync_show_art above -- see sync_show_art's call site for why.
+    sync_episode_art(show_title, folder, video_basename, details.get('artwork'))
 
     if ADDON.getSettingBool('write_nfo'):
         sync_episode_nfo(details, folder, video_basename, streamdetails=streamdetails)
@@ -327,8 +348,12 @@ def get_artwork(show_id, handle):
 
     vtag = listitem.getVideoInfoTag()
     for season in details.get('seasons') or []:
-        if season.get('posterUrl') and season.get('number') is not None:
-            vtag.addAvailableArtwork(season['posterUrl'], 'poster', season=season['number'])
+        number = season.get('number')
+        if number is None:
+            continue
+        for art_type, candidates in (season.get('artwork') or {}).items():
+            for candidate in candidates:
+                vtag.addAvailableArtwork(candidate['url'], art_type, season=number)
 
     xbmcplugin.setResolvedUrl(handle=handle, succeeded=True, listitem=listitem)
     return True
