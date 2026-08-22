@@ -44,7 +44,6 @@ therefore followed by a Textures.RemoveTexture call for that path.
 import json
 import re
 import time
-import urllib.request
 import urllib.parse
 
 import xbmc
@@ -53,6 +52,7 @@ import xbmcgui
 import xbmcvfs
 
 from lib import art_sync_cache
+from lib.remote_file import write_remote_file
 from lib.logger import Logger
 from lib.kodi_settings import get_setting_value
 
@@ -154,7 +154,7 @@ def sync_collection_art(collection):
         log.info('sync_collection_art: set "{0}" -- {1} {2}: {3} -> {4}'.format(
             name, filename, action, url, dest))
 
-        result = _write_remote_file(dest, url)
+        result = write_remote_file(dest, url)
         if result == 'ok':
             art_sync_cache.remember(dest, url)
             if exists:
@@ -172,7 +172,7 @@ def sync_collection_art(collection):
             # nothing about whether the folder is writable, so it must not be
             # reported as the same problem.
             _notify_unreachable(base)
-        # 'download_failed' already logged its own reason in _write_remote_file;
+        # 'download_failed' already logged its own reason in write_remote_file;
         # nothing further to do here, and definitely not a folder-writability signal.
 
     if refreshed:
@@ -390,37 +390,6 @@ def _invalidate_texture(path):
                 texture.get('textureid'), exc))
 
     log.info('Invalidated {0} cached texture(s) for {1}'.format(removed, path))
-
-
-def _write_remote_file(dest_path, url):
-    """Returns 'ok', 'download_failed', or 'write_failed' -- the caller needs to
-    tell these apart, since only a write failure says anything about whether the
-    destination folder itself is writable."""
-    try:
-        with urllib.request.urlopen(url, timeout=20) as resp:
-            data = resp.read()
-    except Exception as exc:
-        log.warning("Couldn't download {0}: {1}".format(url, exc))
-        return 'download_failed'
-
-    try:
-        f = xbmcvfs.File(dest_path, 'w')
-        try:
-            written = f.write(bytearray(data))
-        finally:
-            f.close()
-    except Exception as exc:
-        log.warning("Couldn't write {0}: {1}: {2}".format(dest_path, type(exc).__name__, exc))
-        return 'write_failed'
-
-    # xbmcvfs.File.write() doesn't raise on most VFS failures (permission denied,
-    # unreachable share) -- it just silently returns a falsy value, so that has
-    # to be treated as a real failure, not just an exception.
-    ok = bool(written) if written is not None else True
-    if not ok:
-        log.warning('xbmcvfs.File.write() returned falsy for {0} (no exception raised)'.format(dest_path))
-        return 'write_failed'
-    return 'ok'
 
 
 def _notify_unreachable(base_folder):

@@ -34,10 +34,9 @@ re-keys what it calls "poster" server-side to "thumb" for exactly that
 reason, so a "poster" key never actually arrives here for an episode.
 """
 
-import xbmcvfs
-
 from lib import art_sync_cache
 from lib.logger import Logger
+from lib.remote_file import write_remote_file
 from lib.tvshow_location import find_show_location
 
 log = Logger('tv_art_sync')
@@ -117,28 +116,6 @@ def _sync_art_files(folder, prefix, artwork, art_files, log_label):
             continue
 
         log.info('{0} -- writing {1} from {2} to {3}'.format(log_label, art_type, url, dest))
-        if _write_remote_file(dest, url):
+        if write_remote_file(dest, url) == 'ok':
             art_sync_cache.remember(dest, url)
             log.info('{0} -- synced local {1} from Chronicle'.format(log_label, art_type))
-
-
-def _write_remote_file(dest_path, url):
-    import urllib.request
-    try:
-        with urllib.request.urlopen(url, timeout=20) as resp:
-            data = resp.read()
-    except Exception as exc:
-        log.warning("Couldn't download {0}: {1}".format(url, exc))
-        return False
-
-    try:
-        f = xbmcvfs.File(dest_path, 'w')
-        try:
-            f.write(bytearray(data))
-        finally:
-            f.close()
-    except Exception as exc:
-        log.warning("Couldn't write {0}: {1}".format(dest_path, exc))
-        return False
-
-    return True

@@ -67,6 +67,7 @@ import xbmcvfs
 
 from lib import art_sync_cache
 from lib import location_cache
+from lib.remote_file import write_remote_file
 from lib.logger import Logger
 
 log = Logger('movie_art_sync')
@@ -140,7 +141,7 @@ def sync_movie_art(title, year, artwork, location=None):
 
         log.info('sync_movie_art: "{0}" ({1}) -- writing {2} from {3} to {4}'.format(
             title, year, art_type, url, dest))
-        if _write_remote_file(dest, url):
+        if write_remote_file(dest, url) == 'ok':
             art_sync_cache.remember(dest, url)
             log.info('Synced local {0} for "{1}" from Chronicle'.format(art_type, title))
 
@@ -605,23 +606,3 @@ def _find_video_filename(folder):
     return None
 
 
-def _write_remote_file(dest_path, url):
-    import urllib.request
-    try:
-        with urllib.request.urlopen(url, timeout=20) as resp:
-            data = resp.read()
-    except Exception as exc:
-        log.warning("Couldn't download {0}: {1}".format(url, exc))
-        return False
-
-    try:
-        f = xbmcvfs.File(dest_path, 'w')
-        try:
-            f.write(bytearray(data))
-        finally:
-            f.close()
-    except Exception as exc:
-        log.warning("Couldn't write {0}: {1}".format(dest_path, exc))
-        return False
-
-    return True

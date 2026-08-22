@@ -44,7 +44,9 @@ from lib.logger import Logger
 from lib import activity_tracker
 from lib import legacy_nfo
 from lib.chronicle_client import ChronicleClient
-from lib.kodi_video_info import apply_common_video_info, apply_ratings, apply_artwork
+from lib.kodi_video_info import (
+    apply_common_video_info, apply_ratings, apply_artwork, add_season_artwork_candidates,
+)
 from lib.movie_art_sync import strip_video_ext
 from lib.tv_art_sync import sync_show_art, sync_season_art, sync_episode_art
 from lib.tv_nfo_writer import sync_show_nfo, sync_episode_nfo
@@ -101,6 +103,29 @@ def find_show(title, year, handle):
         listitem=listitem,
         isFolder=True,
     )
+
+
+def _season_artwork(season):
+    """Returns this season's full artwork candidate dict, falling back to a
+    synthetic single-poster-candidate dict built from the season's own bare
+    posterUrl field when the server has nothing richer to offer.
+
+    ScraperSeasonDto keeps PosterUrl alongside the newer Artwork dict
+    specifically so an addon upgraded ahead of its Chronicle server (the two
+    aren't necessarily upgraded in lockstep) still gets a season poster
+    instead of silently losing it -- without this fallback, an old server
+    (Artwork absent/empty, PosterUrl still populated) would leave both
+    add_season_artwork_candidates() and sync_season_art() with nothing to
+    do, with no error or warning anywhere that the cause was a version gap."""
+    artwork = season.get('artwork')
+    if artwork:
+        return artwork
+    poster_url = season.get('posterUrl')
+    if not poster_url:
+        return None
+    log.info('_season_artwork: season {0} has no artwork dict from the server (old Chronicle '
+             'version?) -- falling back to its bare posterUrl'.format(season.get('number')))
+    return {'poster': [{'url': poster_url, 'source': None}]}
 
 
 def _merge_legacy_gaps(details, legacy_data, keys):
@@ -166,16 +191,9 @@ def get_details(show_id, handle):
         if number is None:
             continue
         vtag.addSeason(number, season.get('name') or '')
-        # Every candidate for every art type this season has, not just the top
-        # poster pick -- same "offer every real alternate" treatment
-        # apply_artwork() gives movies/shows, just via InfoTagVideo's
-        # per-season overload instead (there's no per-season setArt(), so
-        # Chronicle's own top pick still only reaches Kodi's active season
-        # art via sync_season_art's local file below).
-        for art_type, candidates in (season.get('artwork') or {}).items():
-            for candidate in candidates:
-                vtag.addAvailableArtwork(candidate['url'], art_type, season=number)
-        sync_season_art(details.get('title'), folder, number, season.get('artwork'))
+        season_artwork = _season_artwork(season)
+        add_season_artwork_candidates(vtag, season_artwork, number)
+        sync_season_art(details.get('title'), folder, number, season_artwork)
 
     apply_ratings(vtag, details.get('ratings'))
     apply_artwork(listitem, details.get('artwork'))
@@ -351,9 +369,7 @@ def get_artwork(show_id, handle):
         number = season.get('number')
         if number is None:
             continue
-        for art_type, candidates in (season.get('artwork') or {}).items():
-            for candidate in candidates:
-                vtag.addAvailableArtwork(candidate['url'], art_type, season=number)
+        add_season_artwork_candidates(vtag, _season_artwork(season), number)
 
     xbmcplugin.setResolvedUrl(handle=handle, succeeded=True, listitem=listitem)
     return True
