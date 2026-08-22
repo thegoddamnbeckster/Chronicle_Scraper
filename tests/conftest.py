@@ -80,6 +80,9 @@ class FakeAddon:
     def getLocalizedString(self, code):
         return str(code)
 
+    def setSetting(self, key, value):
+        self._settings[key] = value
+
 
 def install_kodi_mocks(monkeypatch, settings=None):
     """Installs fresh fake xbmc* modules into sys.modules for the duration of
@@ -141,6 +144,67 @@ def install_kodi_mocks(monkeypatch, settings=None):
             self.available_artwork.append((url, art_type, kwargs))
 
     fake_xbmcgui.ListItem = _ListItem
+
+    dialog_calls = []
+
+    class _Dialog:
+        """Records every .ok()/.notification() call so a test can assert what the
+        user was shown without a real Kodi GUI. New instance per call in addon
+        code (xbmcgui.Dialog().ok(...)), so calls accumulate on the module-level
+        list rather than per-instance state."""
+        def ok(self, heading, message):
+            dialog_calls.append(('ok', heading, message))
+            return True
+
+        def notification(self, heading, message, *a, **k):
+            dialog_calls.append(('notification', heading, message))
+
+    fake_xbmcgui.Dialog = _Dialog
+    fake_xbmcgui.dialog_calls = dialog_calls
+
+    class _Window:
+        def __init__(self, window_id=0):
+            self._window_id = window_id
+
+        def getProperty(self, name):
+            return ''
+
+    fake_xbmcgui.Window = _Window
+
+    class _WindowDialog:
+        """Minimal stand-in for xbmcgui.WindowDialog -- just enough surface for
+        modules that subclass it (e.g. QRDialog) to import and instantiate;
+        none of these tests drive an actual on-screen dialog."""
+        def __init__(self, *a, **k):
+            pass
+
+        def addControl(self, *a, **k):
+            pass
+
+        def getControl(self, *a, **k):
+            return None
+
+        def close(self):
+            pass
+
+        def doModal(self):
+            pass
+
+    fake_xbmcgui.WindowDialog = _WindowDialog
+
+    class _Control:
+        def __init__(self, *a, **k):
+            pass
+
+        def setImage(self, *a, **k):
+            pass
+
+        def setLabel(self, *a, **k):
+            pass
+
+    fake_xbmcgui.ControlImage = _Control
+    fake_xbmcgui.ControlLabel = _Control
+    fake_xbmcgui.ControlButton = _Control
 
     fake_xbmcplugin = types.ModuleType('xbmcplugin')
     fake_xbmcplugin.setResolvedUrl = lambda **k: None

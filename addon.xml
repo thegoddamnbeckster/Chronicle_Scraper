@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper"
        name="Chronicle Scraper"
-       version="2.13.5"
+       version="2.13.6"
        provider-name="Michael Beck">
 
   <requires>
@@ -49,7 +49,10 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies and TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, seasons and episodes, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans.</description>
-    <news>v2.13.5 - Code review fixes on v2.13.2-2.13.4's TV artwork work, all covered by new tests (tests/, run via pytest -- first test infrastructure this addon has had):
+    <news>v2.13.6 - Bug tracker fixes:
+(1) BUG-041: "Connect to Chronicle" could fail right after a fresh install/settings change, requiring a Kodi restart to work. Root cause: the button is a RunScript action fired from the same Settings screen as the chronicle_url text field, and Kodi doesn't guarantee that field's just-typed edit is committed before RunScript launches this as a separate process. Now retries reading the setting for up to ~1s before giving up, and shows a distinct "URL not set" message instead of the generic "could not contact server" one when it's genuinely empty.
+(2) Reported on Shield: the scraper would periodically throw "Movie collections folder not reachable" even though the folder was fine moments later. Root cause: a single failed mkdirs()/file-write against the movie-sets network folder was treated as proof the folder was gone -- but Android's SMB/network VFS client routinely drops and reconnects its session (Wi-Fi doze, the NAS still waking up, a brief DHCP/DNS blip), and that reconnect normally clears within a second or two. Both operations now retry a few times before concluding the folder is actually unreachable.
+v2.13.5 - Code review fixes on v2.13.2-2.13.4's TV artwork work, all covered by new tests (tests/, run via pytest -- first test infrastructure this addon has had):
 (1) location_cache.py's TTL cut from 600s to 30s -- a shared normalized-title+year cache key with a 10-minute window meant two different movies with the same title and year (a real category: same-titled direct-to-video/indie releases) both being scraped within that window could collide, handing movie B the folder discovered for movie A and writing its art/NFO into the wrong movie's directory. 30s keeps the cache serving its real purpose (bridging one find()-to-getdetails() gap, observed as low single-digit seconds) while shrinking the collision window by 20x.
 (2) Fixed a crash: season-level artwork candidates were iterated with no guard against a type's value being None (e.g. {'poster': None}) instead of an empty list or a missing key -- crashed get_details()/get_artwork() entirely for the whole show. Same unguarded-None bug also existed in the pre-existing apply_artwork() (movies/shows) and is now fixed there too.
 (3) Season-level fanart candidates were being sent through addAvailableArtwork() same as every other type, but InfoTagVideo has no per-season fanart-list setter as of Kodi 21 (the same limitation apply_artwork() already documents at the show/movie level) -- those candidates ran without error but never appeared in the picker. Now skipped with a log line explaining why, instead of silently doing nothing.

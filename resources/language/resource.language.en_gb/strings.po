@@ -176,3 +176,7 @@ msgstr ""
 msgctxt "#32107"
 msgid "{0} item(s) processed so far{1}"
 msgstr ""
+
+msgctxt "#32108"
+msgid "Chronicle server URL is not set. Enter it above, then try Connect to Chronicle again."
+msgstr ""
