@@ -65,6 +65,7 @@ from urllib.parse import unquote
 import xbmc
 import xbmcvfs
 
+from lib import art_sync_cache
 from lib import location_cache
 from lib.logger import Logger
 
@@ -97,7 +98,9 @@ def sync_movie_art(title, year, artwork, location=None):
     """artwork is the same dict ScraperController's /movies/details returns --
     {arttype: [{url, source}, ...]}. Overwrites the movie's own local
     poster/fanart files (if its folder can be found) with Chronicle's first
-    (authoritative) candidate for each type.
+    (authoritative) candidate for each type -- except when art_sync_cache
+    already confirms that exact URL is what's sitting there right now, in
+    which case the download is skipped entirely (see lib/art_sync_cache.py).
 
     location, if given, is a pre-resolved (folder, video_basename) tuple --
     pass this when the caller already looked the movie up for another reason
@@ -129,9 +132,16 @@ def sync_movie_art(title, year, artwork, location=None):
             continue
         url = candidates[0]['url']
         dest = '{0}{1}-{2}.{3}'.format(folder, folder_name, art_type, ext)
+
+        if art_sync_cache.already_synced(dest, url):
+            log.info('sync_movie_art: "{0}" ({1}) -- {2} already matches Chronicle\'s current '
+                     'pick, skipping download'.format(title, year, art_type))
+            continue
+
         log.info('sync_movie_art: "{0}" ({1}) -- writing {2} from {3} to {4}'.format(
             title, year, art_type, url, dest))
         if _write_remote_file(dest, url):
+            art_sync_cache.remember(dest, url)
             log.info('Synced local {0} for "{1}" from Chronicle'.format(art_type, title))
 
 

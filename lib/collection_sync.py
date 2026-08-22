@@ -52,6 +52,7 @@ import xbmcaddon
 import xbmcgui
 import xbmcvfs
 
+from lib import art_sync_cache
 from lib.logger import Logger
 from lib.kodi_settings import get_setting_value
 
@@ -104,7 +105,9 @@ def sync_collection_art(collection):
 
     Overwrites whatever local file is already there for every art type
     Chronicle currently has a candidate for -- see the module docstring for
-    why this is no longer fill-only."""
+    why this is no longer fill-only. Skips the download entirely when
+    art_sync_cache already confirms the exact same URL is what's sitting
+    there right now (lib/art_sync_cache.py)."""
     name = collection.get('name')
     if not name:
         return
@@ -141,6 +144,11 @@ def sync_collection_art(collection):
         exists = xbmcvfs.exists(dest)
         is_pinned = slot in pinned
 
+        if art_sync_cache.already_synced(dest, url):
+            log.info('sync_collection_art: set "{0}" -- {1} already matches Chronicle\'s '
+                     'current pick, skipping download'.format(name, filename))
+            continue
+
         action = 'refreshing (pinned in Chronicle)' if (exists and is_pinned) \
             else 'refreshing existing' if exists else 'missing locally, downloading'
         log.info('sync_collection_art: set "{0}" -- {1} {2}: {3} -> {4}'.format(
@@ -148,6 +156,7 @@ def sync_collection_art(collection):
 
         result = _write_remote_file(dest, url)
         if result == 'ok':
+            art_sync_cache.remember(dest, url)
             if exists:
                 # Same path, new bytes: Kodi would keep serving the cached copy for up
                 # to a day without this.
