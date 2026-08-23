@@ -53,8 +53,18 @@ _EPISODE_ART_TAGS = (('thumb', 'thumb'),)
 _EPISODE_LOCAL_ART_SUFFIXES = (('thumb', 'thumb'),)
 
 
-def _build_show_nfo(details, local_art=None):
+def _build_show_nfo(details, local_art=None, episode_guide=None):
     root = ET.Element('tvshow')
+
+    # Kodi prefers a local NFO already sitting in the folder over calling this scraper live --
+    # that's the whole reason this writer exists (see module docstring). But when Kodi reads
+    # the NFO directly rather than invoking get_details(), the only way it learns HOW to fetch
+    # this show's episode list from Chronicle again (for new episodes added later) is this tag.
+    # Without it, Kodi logs "no episode guide or we are using the local scraper" for every
+    # episode and never calls getepisodelist() at all -- confirmed live. Must match the exact
+    # string tvshow_scraper.py's own vtag.setEpisodeGuide() call uses for the live-scrape path,
+    # so both paths resolve to the same lookup.
+    nfo_common.add_text(root, 'episodeguide', episode_guide)
 
     nfo_common.add_text(root, 'title', details.get('title'))
     nfo_common.add_text(root, 'showtitle', details.get('title'))
@@ -88,14 +98,19 @@ def _build_show_nfo(details, local_art=None):
     return root
 
 
-def sync_show_nfo(title, year, details, location=None):
+def sync_show_nfo(title, year, details, location=None, episode_guide=None):
     """Writes tvshow.nfo for this show from Chronicle's `details` dict (the
     same one ScraperController's /tv/details returns).
 
     location, if given, is a pre-resolved (folder, tvshowid) tuple -- pass
     this when the caller already looked the show up for another reason so
     this doesn't repeat the same VideoLibrary/source-browsing lookup a
-    second time."""
+    second time.
+
+    episode_guide should be the exact same lookup string the caller passes
+    to vtag.setEpisodeGuide() during a live get_details() -- see
+    _build_show_nfo()'s own comment for why this has to be written into the
+    file, not just set on the live VideoInfoTag."""
     if location:
         folder, _tvshowid = location
     else:
@@ -106,7 +121,7 @@ def sync_show_nfo(title, year, details, location=None):
     dest = folder + 'tvshow.nfo'
     local_art = nfo_common.list_local_art_plain(folder, _SHOW_LOCAL_ART_SUFFIXES)
 
-    root = _build_show_nfo(details, local_art=local_art)
+    root = _build_show_nfo(details, local_art=local_art, episode_guide=episode_guide)
     xml_bytes = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + ET.tostring(root, encoding='utf-8')
 
     try:

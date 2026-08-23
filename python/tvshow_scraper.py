@@ -210,11 +210,13 @@ def get_details(show_id, handle):
     # Kodi will keep showing something stale no matter what setArt() said.
     sync_show_art(details.get('title'), details.get('year'), details.get('artwork'), location=location)
 
-    if ADDON.getSettingBool('write_nfo'):
-        sync_show_nfo(details.get('title'), details.get('year'), details, location=location)
-
     # Kodi echoes this back verbatim as the "url" param to getepisodelist.
-    vtag.setEpisodeGuide(build_lookup_string(show_id))
+    episode_guide = build_lookup_string(show_id)
+    vtag.setEpisodeGuide(episode_guide)
+
+    if ADDON.getSettingBool('write_nfo'):
+        sync_show_nfo(details.get('title'), details.get('year'), details, location=location,
+                       episode_guide=episode_guide)
 
     xbmcplugin.setResolvedUrl(handle=handle, succeeded=True, listitem=listitem)
     return True

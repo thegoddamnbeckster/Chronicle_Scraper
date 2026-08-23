@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper"
        name="Chronicle Scraper"
-       version="2.13.6"
+       version="2.13.7"
        provider-name="Michael Beck">
 
   <requires>
@@ -49,7 +49,8 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies and TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, seasons and episodes, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans.</description>
-    <news>v2.13.6 - Bug tracker fixes:
+    <news>v2.13.7 - Fix: tvshow.nfo was missing the &lt;episodeguide&gt; tag Kodi needs to fetch a show's episode list when it reads a local NFO directly instead of calling this scraper live. Kodi always prefers an existing local NFO over an online scraper call -- so once write_nfo had written a tvshow.nfo once, every later library rescan (routine updates, and especially a full rescan after switching scrapers away from Chronicle and back, which wipes the entire TV library and forces Kodi to treat every show as brand new) read that file directly and never had a working episode guide, logging "no episode guide or we are using the local scraper" for every episode and never calling getepisodelist() at all. get_details() already called vtag.setEpisodeGuide() correctly on a live scrape (that part was never broken) -- the NFO file itself just never carried the same value. Both now use the identical lookup string. Existing shows: use Settings -&gt; "Rebuild local NFOs from Chronicle" to regenerate their tvshow.nfo with the fix (no need to wait for a natural rescrape).
+v2.13.6 - Bug tracker fixes:
 (1) BUG-041: "Connect to Chronicle" could fail right after a fresh install/settings change, requiring a Kodi restart to work. Root cause: the button is a RunScript action fired from the same Settings screen as the chronicle_url text field, and Kodi doesn't guarantee that field's just-typed edit is committed before RunScript launches this as a separate process. Now retries reading the setting for up to ~1s before giving up, and shows a distinct "URL not set" message instead of the generic "could not contact server" one when it's genuinely empty.
 (2) Reported on Shield: the scraper would periodically throw "Movie collections folder not reachable" even though the folder was fine moments later. Root cause: a single failed mkdirs()/file-write against the movie-sets network folder was treated as proof the folder was gone -- but Android's SMB/network VFS client routinely drops and reconnects its session (Wi-Fi doze, the NAS still waking up, a brief DHCP/DNS blip), and that reconnect normally clears within a second or two. Both operations now retry a few times before concluding the folder is actually unreachable.
 v2.13.5 - Code review fixes on v2.13.2-2.13.4's TV artwork work, all covered by new tests (tests/, run via pytest -- first test infrastructure this addon has had):
