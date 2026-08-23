@@ -34,6 +34,14 @@ log   = Logger('device_auth')
 _POLL_INTERVAL = 5      # seconds between polls
 _USER_AGENT    = 'Kodi/Chronicle-Scraper/1.0'
 
+# "Connect to Chronicle" is a RunScript action fired from the same Settings screen as the
+# chronicle_url text field (BUG-041): Kodi doesn't guarantee that field's just-typed edit is
+# committed to the addon's settings store before RunScript launches this as a separate process,
+# so a same-session first attempt can read back an empty value even though the user just typed
+# a real one. A short retry window absorbs that race instead of failing outright.
+_URL_SETTLE_ATTEMPTS      = 3
+_URL_SETTLE_DELAY_SECONDS = 0.5
+
 
 class DeviceAuthManager:
     """Drives the full QR-code auth flow."""
@@ -47,7 +55,19 @@ class DeviceAuthManager:
         Returns True if an API key was successfully obtained, False otherwise.
         """
         # ── 1. Initiate ─────────────────────────────────────────────────────
-        result = self._initiate()
+        base_url = self._read_chronicle_url()
+        if not base_url:
+            log.warning('Device auth: chronicle_url is empty after {0} settle attempt(s) -- '
+                        'either it genuinely is not configured, or Kodi has not yet committed '
+                        'a just-typed value from the Settings screen (see BUG-041).'
+                        .format(_URL_SETTLE_ATTEMPTS))
+            xbmcgui.Dialog().ok(
+                ADDON.getLocalizedString(32060),
+                ADDON.getLocalizedString(32108),  # Chronicle server URL is not set
+            )
+            return False
+
+        result = self._initiate(base_url)
         if result is None:
             xbmcgui.Dialog().ok(
                 ADDON.getLocalizedString(32060),
@@ -111,12 +131,20 @@ class DeviceAuthManager:
 
     # ── private ────────────────────────────────────────────────────────────────
 
-    def _initiate(self):
-        """POST /api/v1/auth/device — returns parsed JSON data dict or None."""
-        base_url = ADDON.getSetting('chronicle_url').rstrip('/')
-        if not base_url:
-            return None
+    @staticmethod
+    def _read_chronicle_url() -> str:
+        """Reads chronicle_url, retrying briefly if it comes back empty -- see the
+        _URL_SETTLE_ATTEMPTS comment above for why."""
+        for attempt in range(_URL_SETTLE_ATTEMPTS):
+            base_url = ADDON.getSetting('chronicle_url').strip().rstrip('/')
+            if base_url:
+                return base_url
+            if attempt < _URL_SETTLE_ATTEMPTS - 1:
+                time.sleep(_URL_SETTLE_DELAY_SECONDS)
+        return ''
 
+    def _initiate(self, base_url: str):
+        """POST /api/v1/auth/device — returns parsed JSON data dict or None."""
         device_name = self._get_device_name()
 
         try:

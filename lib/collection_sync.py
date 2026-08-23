@@ -44,7 +44,6 @@ therefore followed by a Textures.RemoveTexture call for that path.
 import json
 import re
 import time
-import urllib.request
 import urllib.parse
 
 import xbmc
@@ -53,6 +52,7 @@ import xbmcgui
 import xbmcvfs
 
 from lib import art_sync_cache
+from lib.remote_file import write_remote_file
 from lib.logger import Logger
 from lib.kodi_settings import get_setting_value
 
@@ -96,6 +96,49 @@ _SET_ART_FILENAMES = {
 # than this is treated as a new scan and allowed to alert again.
 _ALERT_SUPPRESS_SECONDS = 600
 
+# A single failed mkdirs()/write() against the movie-sets folder is treated as
+# "genuinely unreachable" and alerts the user -- but on Android (Shield etc.),
+# Kodi's SMB/network VFS client routinely drops and reconnects the session
+# (Wi-Fi doze, the NAS still waking from its own sleep, a brief DHCP/DNS
+# blip), and that reconnect usually completes within a second or two. A
+# single-shot check reports every one of those transient blips as a
+# permanently broken folder; retrying a few times first lets the reconnect
+# finish before concluding the folder is actually gone.
+_FOLDER_ACCESS_RETRY_ATTEMPTS      = 3
+_FOLDER_ACCESS_RETRY_DELAY_SECONDS = 1.5
+
+
+def _mkdirs_with_retry(folder):
+    """xbmcvfs.mkdirs(), retried a few times before giving up -- see
+    _FOLDER_ACCESS_RETRY_ATTEMPTS above for why a single failure isn't
+    trusted on its own."""
+    for attempt in range(1, _FOLDER_ACCESS_RETRY_ATTEMPTS + 1):
+        if xbmcvfs.mkdirs(folder):
+            return True
+        if attempt < _FOLDER_ACCESS_RETRY_ATTEMPTS:
+            log.info('mkdirs({0}) failed (attempt {1}/{2}), retrying in {3}s'.format(
+                folder, attempt, _FOLDER_ACCESS_RETRY_ATTEMPTS, _FOLDER_ACCESS_RETRY_DELAY_SECONDS))
+            time.sleep(_FOLDER_ACCESS_RETRY_DELAY_SECONDS)
+    return False
+
+
+def _write_with_retry(dest, url, description):
+    """write_remote_file(), retried a few times on a 'write_failed' outcome
+    specifically -- a 'download_failed' says nothing about the destination
+    folder's own reachability (see write_remote_file's own docstring), so
+    that outcome is returned immediately without retrying here."""
+    result = write_remote_file(dest, url)
+    attempt = 1
+    while result == 'write_failed' and attempt < _FOLDER_ACCESS_RETRY_ATTEMPTS:
+        log.info('{0}: write failed (attempt {1}/{2}), retrying in {3}s -- possibly a transient '
+                 'network-share hiccup rather than a genuinely unreachable folder'.format(
+                     description, attempt, _FOLDER_ACCESS_RETRY_ATTEMPTS,
+                     _FOLDER_ACCESS_RETRY_DELAY_SECONDS))
+        time.sleep(_FOLDER_ACCESS_RETRY_DELAY_SECONDS)
+        result = write_remote_file(dest, url)
+        attempt += 1
+    return result
+
 
 def sync_collection_art(collection):
     """collection is the same dict the /movies/details response returns under
@@ -122,7 +165,7 @@ def sync_collection_art(collection):
 
     if not xbmcvfs.exists(folder):
         base_readable = xbmcvfs.exists(base)
-        mkdirs_ok = xbmcvfs.mkdirs(folder)
+        mkdirs_ok = _mkdirs_with_retry(folder)
         log.info('Folder missing for "{0}": base_exists={1} folder={2} mkdirs_ok={3}'.format(
             name, base_readable, folder, mkdirs_ok))
         if not mkdirs_ok:
@@ -154,7 +197,7 @@ def sync_collection_art(collection):
         log.info('sync_collection_art: set "{0}" -- {1} {2}: {3} -> {4}'.format(
             name, filename, action, url, dest))
 
-        result = _write_remote_file(dest, url)
+        result = _write_with_retry(dest, url, 'sync_collection_art: set "{0}" -- {1}'.format(name, filename))
         if result == 'ok':
             art_sync_cache.remember(dest, url)
             if exists:
@@ -172,7 +215,7 @@ def sync_collection_art(collection):
             # nothing about whether the folder is writable, so it must not be
             # reported as the same problem.
             _notify_unreachable(base)
-        # 'download_failed' already logged its own reason in _write_remote_file;
+        # 'download_failed' already logged its own reason in write_remote_file;
         # nothing further to do here, and definitely not a folder-writability signal.
 
     if refreshed:
@@ -390,37 +433,6 @@ def _invalidate_texture(path):
                 texture.get('textureid'), exc))
 
     log.info('Invalidated {0} cached texture(s) for {1}'.format(removed, path))
-
-
-def _write_remote_file(dest_path, url):
-    """Returns 'ok', 'download_failed', or 'write_failed' -- the caller needs to
-    tell these apart, since only a write failure says anything about whether the
-    destination folder itself is writable."""
-    try:
-        with urllib.request.urlopen(url, timeout=20) as resp:
-            data = resp.read()
-    except Exception as exc:
-        log.warning("Couldn't download {0}: {1}".format(url, exc))
-        return 'download_failed'
-
-    try:
-        f = xbmcvfs.File(dest_path, 'w')
-        try:
-            written = f.write(bytearray(data))
-        finally:
-            f.close()
-    except Exception as exc:
-        log.warning("Couldn't write {0}: {1}: {2}".format(dest_path, type(exc).__name__, exc))
-        return 'write_failed'
-
-    # xbmcvfs.File.write() doesn't raise on most VFS failures (permission denied,
-    # unreachable share) -- it just silently returns a falsy value, so that has
-    # to be treated as a real failure, not just an exception.
-    ok = bool(written) if written is not None else True
-    if not ok:
-        log.warning('xbmcvfs.File.write() returned falsy for {0} (no exception raised)'.format(dest_path))
-        return 'write_failed'
-    return 'ok'
 
 
 def _notify_unreachable(base_folder):

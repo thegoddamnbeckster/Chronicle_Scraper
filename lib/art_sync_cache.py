@@ -33,12 +33,12 @@ this is meant to persist across ordinary rescans, not just bridge one
 find-to-getdetails gap.
 """
 
-import json
 import time
 
 import xbmcaddon
 import xbmcvfs
 
+from lib import json_cache_file
 from lib.logger import Logger
 
 log = Logger('art_sync_cache')
@@ -47,6 +47,16 @@ ADDON = xbmcaddon.Addon()
 
 _CACHE_PATH = 'special://profile/addon_data/{0}/art_sync_cache.json'.format(ADDON.getAddonInfo('id'))
 _PRUNE_AFTER_SECONDS = 180 * 24 * 60 * 60  # ~6 months of no re-confirmation
+
+# The prune scan itself is cheap (a dict comprehension over already-in-memory
+# data), but running it -- and rewriting the whole file -- on every single
+# successful download makes total I/O for a big scan grow with the cache's
+# own size on every write, not just the entries actually being written.
+# Pruning only needs to happen often enough to keep the file from growing
+# unbounded over months of real usage, not on every call; a reserved
+# '__pruned_at__' key (excluded from already_synced()'s own lookups, since
+# no real dest path can collide with it) tracks when that last happened.
+_PRUNE_INTERVAL_SECONDS = 60 * 60  # once an hour of active use is plenty
 
 
 def already_synced(dest, url):
@@ -58,7 +68,7 @@ def already_synced(dest, url):
     if not url or not xbmcvfs.exists(dest):
         return False
     try:
-        entry = _read().get(dest)
+        entry = json_cache_file.read(_CACHE_PATH).get(dest)
     except Exception:
         return False
     return bool(entry) and entry.get('url') == url
@@ -70,34 +80,13 @@ def remember(dest, url):
     download would get treated as done forever after."""
     try:
         now = time.time()
-        data = _read()
-        data = {k: v for k, v in data.items() if now - v.get('t', 0) < _PRUNE_AFTER_SECONDS}
+        data = json_cache_file.read(_CACHE_PATH)
+        last_pruned = data.get('__pruned_at__', 0)
+        if now - last_pruned >= _PRUNE_INTERVAL_SECONDS:
+            data = {k: v for k, v in data.items()
+                    if k != '__pruned_at__' and now - v.get('t', 0) < _PRUNE_AFTER_SECONDS}
+            data['__pruned_at__'] = now
         data[dest] = {'url': url, 't': now}
-        _write(data)
+        json_cache_file.write(_CACHE_PATH, data)
     except Exception as exc:
         log.warning("Couldn't record art sync for {0}: {1}".format(dest, exc))
-
-
-def _read():
-    if not xbmcvfs.exists(_CACHE_PATH):
-        return {}
-    try:
-        f = xbmcvfs.File(_CACHE_PATH, 'r')
-        try:
-            raw = bytes(f.readBytes())
-        finally:
-            f.close()
-        return json.loads(raw.decode('utf-8')) or {}
-    except Exception:
-        return {}
-
-
-def _write(data):
-    folder = _CACHE_PATH.rsplit('/', 1)[0] + '/'
-    if not xbmcvfs.exists(folder):
-        xbmcvfs.mkdirs(folder)
-    f = xbmcvfs.File(_CACHE_PATH, 'w')
-    try:
-        f.write(bytearray(json.dumps(data).encode('utf-8')))
-    finally:
-        f.close()

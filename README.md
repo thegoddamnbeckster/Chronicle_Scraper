@@ -139,6 +139,9 @@ Chronicle_Scraper/
 │   ├── kodi_settings.py           # Reads Kodi's own live settings via JSON-RPC (never hardcoded)
 │   ├── collection_sync.py         # Fills/overwrites movie-set art and extrafanart in Kodi's local movie-sets folder
 │   ├── movie_art_sync.py          # Local poster/fanart sync + streamdetails lookup for movies
+│   ├── tv_art_sync.py             # Local poster/fanart/thumb sync for shows, seasons, episodes
+│   ├── art_sync_cache.py          # Skips re-downloading local art that already matches Chronicle's pick
+│   ├── location_cache.py          # Bridges find()/getdetails() so a movie's slow folder lookup runs once, not twice
 │   ├── tvshow_location.py         # Locates a show/episode's files on disk
 │   ├── nfo_common.py              # Shared NFO XML-building blocks
 │   ├── nfo_writer.py              # Movie NFO writer
@@ -184,7 +187,32 @@ folder (see the "Kodi Movie Collections" setting in Chronicle itself) — that p
 independent of this addon and is meant for households where multiple Kodi instances
 share one library but only one should be doing scraper work.
 
-## Known Limitations (v2.13.0)
+## Local TV artwork
+
+Shows, seasons, and episodes get the same local-file art sync movies always have —
+Kodi re-applies a local poster/fanart/thumb on its own schedule regardless of what a
+scraper's `setArt()` said, so the only way to make Chronicle's pick actually stick is
+to make the local file itself agree with it. Unconditional, same as movies — not tied
+to the **Write NFO files** setting.
+
+- **Show** — `poster.jpg`/`fanart.jpg`, written into the show's own root folder
+  (Kodi's plain-filename convention for a show's own art, no prefix).
+- **Season** — `seasonNN-poster.jpg`/`seasonNN-fanart.jpg` (zero-padded; `season00`
+  → `season-specials-`), written into that same show root folder — Kodi has no
+  per-season subfolder convention.
+- **Episode** — `<video-basename>-thumb.jpg`, next to the episode's own video file,
+  the same convention movie local art already uses.
+
+Every candidate for every art type — not just Chronicle's top pick — is also handed
+to Kodi via `addAvailableArtwork()` at scrape time (shows/episodes) or its per-season
+overload (seasons), so a real alternate is always available in Kodi's own "Choose
+Art" picker, not just whatever got written locally.
+
+An unchanged file costs zero network I/O: `art_sync_cache.py` records what URL was
+last written to each destination, shared with the movie/collection syncers, and skips
+the download entirely when nothing's actually changed since the last scrape.
+
+## Known Limitations (v2.13.4)
 
 - **No writers, no movie studios, no sort titles.** Kodi's API supports all three,
   but no metadata provider Chronicle currently has configured populates them for

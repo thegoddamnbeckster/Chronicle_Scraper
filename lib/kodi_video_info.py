@@ -113,10 +113,45 @@ def apply_artwork(listitem, artwork):
 
     vtag = listitem.getVideoInfoTag()
     for art_type, candidates in artwork.items():
+        # A type present in the dict with no real candidates (empty list, or
+        # None if the server ever serializes a missing type that way) must
+        # not reach either alternates call below -- confirmed reachable in
+        # practice (season-level artwork hit exactly this with 'poster': None
+        # before the per-season helper below existed), not just theoretical.
+        if not candidates:
+            continue
         if art_type == 'fanart':
             fanart_list = [{'image': c['url'], 'preview': c['url']} for c in candidates]
-            if fanart_list:
-                listitem.setAvailableFanart(fanart_list)
+            listitem.setAvailableFanart(fanart_list)
             continue
         for candidate in candidates:
             vtag.addAvailableArtwork(candidate['url'], art_type)
+
+
+def add_season_artwork_candidates(vtag, artwork, season_number):
+    """Offers every per-season art candidate to Kodi's "Choose Art" picker via
+    InfoTagVideo's per-season addAvailableArtwork() overload -- the season-level
+    analog of apply_artwork()'s alternates half. There's no per-season setArt(),
+    so Chronicle's own top pick for a season only reaches Kodi's actively
+    displayed art via the local file sync_season_art() writes, not this call.
+
+    'fanart' is deliberately skipped, not routed through some season-scoped
+    equivalent of setAvailableFanart() -- there isn't one. InfoTagVideo has no
+    per-season fanart-list setter as of Kodi 21, the same limitation
+    apply_artwork() documents at the show/movie level, so a season fanart
+    candidate handed to addAvailableArtwork() would run without error but
+    never actually appear in the picker. Skipping it and logging why is more
+    honest than silently shipping dead code that looks like it works."""
+    if not artwork:
+        return
+    for art_type, candidates in artwork.items():
+        if not candidates:
+            continue
+        if art_type == 'fanart':
+            log.info('add_season_artwork_candidates: season {0} has {1} fanart candidate(s), but '
+                      'InfoTagVideo has no per-season fanart-list setter as of Kodi 21 -- not '
+                      'offered to the picker (season fanart is still synced to a local file, see '
+                      'sync_season_art)'.format(season_number, len(candidates)))
+            continue
+        for candidate in candidates:
+            vtag.addAvailableArtwork(candidate['url'], art_type, season=season_number)
