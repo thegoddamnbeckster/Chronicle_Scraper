@@ -4,22 +4,25 @@ files -- the actual mechanism the "Recreate local NFO file from Chronicle's
 data" setting needs to be useful for a library that already has local
 NFOs, not just new additions.
 
-Why this is a separate, explicit, user-triggered action rather than fully
-automatic: nfo_writer.py/tv_nfo_writer.py's writes only ever run when Kodi
-actually invokes this scraper -- and Kodi never does that for anything
-that already has ANY local NFO on disk, from this addon or anywhere else
-(tinyMediaManager, another scraper, a hand-written one). Confirmed
+Why this is the ONLY way a local NFO ever gets written, not just a bulk
+convenience action: nfo_writer.py/tv_nfo_writer.py's write calls in
+get_details()/get_episode_details() are gated on rebuild_state.is_active()
+-- they no-op unless this module's own run() is the thing currently invoking
+them (see lib/rebuild_state.py's module docstring for why that gate exists:
+an ordinary library scan must not pay for local-file NFO writes just to get
+new items into Kodi's library, and Kodi's find/getdetails contract gives
+those two situations no other way to be told apart). This module is what
+sets that flag: it deletes each item's local NFO (and movieset-* art, a
+separate but equally local-file-wins convention Kodi supports for movies),
+then force-refreshes so Kodi has no choice but to ask Chronicle for a real
+answer -- WHILE the flag is set, so this pass's own refreshes are the ones
+allowed to actually write. Also the only way to reach items that already
+have a local NFO at all: Kodi never calls find/getdetails for anything with
+an existing local NFO on disk, from this addon or anywhere else
+(tinyMediaManager, another scraper, a hand-written one) -- confirmed
 directly via kodi.log and a live VideoLibrary.RefreshMovie test
-(2026-07-30) for movies: an item with an existing NFO never reaches
-find/getdetails at all, no matter how many times the library is rescanned.
-The passive per-scrape NFO write can therefore only ever help items added
-AFTER it's enabled -- it cannot retroactively fix a library where local
-NFOs already exist, since Chronicle_Scraper simply never gets called for
-those. This action breaks that deadlock on demand: delete the local NFO
-(and movieset-* art, a separate but equally local-file-wins convention
-Kodi supports for movies) Kodi is currently preferring, then force a
-refresh so Kodi has no choice but to ask Chronicle for a real answer --
-the passive setting then keeps things current on every subsequent scrape.
+(2026-07-30) for movies -- so deleting the stale file first is what forces
+Chronicle_Scraper to be asked again in the first place.
 
 Still deliberately explicit and confirmed, not automatic -- default.py must
 show a clear warning before calling run(), and it can still take a long
@@ -55,6 +58,7 @@ import xbmc
 import xbmcvfs
 
 from lib import legacy_nfo
+from lib import rebuild_state
 from lib.collection_sync import preserve_local_movieset_file
 from lib.logger import Logger
 from lib.movie_art_sync import listdir_with_timeout, strip_video_ext
@@ -169,6 +173,23 @@ def run(progress_callback=None, is_cancelled=None, wait_progress_callback=None,
       refresh_errors        -- items where Kodi's own Refresh* JSON-RPC call
                              itself was rejected -- never even entered the wait
     """
+    # Set for the entire issue-and-wait pass, not just the issue phase --
+    # Kodi's own Refresh* queue can call back into get_details()/
+    # get_episode_details() at any point up to the very end of the batch
+    # wait (see the queue-timing comment above), and rebuild_state is what
+    # tells those calls it's safe to actually write the NFO this time.
+    # finally guarantees this clears even on an unexpected exception, so a
+    # crash here can't leave inline NFO writing silently stuck on forever.
+    rebuild_state.mark_started()
+    try:
+        return _run(progress_callback, is_cancelled, wait_progress_callback,
+                     on_issuing_complete, wait_is_cancelled)
+    finally:
+        rebuild_state.mark_finished()
+
+
+def _run(progress_callback, is_cancelled, wait_progress_callback,
+         on_issuing_complete, wait_is_cancelled):
     movies = _get_all_movies()
     shows = _get_all_tvshows()
     episodes = _get_all_episodes()

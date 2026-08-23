@@ -114,7 +114,7 @@ msgid "Recreate local NFO file from Chronicle's data"
 msgstr ""
 
 msgctxt "#32092"
-msgid "Kodi always prefers a movie, TV show, or episode's own local NFO file over asking this scraper, even during an automatic library scan -- so anything already tagged by another tool (e.g. tinyMediaManager) may never actually reach Chronicle at all. Enabling this rewrites that NFO from Chronicle's own data every time this scraper does run, so Kodi's local-file preference works for Chronicle instead of against it. Off by default -- if you have more than one Kodi instance pointed at the same shared library, you only need this ON for whichever one is responsible for maintaining the shared NFOs (e.g. your main box); the others just read the NFO that instance already wrote, so leaving it off on them avoids redundant work every time they also scan the same library."
+msgid "Kodi always prefers a movie, TV show, or episode's own local NFO file over asking this scraper, even during an automatic library scan -- so anything already tagged by another tool (e.g. tinyMediaManager) may never actually reach Chronicle at all. Enabling this lets Chronicle write that local NFO from its own data -- but only as part of an explicit rebuild pass (the \"Rebuild local NFOs from Chronicle\" action below, or \"Automatically rebuild NFOs after every library scan\"), never during an ordinary scan, so getting new files into Kodi's library is never slowed down by a local-file write. Off by default -- if you have more than one Kodi instance pointed at the same shared library, you only need this ON for whichever one is responsible for maintaining the shared NFOs (e.g. your main box); the others just read the NFO that instance already wrote."
 msgstr ""
 
 msgctxt "#32093"

@@ -43,6 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.logger import Logger
 from lib import activity_tracker
 from lib import legacy_nfo
+from lib import rebuild_state
 from lib.chronicle_client import ChronicleClient
 from lib.kodi_video_info import apply_common_video_info, apply_ratings, apply_artwork
 from lib.movie_art_sync import strip_video_ext
@@ -123,28 +124,37 @@ def get_details(show_id, handle):
         return False
     activity_tracker.mark_active(details.get('title') or str(show_id))
 
-    # Resolved once, here, before the ListItem below is built, so a
-    # legacy-NFO merge (just below) benefits everything downstream -- Kodi's
-    # own display included, not just the NFO. Same ordering fix as
-    # python/scraper.py's get_details() -- see that function's own comment
-    # for why this has to happen before apply_common_video_info() runs.
-    folder, tvshowid = find_show_location(details.get('title'), details.get('year'))
-    location = (folder, tvshowid)
+    # find_show_location()/the legacy-NFO harvest below only ever feed the
+    # NFO write further down (no local art sync consumes them at the show
+    # level, unlike movies) -- both stay skipped entirely outside a rebuild
+    # pass, same gate as the NFO write itself, so an ordinary scan doesn't
+    # pay for find_show_location()'s own VideoLibrary lookup (and retry) for
+    # a result nothing this pass would use. See lib/rebuild_state.py.
+    location = (None, None)
+    if rebuild_state.is_active():
+        # Resolved once, here, before the ListItem below is built, so a
+        # legacy-NFO merge (just below) benefits everything downstream --
+        # Kodi's own display included, not just the NFO. Same ordering fix
+        # as python/scraper.py's get_details() -- see that function's own
+        # comment for why this has to happen before apply_common_video_info()
+        # runs.
+        folder, tvshowid = find_show_location(details.get('title'), details.get('year'))
+        location = (folder, tvshowid)
 
-    # If nfo_rebuild.py's rebuild action ran against this show, whatever its
-    # previous tvshow.nfo contained (e.g. from tinyMediaManager) was
-    # harvested and stashed before deletion -- see lib/legacy_nfo.py. Pick
-    # it up now (one-shot), fill any gap Chronicle's own data has, and feed
-    # it back into Chronicle itself so it isn't lost.
-    stash_key = posixpath.basename(folder.rstrip('/')) if folder else None
-    legacy_data = legacy_nfo.load_and_clear_stash(stash_key) if stash_key else None
-    if legacy_data:
-        _merge_legacy_gaps(details, legacy_data, (
-            'title', 'overview', 'year', 'premiered', 'mpaa', 'country',
-            'studio', 'status', 'runtimeMinutes', 'genres', 'tags', 'cast',
-            'ratings',
-        ))
-        ChronicleClient().contribute_metadata(show_id, 'chronicle_scraper.legacy_nfo', legacy_data)
+        # If nfo_rebuild.py's rebuild action ran against this show, whatever
+        # its previous tvshow.nfo contained (e.g. from tinyMediaManager) was
+        # harvested and stashed before deletion -- see lib/legacy_nfo.py.
+        # Pick it up now (one-shot), fill any gap Chronicle's own data has,
+        # and feed it back into Chronicle itself so it isn't lost.
+        stash_key = posixpath.basename(folder.rstrip('/')) if folder else None
+        legacy_data = legacy_nfo.load_and_clear_stash(stash_key) if stash_key else None
+        if legacy_data:
+            _merge_legacy_gaps(details, legacy_data, (
+                'title', 'overview', 'year', 'premiered', 'mpaa', 'country',
+                'studio', 'status', 'runtimeMinutes', 'genres', 'tags', 'cast',
+                'ratings',
+            ))
+            ChronicleClient().contribute_metadata(show_id, 'chronicle_scraper.legacy_nfo', legacy_data)
 
     listitem = xbmcgui.ListItem(details.get('title') or '', offscreen=True)
     vtag = listitem.getVideoInfoTag()
@@ -177,7 +187,9 @@ def get_details(show_id, handle):
             for i, actor in enumerate(details['cast'])
         ])
 
-    if ADDON.getSettingBool('write_nfo'):
+    # NFO writing only ever happens as part of an explicit rebuild pass -- see
+    # lib/rebuild_state.py and python/scraper.py's own identical gate.
+    if ADDON.getSettingBool('write_nfo') and rebuild_state.is_active():
         sync_show_nfo(details.get('title'), details.get('year'), details, location=location)
 
     # Kodi echoes this back verbatim as the "url" param to getepisodelist.
@@ -225,42 +237,51 @@ def get_episode_details(encoded_ids, handle):
         if details.get('showTitle') else (details.get('title') or str(episode_id))
     activity_tracker.mark_active(episode_label)
 
-    # Locate the episode's own file, the same way python/scraper.py locates
-    # a movie's -- Kodi's find/getepisodedetails contract never hands this
-    # script a file path any more than the movies one does. showTitle/
-    # showYear (the PARENT show's, not this episode's) is what Chronicle's
-    # /tv/episode-details response carries for exactly this purpose -- see
-    # ScraperController.GetEpisodeDetails server-side.
+    # find_show_location()/get_episode()/the legacy-NFO harvest below only
+    # ever feed the NFO write further down -- nothing else here consumes
+    # them -- so all of it stays skipped entirely outside a rebuild pass,
+    # same gate as the write itself. See lib/rebuild_state.py. This also
+    # means an ordinary scan never pays for find_show_location()'s and
+    # get_episode()'s own VideoLibrary lookups for a result nothing this
+    # pass would use.
     folder = video_basename = streamdetails = None
-    show_title = details.get('showTitle')
-    if show_title:
-        _show_folder, tvshowid = find_show_location(show_title, details.get('showYear'))
-        if tvshowid is not None:
-            # Kodi's VideoLibrary.GetEpisodes returns file path and streamdetails
-            # together in one call -- there's no cheaper way to get just the file
-            # path, so this always fetches both, but streamdetails is only ever
-            # kept (and written into the NFO) when write_streamdetails is on. See
-            # python/scraper.py's own comment for why that's opt-in.
-            file_path, episode_streamdetails = get_episode(tvshowid, details.get('season'), details.get('episode'))
-            if file_path:
-                folder = posixpath.dirname(file_path) + '/'
-                video_basename = strip_video_ext(posixpath.basename(file_path))
-            if ADDON.getSettingBool('write_streamdetails'):
-                streamdetails = episode_streamdetails
+    if rebuild_state.is_active():
+        # Locate the episode's own file, the same way python/scraper.py
+        # locates a movie's -- Kodi's find/getepisodedetails contract never
+        # hands this script a file path any more than the movies one does.
+        # showTitle/showYear (the PARENT show's, not this episode's) is what
+        # Chronicle's /tv/episode-details response carries for exactly this
+        # purpose -- see ScraperController.GetEpisodeDetails server-side.
+        show_title = details.get('showTitle')
+        if show_title:
+            _show_folder, tvshowid = find_show_location(show_title, details.get('showYear'))
+            if tvshowid is not None:
+                # Kodi's VideoLibrary.GetEpisodes returns file path and
+                # streamdetails together in one call -- there's no cheaper
+                # way to get just the file path, so this always fetches
+                # both, but streamdetails is only ever kept (and written
+                # into the NFO) when write_streamdetails is on. See
+                # python/scraper.py's own comment for why that's opt-in.
+                file_path, episode_streamdetails = get_episode(tvshowid, details.get('season'), details.get('episode'))
+                if file_path:
+                    folder = posixpath.dirname(file_path) + '/'
+                    video_basename = strip_video_ext(posixpath.basename(file_path))
+                if ADDON.getSettingBool('write_streamdetails'):
+                    streamdetails = episode_streamdetails
 
-    # If nfo_rebuild.py's rebuild action ran against this episode, whatever
-    # its previous NFO contained (e.g. from tinyMediaManager) was harvested
-    # and stashed before deletion -- see lib/legacy_nfo.py. Pick it up now
-    # (one-shot), fill any gap Chronicle's own data has, and feed it back
-    # into Chronicle. Done before the ListItem below is built, same
-    # ordering fix as python/scraper.py's get_details() (and this
-    # function's own show-level sibling above) -- see those for why.
-    legacy_data = legacy_nfo.load_and_clear_stash(video_basename) if video_basename else None
-    if legacy_data:
-        _merge_legacy_gaps(details, legacy_data, (
-            'title', 'overview', 'aired', 'runtimeMinutes', 'cast', 'crew', 'ratings',
-        ))
-        ChronicleClient().contribute_metadata(episode_id, 'chronicle_scraper.legacy_nfo', legacy_data)
+        # If nfo_rebuild.py's rebuild action ran against this episode,
+        # whatever its previous NFO contained (e.g. from tinyMediaManager)
+        # was harvested and stashed before deletion -- see lib/legacy_nfo.py.
+        # Pick it up now (one-shot), fill any gap Chronicle's own data has,
+        # and feed it back into Chronicle. Done before the ListItem below is
+        # built, same ordering fix as python/scraper.py's get_details() (and
+        # this function's own show-level sibling above) -- see those for why.
+        legacy_data = legacy_nfo.load_and_clear_stash(video_basename) if video_basename else None
+        if legacy_data:
+            _merge_legacy_gaps(details, legacy_data, (
+                'title', 'overview', 'aired', 'runtimeMinutes', 'cast', 'crew', 'ratings',
+            ))
+            ChronicleClient().contribute_metadata(episode_id, 'chronicle_scraper.legacy_nfo', legacy_data)
 
     listitem = xbmcgui.ListItem(details.get('title') or '', offscreen=True)
     vtag = listitem.getVideoInfoTag()
@@ -301,7 +322,9 @@ def get_episode_details(encoded_ids, handle):
         listitem.setArt({'thumb': details['thumbUrl']})
         vtag.addAvailableArtwork(details['thumbUrl'], 'thumb')
 
-    if ADDON.getSettingBool('write_nfo'):
+    # NFO writing only ever happens as part of an explicit rebuild pass -- see
+    # lib/rebuild_state.py and python/scraper.py's own identical gate.
+    if ADDON.getSettingBool('write_nfo') and rebuild_state.is_active():
         sync_episode_nfo(details, folder, video_basename, streamdetails=streamdetails)
 
     xbmcplugin.setResolvedUrl(handle=handle, succeeded=True, listitem=listitem)

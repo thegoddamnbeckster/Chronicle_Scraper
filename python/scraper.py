@@ -51,6 +51,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.logger import Logger
 from lib import activity_tracker
 from lib import legacy_nfo
+from lib import rebuild_state
 from lib.chronicle_client import ChronicleClient
 from lib.kodi_video_info import (
     apply_common_video_info, apply_ratings, apply_artwork, youtube_trailer_uri,
@@ -269,20 +270,28 @@ def get_details(media_item_id, handle):
     apply_ratings(vtag, details.get('ratings'))
     apply_artwork(listitem, details.get('artwork'))
 
-    # Kodi's own per-file technical info (codec/resolution/HDR/audio tracks/
-    # subtitle languages) -- Chronicle has no way to know this, only Kodi
-    # does, from actually having opened the file. A genuine extra JSON-RPC
-    # round-trip on top of the normal scrape, so it's opt-in (write_streamdetails,
-    # off by default) -- on a shared library with several Kodi instances, only
-    # whichever one maintains the shared NFOs needs this; the others just read
-    # what it already wrote.
-    streamdetails = None
-    if folder and full_filename and ADDON.getSettingBool('write_streamdetails'):
-        streamdetails = get_streamdetails(folder + full_filename)
-
     sync_movie_art(details.get('title'), details.get('year'), details.get('artwork'), location=location)
 
-    if ADDON.getSettingBool('write_nfo'):
+    # NFO writing only ever happens as part of an explicit rebuild pass
+    # (manual "Rebuild local NFOs" action, or the opt-in "Automatically
+    # rebuild NFOs after every library scan" service) -- never inline during
+    # an ordinary scan. See lib/rebuild_state.py: getting a new item into
+    # Kodi's library (already done via setResolvedUrl below) doesn't need
+    # the local NFO file to exist, so paying for that write here would only
+    # slow down the scan for no benefit to what actually shows up in Kodi.
+    if ADDON.getSettingBool('write_nfo') and rebuild_state.is_active():
+        # Kodi's own per-file technical info (codec/resolution/HDR/audio
+        # tracks/subtitle languages) -- Chronicle has no way to know this,
+        # only Kodi does, from actually having opened the file. A genuine
+        # extra JSON-RPC round-trip on top of the normal scrape, so it's
+        # opt-in (write_streamdetails, off by default) -- on a shared
+        # library with several Kodi instances, only whichever one maintains
+        # the shared NFOs needs this; the others just read what it already
+        # wrote. Only computed here, inside the rebuild-only branch, since
+        # it exists solely to feed the NFO write below.
+        streamdetails = None
+        if folder and full_filename and ADDON.getSettingBool('write_streamdetails'):
+            streamdetails = get_streamdetails(folder + full_filename)
         sync_movie_nfo(details.get('title'), details.get('year'), details, location=location,
                         streamdetails=streamdetails)
 
