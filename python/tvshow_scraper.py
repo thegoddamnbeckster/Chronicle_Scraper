@@ -346,24 +346,38 @@ def _resolve_lookup_id(params):
 
 def run():
     params = get_params(sys.argv[1:])
-    enddir = True
 
     action = params.get('action')
     if action == 'find' and 'title' in params:
         find_show(params['title'], params.get('year'), params['handle'])
     elif action == 'getdetails' and 'url' in params:
-        enddir = not get_details(parse_lookup_string(params['url']), params['handle'])
+        get_details(parse_lookup_string(params['url']), params['handle'])
     elif action == 'getepisodelist' and 'url' in params:
         get_episode_list(params['url'], params['handle'])
     elif action == 'getepisodedetails' and 'url' in params:
-        enddir = not get_episode_details(params['url'], params['handle'])
+        get_episode_details(params['url'], params['handle'])
     elif action == 'getartwork':
-        enddir = not get_artwork(_resolve_lookup_id(params), params['handle'])
+        get_artwork(_resolve_lookup_id(params), params['handle'])
     else:
         log.warning('unhandled or missing action: {0}'.format(action))
 
-    if enddir:
-        xbmcplugin.endOfDirectory(params['handle'])
+    # Unconditional, unlike python/scraper.py's movies run() (which only calls
+    # this when get_details() returned False -- ground-truthed there against
+    # Team Kodi's own metadata.themoviedb.org.python, whose run() does the
+    # identical "enddir = not get_details(...)" thing). The TV contract is
+    # genuinely different: Team Kodi's own bundled TV scraper
+    # (metadata.tvshows.themoviedb.org.python, libs/actions.py's router())
+    # calls xbmcplugin.endOfDirectory() after EVERY action with no exception
+    # -- including getdetails/getepisodedetails/getartwork, even though each
+    # of those already called setResolvedUrl(). This file previously copied
+    # the movies pattern here too (enddir = not get_details(...) etc.), which
+    # left Kodi's plugin handle never explicitly finished on a *successful*
+    # getdetails/getepisodedetails -- no exception, nothing in kodi.log, the
+    # show/episode just never finished being committed to the library. Movies
+    # never surfaced this because skipping it on success is the movies
+    # contract's own correct behaviour, not a general rule that also applies
+    # to TV.
+    xbmcplugin.endOfDirectory(params['handle'])
 
 
 if __name__ == '__main__':
