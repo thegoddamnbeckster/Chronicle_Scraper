@@ -162,17 +162,43 @@ def _search_sources_for_show(title, year):
 def get_episode(tvshowid, season, episode):
     """Returns (file_path, streamdetails) for this exact (season, episode)
     under tvshowid, or (None, None) if tvshowid is unknown (see
-    find_show_location) or Kodi doesn't have this episode yet (e.g. a
-    brand-new file not yet scanned). One VideoLibrary.GetEpisodes call gives
-    both the file path and Kodi's own streamdetails together -- unlike
-    movies, there's no separate lookup needed for streamdetails, since an
-    episode is identified precisely by season+episode rather than a fuzzy
-    title/year guess. Matched in Python rather than via a JSON-RPC filter on
+    find_show_location). One VideoLibrary.GetEpisodes call gives both the
+    file path and Kodi's own streamdetails together -- unlike movies,
+    there's no separate lookup needed for streamdetails, since an episode is
+    identified precisely by season+episode rather than a fuzzy title/year
+    guess. Matched in Python rather than via a JSON-RPC filter on
     season+episode -- simpler to get right than trusting a two-field filter
     combination, and a single show's episode list is never large enough for
-    that to matter."""
+    that to matter.
+
+    Retried the same way _lookup_via_video_library() above retries the show
+    lookup: getepisodedetails() for a brand-new episode runs DURING the very
+    scan that's adding it, so the same commit-timing race find_show_location
+    was given a retry for (Kodi hasn't necessarily committed a just-added
+    item to VideoLibrary at the exact moment the scraper is invoked for it --
+    see movie_art_sync.py's own module docstring) applies here too, and
+    without a retry it hit on essentially every new episode, not as an edge
+    case -- VideoLibrary.GetEpisodes came back without the episode this
+    caller was ADDED FOR on the first attempt, get_episode() returned
+    (None, None), and sync_episode_nfo() silently no-opped (no exception, no
+    log line -- it just never got the folder it needed to write to)."""
     if tvshowid is None:
         return None, None
+    for attempt in range(1, _LOOKUP_RETRIES + 1):
+        found = _lookup_episode(tvshowid, season, episode)
+        if found is not None:
+            return found
+        if attempt < _LOOKUP_RETRIES:
+            time.sleep(_LOOKUP_RETRY_DELAY_SECONDS)
+    return None, None
+
+
+def _lookup_episode(tvshowid, season, episode):
+    """Single VideoLibrary.GetEpisodes attempt -- returns (file_path,
+    streamdetails) once this exact (season, episode) is found in the list
+    this call got back (file_path itself may still be falsy -- that's a
+    real, distinct answer, not "not found yet", so it's returned as-is
+    rather than retried), or None if it isn't there at all this attempt."""
     request = {
         'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetEpisodes',
         'params': {
@@ -184,10 +210,10 @@ def get_episode(tvshowid, season, episode):
         response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
     except Exception as exc:
         log.warning("Couldn't query VideoLibrary.GetEpisodes for tvshowid={0}: {1}".format(tvshowid, exc))
-        return None, None
+        return None
     if 'error' in response:
         log.warning('VideoLibrary.GetEpisodes rejected tvshowid={0}: {1}'.format(tvshowid, response['error']))
-        return None, None
+        return None
 
     for ep in response.get('result', {}).get('episodes') or []:
         if ep.get('season') != season or ep.get('episode') != episode:
@@ -197,4 +223,4 @@ def get_episode(tvshowid, season, episode):
         streamdetails = raw if (raw.get('video') or raw.get('audio') or raw.get('subtitle')) else None
         return file_path, streamdetails
 
-    return None, None
+    return None
