@@ -163,6 +163,13 @@ def _rebuild_nfos():
     collection_sync.preserve_local_movieset_file), and refreshes each item
     so Chronicle repopulates them. See nfo_rebuild.py's module docstring for
     why this has to be a deliberate, explicit action rather than automatic."""
+    if not ADDON.getSettingBool('write_nfo'):
+        xbmcgui.Dialog().ok(
+            ADDON.getLocalizedString(32000),  # "Chronicle Scraper"
+            ADDON.getLocalizedString(32108),
+        )
+        return
+
     dialog = xbmcgui.Dialog()
     confirmed = dialog.yesno(
         ADDON.getLocalizedString(32000),      # "Chronicle Scraper"

@@ -14,13 +14,24 @@ core launches a fresh script process per scraper action (find/getdetails),
 sometime after a refresh is issued, with no channel back to whatever issued
 it. Nothing survives in memory across that gap; only disk does.
 
-Stashed under special://profile/, not the item's own folder -- xbmcvfs
-resolves special://profile/ to THIS Kodi instance's own profile directory
-(Vision's own, the Shield's own, whichever is running), so the stash always
-lands somewhere this same instance can read back a moment later regardless
-of which physical box or install this is, with no path assumptions of any
-kind. It never needs to be portable BETWEEN instances -- only within the one
-that deleted the NFO and will shortly re-scrape the same item.
+Stashed under special://temp/chronicle_scraper/, NOT special://profile/
+addon_data/{addon_id}/ -- that path is scoped per addon id, but Chronicle
+Scraper is split into two separate addon packages (script.chronicle.
+scraper.movie, script.chronicle.scraper.tv). nfo_rebuild.py's delete step
+always runs from the movie addon's process, but the later re-scrape that
+consumes the stash can run from EITHER addon's process depending on item
+type -- a TV show's stash written under the movie addon's addon_data
+folder would never be found by the TV addon's own process reading from
+its own, different addon_data folder. special://temp/ is the one location
+both addon ids can read and write without depending on each other's
+addon_data folder existing or being named a specific thing (same fix
+already applied to rebuild_state.py and activity_tracker.py for the
+identical reason -- confirmed 2026-08-24 this file was copied into
+tv_addon/lib/ without it, silently breaking TV legacy-NFO harvesting).
+xbmcvfs still resolves special://temp/ to THIS Kodi instance's own temp
+directory, so the stash never needs to be portable BETWEEN Kodi instances
+-- only within the one that deleted the NFO and will shortly re-scrape
+the same item.
 
 One-shot by design: load_and_clear_stash() deletes the stash entry the
 moment it's consumed, so a legacy NFO's data is folded into Chronicle (and
@@ -39,16 +50,13 @@ import json
 import re
 import xml.etree.ElementTree as ET
 
-import xbmcaddon
 import xbmcvfs
 
 from lib.logger import Logger
 
 log = Logger('legacy_nfo')
 
-ADDON = xbmcaddon.Addon()
-
-_STASH_DIR = 'special://profile/addon_data/{0}/legacy_nfo_stash/'.format(ADDON.getAddonInfo('id'))
+_STASH_DIR = 'special://temp/chronicle_scraper/legacy_nfo_stash/'
 
 _UNIQUEID_TYPES = ('imdb', 'tmdb', 'tvdb', 'trakt')
 

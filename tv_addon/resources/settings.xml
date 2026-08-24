@@ -6,7 +6,7 @@
     <!-- ============================================================================ -->
     <category label="32001">
         <!-- No Connect/QR flow in this addon (that lives in Chronicle Scraper
-             (Movies)'s default.py) -- copy the same URL and API key from that
+             (Movies)'s default.py) — copy the same URL and API key from that
              addon's settings here. Both plain text, unlike the movies addon's
              hidden api_key, since there's no auth flow here to set it for you. -->
         <setting id="chronicle_url" type="text" label="32002" default=""/>
