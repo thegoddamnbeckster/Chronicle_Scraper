@@ -16,17 +16,17 @@
 
   <!-- The actual scraper: invoked directly by Kodi's library scanner via the
        find/getdetails contract, never run interactively by the user.
-       Movies-only -- see script.chronicle.scraper.tv (sibling addon, its own
+       Movies-only - see script.chronicle.scraper.tv (sibling addon, its own
        id) for TV shows. THIS WAS ONE ADDON WITH BOTH EXTENSION POINTS UNTIL
        v3.0.0: confirmed against Kodi's own addon-invocation behaviour (and
        matching how Team Kodi ships metadata.themoviedb.org.python and
        metadata.tvshows.themoviedb.org.python as two entirely separate addon
        packages, never one) that Kodi resolves which script to run for a
-       scrape by ADDON ID alone -- the extension point that triggered the
+       scrape by ADDON ID alone - the extension point that triggered the
        call plays no part in choosing which declared library file actually
        runs. With both extensions in one addon.xml, every TV scrape was
        silently invoking this movies script instead of tvshow_scraper.py,
-       with no error, nothing in kodi.log pointing at the cause -- TV shows
+       with no error, nothing in kodi.log pointing at the cause - TV shows
        never actually reached the TV code path, no matter what content
        settings or scraper selection said. Splitting into two addon ids is
        the only fix; there is no in-script way to detect "which extension

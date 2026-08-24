@@ -11,11 +11,11 @@
 
   <!-- The actual scraper: invoked directly by Kodi's library scanner via the
        find/getdetails/getepisodelist/getepisodedetails contract, never run
-       interactively by the user. TV-only -- see the sibling addon
+       interactively by the user. TV-only - see the sibling addon
        script.chronicle.scraper.movie for movies. Deliberately a SEPARATE
        addon id, not a second extension point on the movies addon: confirmed
        that Kodi resolves which script to run for a scrape by addon id
-       alone, not by which extension point triggered the call -- one addon
+       alone, not by which extension point triggered the call - one addon
        declaring both xbmc.metadata.scraper.movies and
        xbmc.metadata.scraper.tvshows silently runs the movies script for
        every scrape, TV included, no error, nothing in kodi.log. Matches how
