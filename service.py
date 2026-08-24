@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""script.chronicle.scraper — Background service entry point.
+"""script.chronicle.scraper.movie — Background service entry point.
 
 Runs continuously once Kodi starts, doing nothing until a video library scan
 finishes. When the "Automatically rebuild NFOs after every library scan"
@@ -129,7 +129,18 @@ def run():
         is_active = activity is not None and \
             (time.time() - activity.get('timestamp', 0)) < _ACTIVITY_IDLE_TIMEOUT_SECONDS
 
-        if is_active:
+        # Suppress the corner status while Kodi's own "Scanning library"
+        # indicator is still up -- two progress indicators competing for
+        # attention during the walk phase is confusing to look at. This is
+        # a display-only gate: activity_tracker keeps recording normally
+        # underneath (mark_active() doesn't check this), so the count isn't
+        # paused or lost, only hidden -- the moment Kodi's own indicator
+        # goes away, this one picks straight back up showing whatever total
+        # already accumulated during the walk, not starting over from zero.
+        kodi_scanning = xbmc.getCondVisibility('Library.IsScanning')
+        show_now = is_active and not kodi_scanning
+
+        if show_now:
             count = activity.get('count', 0)
             label = activity.get('last_label') or ''
             suffix = ' -- {0}'.format(label) if label else ''
@@ -145,8 +156,10 @@ def run():
             bg.close()
             bg = None
             last_shown_count = None
-            activity_tracker.reset()
-            log.info('service: scraper activity gone idle -- hiding corner status')
+            log.info('service: {0} -- hiding corner status'.format(
+                     'Kodi library scan still running' if kodi_scanning else 'scraper activity gone idle'))
+            if not is_active:
+                activity_tracker.reset()
 
         if monitor.waitForAbort(_POLL_INTERVAL_SECONDS):
             break

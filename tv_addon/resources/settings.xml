@@ -5,14 +5,12 @@
     <!-- Connection -->
     <!-- ============================================================================ -->
     <category label="32001">
-        <!-- No default here on purpose — Chronicle's address is unique per
-             install (LAN IP, hostname, or domain, plus port); a plausible-
-             looking default risks silently pointing at the wrong thing. -->
+        <!-- No Connect/QR flow in this addon (that lives in Chronicle Scraper
+             (Movies)'s default.py) — copy the same URL and API key from that
+             addon's settings here. Both plain text, unlike the movies addon's
+             hidden api_key, since there's no auth flow here to set it for you. -->
         <setting id="chronicle_url" type="text" label="32002" default=""/>
-        <setting id="authorization" type="action" label="32061" action="RunScript(script.chronicle.scraper.movie,action=auth)"/>
-        <setting id="auth_status" type="text" label="32080" enable="false" default=""/>
-        <!-- Set automatically by the QR/PIN flow above — not meant to be typed by hand -->
-        <setting id="api_key" type="text" label="32003" visible="false"/>
+        <setting id="api_key" type="text" label="32003" default=""/>
     </category>
 
     <!-- ============================================================================ -->
@@ -21,8 +19,6 @@
     <category label="32090">
         <setting id="write_nfo" type="bool" label="32091" default="false" help="32092"/>
         <setting id="write_streamdetails" type="bool" label="32105" default="false" help="32106" enable="eq(-1,true)"/>
-        <setting id="rebuild_nfos" type="action" label="32093" action="RunScript(script.chronicle.scraper.movie,action=rebuild_nfos)" help="32094"/>
-        <setting id="auto_rebuild_on_scan" type="bool" label="32098" default="false" help="32099"/>
     </category>
 
 </settings>

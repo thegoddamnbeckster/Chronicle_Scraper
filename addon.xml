@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="script.chronicle.scraper"
-       name="Chronicle Scraper"
-       version="2.13.1"
+<addon id="script.chronicle.scraper.movie"
+       name="Chronicle Scraper (Movies)"
+       version="3.0.2"
        provider-name="Michael Beck">
 
   <requires>
@@ -14,15 +14,25 @@
     <import addon="xbmc.python"   version="3.0.0"/>
   </requires>
 
-  <!-- The actual scrapers: invoked directly by Kodi's library scanner via the
-       find/getdetails(/getepisodelist/getepisodedetails) contract, never run
-       interactively by the user. Two separate extension points because Kodi
-       treats movies and TV shows as distinct scraper types with distinct
-       contracts (see python/tvshow_scraper.py's module docstring). -->
+  <!-- The actual scraper: invoked directly by Kodi's library scanner via the
+       find/getdetails contract, never run interactively by the user.
+       Movies-only - see script.chronicle.scraper.tv (sibling addon, its own
+       id) for TV shows. THIS WAS ONE ADDON WITH BOTH EXTENSION POINTS UNTIL
+       v3.0.0: confirmed against Kodi's own addon-invocation behaviour (and
+       matching how Team Kodi ships metadata.themoviedb.org.python and
+       metadata.tvshows.themoviedb.org.python as two entirely separate addon
+       packages, never one) that Kodi resolves which script to run for a
+       scrape by ADDON ID alone - the extension point that triggered the
+       call plays no part in choosing which declared library file actually
+       runs. With both extensions in one addon.xml, every TV scrape was
+       silently invoking this movies script instead of tvshow_scraper.py,
+       with no error, nothing in kodi.log pointing at the cause - TV shows
+       never actually reached the TV code path, no matter what content
+       settings or scraper selection said. Splitting into two addon ids is
+       the only fix; there is no in-script way to detect "which extension
+       point triggered this" since Kodi doesn't pass that. -->
   <extension point="xbmc.metadata.scraper.movies"
              library="python/scraper.py"/>
-  <extension point="xbmc.metadata.scraper.tvshows"
-             library="python/tvshow_scraper.py"/>
 
   <!-- Companion script: connecting the addon to a Chronicle account (QR/PIN,
        same flow as Chronicle_Scrobbler) and Settings. Kodi's own scraper
@@ -47,9 +57,16 @@
     <assets>
       <icon>icon.png</icon>
     </assets>
-    <summary lang="en_GB">Chronicle Scraper</summary>
-    <description lang="en_GB">A Kodi metadata scraper for movies and TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, seasons and episodes, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans.</description>
-    <news>v2.13.1 - Fix: search_for_movie's filename pre-check (added in v2.13.0's own predecessor -- confirming whether a file already belongs to another item before creating a new one) crashed on every single call with "unsupported operand type(s) for -: int and str", silently degrading every movie search to title-only matching. Root cause: Kodi's find querystring carries year as a plain string; year_tolerant_match() does int arithmetic on it directly. New _parse_year() converts it before use, with a safe fallback to None on anything unparseable.
+    <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
+    <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
+    <news>v3.0.2 - Two fixes, both found in code review:
+(1) lib/legacy_nfo.py's stash directory had been copied into tv_addon/lib/ without the special://temp/ fix already applied to rebuild_state.py and activity_tracker.py for the same reason -- it was still stashing under special://profile/addon_data/{addon_id}/, which is scoped per addon id. Since a legacy NFO's delete always runs from this (movie) addon's process but the re-scrape that consumes the stash can run from either addon depending on item type, a TV show's stashed data was silently unreachable from the TV addon's own process, breaking legacy-NFO harvesting for TV. Now stashes under special://temp/chronicle_scraper/, matching the other two cross-process signal files.
+(2) "Rebuild local NFOs from Chronicle" now refuses to run (with an explanatory dialog) if "Recreate local NFO file from Chronicle's data" (write_nfo) is off -- previously it would delete every existing local NFO and never write a replacement, since the scraper's own NFO-writing is gated on that same setting, leaving the library with no local NFOs at all.
+v3.0.1 - The corner status ("N item(s) processed so far") no longer shows while Kodi's own "Scanning library" indicator is still up -- two progress indicators at once was confusing. It's a display-only change: activity is still tracked underneath the whole time, so the moment Kodi's own indicator disappears, the corner status appears immediately showing the real accumulated count, not starting over from zero. Unrelated to NFO writing or the rebuild pass -- this indicator tracks scraper activity (find/getdetails/getepisodedetails/getartwork) regardless of write_nfo or auto_rebuild_on_scan.
+v3.0.0 - BEHAVIOUR CHANGE: split into two addons. This addon is now movies-only; install the sibling script.chronicle.scraper.tv addon for TV shows. Root cause: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call -- with both declared in one addon.xml, every TV scrape was silently running this movies script instead of the TV one, no error, nothing in kodi.log. TV shows scanning into the library and getting NFOs has never actually worked with this addon since it started supporting TV, regardless of any TV-specific fix -- the TV code path was architecturally unreachable the whole time. lib/rebuild_state.py and lib/activity_tracker.py's cross-process signal files moved from special://profile/addon_data/{addon_id}/... to special://temp/chronicle_scraper/... so the now-separate movie and TV addons can still coordinate (rebuild-in-progress state, corner status activity) despite having different addon ids.
+v2.13.3 - BEHAVIOUR CHANGE: local NFO writing (movies, TV shows, and episodes alike) now only ever happens as part of an explicit rebuild pass -- the "Rebuild local NFOs from Chronicle" action, or "Automatically rebuild NFOs after every library scan" -- never inline during an ordinary library scan. Previously, "Recreate local NFO file from Chronicle's data" wrote a fresh local NFO the very first time this scraper scraped a brand-new item, interleaved with the same scan pass that was still discovering other new files; that write (plus, for TV, a VideoLibrary lookup to locate the episode's own file) added local-disk I/O to the scan's critical path for a write that has no bearing on whether the item itself gets into Kodi's library. New lib/rebuild_state.py is a cross-process signal nfo_rebuild.py sets for the duration of a rebuild pass; get_details()/get_episode_details() in both scrapers now check it before writing (or even looking up the file location for) a local NFO. If you rely on "Recreate local NFO file from Chronicle's data" and don't have the auto-rebuild-after-scan setting on, new items now need one manual "Rebuild local NFOs from Chronicle" run (or that setting turned on) to get their NFO written -- it's no longer automatic on first scrape.
+v2.13.2 - TV shows were silently failing to scan into the library: python/tvshow_scraper.py's run() copied the movies scraper's "only call endOfDirectory() when getdetails() failed" pattern, but the real bundled TV scraper (metadata.tvshows.themoviedb.org.python, ground-truthed against Team Kodi's own source) calls xbmcplugin.endOfDirectory() unconditionally after every action, even a successful getdetails/getepisodedetails/getartwork that already called setResolvedUrl() -- the movies and TV scraper contracts genuinely differ here. Without it, Kodi's plugin handle was never told the TV directory call had finished on success, silently stalling the scan with nothing in kodi.log. Fixed; no behaviour change for movies. (Episode NFOs for brand-new episodes can still miss on the same scan they're added in, due to a VideoLibrary commit-timing race -- deliberately not papered over with a blocking retry here, since that would only slow down the live scan without speeding up how fast files actually appear in Kodi; a missed NFO is caught on the episode's next scan, or immediately if "Automatically rebuild NFOs after every library scan" is enabled.)
+v2.13.1 - Fix: search_for_movie's filename pre-check (added in v2.13.0's own predecessor -- confirming whether a file already belongs to another item before creating a new one) crashed on every single call with "unsupported operand type(s) for -: int and str", silently degrading every movie search to title-only matching. Root cause: Kodi's find querystring carries year as a plain string; year_tolerant_match() does int arithmetic on it directly. New _parse_year() converts it before use, with a safe fallback to None on anything unparseable.
 v2.13.0 - New corner status indicator (the background service now shows a small "N item(s) processed so far" progress toast, the same widget the manual rebuild action already used for its own background phase) covering scraper activity that Kodi's own "Scanning library" indicator never did: that one only ever tracks Kodi's own directory-walk phase, not the tail of per-item find/getdetails/getartwork calls that follows it and can run for a long time afterward on a large library. Confirmed directly (2026-08-21): Kodi refuses actions like "Clean Library" the entire time that tail is still running, with nothing on screen explaining why -- this makes that activity visible instead of invisible. New lib/activity_tracker.py -- a small cross-process file-based signal, since every scraper action is Kodi's own short-lived, separate-process invocation with no other way for the one genuinely long-lived process (the background service) to know work is happening elsewhere.
 v2.12.0 - Two settings changes for anyone running this addon on more than one Kodi instance pointed at the same shared library (e.g. a primary box plus one or more Shields):
 (1) "Recreate local NFO file from Chronicle's data" is now OFF by default (was on). Kodi's own local-NFO-wins behaviour means only ONE instance needs to actually maintain the shared NFOs -- every other instance reading the same library just sees whatever that one instance already wrote, so leaving this off elsewhere avoids nothing but redundant work. Existing installs keep whatever they already had explicitly set; this only changes the out-of-the-box default for a fresh install.

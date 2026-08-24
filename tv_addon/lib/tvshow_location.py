@@ -162,17 +162,32 @@ def _search_sources_for_show(title, year):
 def get_episode(tvshowid, season, episode):
     """Returns (file_path, streamdetails) for this exact (season, episode)
     under tvshowid, or (None, None) if tvshowid is unknown (see
-    find_show_location) or Kodi doesn't have this episode yet (e.g. a
-    brand-new file not yet scanned). One VideoLibrary.GetEpisodes call gives
-    both the file path and Kodi's own streamdetails together -- unlike
-    movies, there's no separate lookup needed for streamdetails, since an
-    episode is identified precisely by season+episode rather than a fuzzy
-    title/year guess. Matched in Python rather than via a JSON-RPC filter on
-    season+episode -- simpler to get right than trusting a two-field filter
-    combination, and a single show's episode list is never large enough for
-    that to matter."""
+    find_show_location), the VideoLibrary.GetEpisodes call itself fails, or
+    this (season, episode) isn't in Kodi's list yet -- e.g. a brand-new file
+    not yet committed (getepisodedetails() for a just-added episode runs
+    DURING the very scan that's adding it, so this is common, not rare; see
+    module docstring). One VideoLibrary.GetEpisodes call gives both the file
+    path and Kodi's own streamdetails together -- unlike movies, there's no
+    separate lookup needed for streamdetails, since an episode is identified
+    precisely by season+episode rather than a fuzzy title/year guess.
+    Matched in Python rather than via a JSON-RPC filter on season+episode --
+    simpler to get right than trusting a two-field filter combination, and a
+    single show's episode list is never large enough for that to matter.
+
+    Deliberately single-attempt, no retry: this is called synchronously from
+    Kodi's own live library scan (getepisodedetails()), and its result only
+    feeds the local NFO write / legacy-NFO harvest, not the episode's actual
+    resolution into Kodi's library (that already happened via
+    setResolvedUrl() before this runs) -- so blocking the scan with a sleep
+    here to chase the above race buys nothing for how fast files actually
+    show up in Kodi, only for how fast the local NFO catches up. A missed
+    NFO on this pass is caught on the next scan of the same episode, or
+    immediately if "Automatically rebuild NFOs after every library scan" is
+    enabled (see service.py / nfo_rebuild.py), which re-triggers
+    getepisodedetails() once the file is already fully committed."""
     if tvshowid is None:
         return None, None
+
     request = {
         'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetEpisodes',
         'params': {
