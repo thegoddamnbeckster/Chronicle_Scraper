@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""script.chronicle.scraper — Background service entry point.
+"""script.chronicle.scraper.movie — Background service entry point.
 
 Runs continuously once Kodi starts, doing nothing until a video library scan
 finishes. When the "Automatically rebuild NFOs after every library scan"

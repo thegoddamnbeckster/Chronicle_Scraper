@@ -196,6 +196,8 @@ def get_details(show_id, handle):
     vtag.setEpisodeGuide(build_lookup_string(show_id))
 
     xbmcplugin.setResolvedUrl(handle=handle, succeeded=True, listitem=listitem)
+    log.info('get_details: show_id={0} title={1!r} -- setResolvedUrl sent to Kodi'.format(
+             show_id, details.get('title')))
     return True
 
 
@@ -263,6 +265,15 @@ def get_episode_details(encoded_ids, handle):
                 # into the NFO) when write_streamdetails is on. See
                 # python/scraper.py's own comment for why that's opt-in.
                 file_path, episode_streamdetails = get_episode(tvshowid, details.get('season'), details.get('episode'))
+                # This is purely a rebuild-pass NFO/legacy-harvest lookup --
+                # it does NOT gate whether the episode itself loads into
+                # Kodi's library (setResolvedUrl() below runs regardless of
+                # file_path). Logged so it's visible whether VideoLibrary
+                # already has this episode's file at rebuild time, distinct
+                # from whether the episode gets committed at all (that's the
+                # endOfDirectory log lines in run()).
+                log.info('get_episode_details: tvshowid={0} S{1}E{2} -- VideoLibrary lookup found file_path={3!r}'.format(
+                         tvshowid, details.get('season'), details.get('episode'), file_path))
                 if file_path:
                     folder = posixpath.dirname(file_path) + '/'
                     video_basename = strip_video_ext(posixpath.basename(file_path))
@@ -328,6 +339,8 @@ def get_episode_details(encoded_ids, handle):
         sync_episode_nfo(details, folder, video_basename, streamdetails=streamdetails)
 
     xbmcplugin.setResolvedUrl(handle=handle, succeeded=True, listitem=listitem)
+    log.info('get_episode_details: episode_id={0} S{1}E{2} title={3!r} -- setResolvedUrl sent to Kodi'.format(
+             episode_id, details.get('season'), details.get('episode'), details.get('title')))
     return True
 
 
@@ -371,6 +384,9 @@ def run():
     params = get_params(sys.argv[1:])
 
     action = params.get('action')
+    log.info('run: dispatching action={0!r} handle={1!r} params={2!r}'.format(
+             action, params.get('handle'), {k: v for k, v in params.items() if k != 'handle'}))
+
     if action == 'find' and 'title' in params:
         find_show(params['title'], params.get('year'), params['handle'])
     elif action == 'getdetails' and 'url' in params:
@@ -400,7 +416,23 @@ def run():
     # never surfaced this because skipping it on success is the movies
     # contract's own correct behaviour, not a general rule that also applies
     # to TV.
+    #
+    # THIS is the actual "load the file into the TV library" moment for
+    # Kodi's own bookkeeping: until this call, Kodi's plugin handle for this
+    # find/getdetails/getepisodedetails/getartwork invocation is still open,
+    # and the show/episode this action was scraping does not finish
+    # committing to VideoLibrary no matter what setResolvedUrl()/
+    # addDirectoryItem() already sent it. If this log line stops appearing
+    # for a given action, or appears without ever being followed by
+    # "run: endOfDirectory called" further down, that's the bug this fix
+    # addresses re-occurring -- not a network/Chronicle timeout (those
+    # surface as their own [client]/[scraper] log lines well before this
+    # point is ever reached).
+    log.info('run: about to call endOfDirectory for action={0!r} handle={1!r}'.format(
+             action, params.get('handle')))
     xbmcplugin.endOfDirectory(params['handle'])
+    log.info('run: endOfDirectory called for action={0!r} handle={1!r} -- directory call finished'.format(
+             action, params.get('handle')))
 
 
 if __name__ == '__main__':

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""script.chronicle.scraper — Script entry point.
+"""script.chronicle.scraper.movie — Script entry point.
 
 Shown when the user opens the addon from the Kodi add-on browser, or when
 Kodi's "Change Content" scraper-configuration screen opens this addon's
@@ -49,7 +49,7 @@ def _is_configured():
 
 
 def _get_args():
-    """Parse action=... from RunScript(script.chronicle.scraper,action=...) calls."""
+    """Parse action=... from RunScript(script.chronicle.scraper.movie,action=...) calls."""
     args = {}
     for arg in sys.argv[1:]:
         if '=' in arg:
