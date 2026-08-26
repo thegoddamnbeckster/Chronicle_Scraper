@@ -31,6 +31,86 @@ msgctxt "#32003"
 msgid "API Key"
 msgstr ""
 
+msgctxt "#32012"
+msgid "Test Connection"
+msgstr ""
+
+msgctxt "#32013"
+msgid "Open Settings"
+msgstr ""
+
+msgctxt "#32020"
+msgid "Connection successful!"
+msgstr ""
+
+msgctxt "#32021"
+msgid "Connection failed:"
+msgstr ""
+
+msgctxt "#32060"
+msgid "Connect to Chronicle"
+msgstr ""
+
+msgctxt "#32061"
+msgid "Connect to Chronicle"
+msgstr ""
+
+msgctxt "#32063"
+msgid "Scan the QR code with your phone"
+msgstr ""
+
+msgctxt "#32064"
+msgid "Waiting for approval…"
+msgstr ""
+
+msgctxt "#32065"
+msgid "Could not contact the Chronicle server."
+msgstr ""
+
+msgctxt "#32066"
+msgid "Connected to Chronicle!"
+msgstr ""
+
+msgctxt "#32067"
+msgid "Authorisation cancelled or expired."
+msgstr ""
+
+msgctxt "#32068"
+msgid "Your code"
+msgstr ""
+
+msgctxt "#32069"
+msgid "Cancel"
+msgstr ""
+
+msgctxt "#32079"
+msgid "Not configured yet — opening settings so you can enter your Chronicle server and connect."
+msgstr ""
+
+msgctxt "#32080"
+msgid "Status"
+msgstr ""
+
+msgctxt "#32081"
+msgid "Connected"
+msgstr ""
+
+msgctxt "#32082"
+msgid "Not connected"
+msgstr ""
+
+msgctxt "#32083"
+msgid "Chronicle URL is set to 'localhost' or a loopback address. This only works if Chronicle runs on this same device -- if it's on a different machine, this scraper won't be able to reach it. Keep this address anyway?"
+msgstr ""
+
+msgctxt "#32084"
+msgid "Expires in {0}"
+msgstr ""
+
+msgctxt "#32085"
+msgid "Chronicle URL is not set — enter it above, then try Connect again."
+msgstr ""
+
 msgctxt "#32090"
 msgid "Local Files"
 msgstr ""

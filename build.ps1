@@ -21,7 +21,8 @@ function Build-ChronicleAddon {
     param(
         [Parameter(Mandatory)][string]$AddonRoot,   # folder containing this addon's own addon.xml
         [Parameter(Mandatory)][string[]]$RootFiles   # root-level files this addon actually has (varies: the
-                                                       # movie addon has default.py/service.py, the TV addon doesn't)
+                                                       # movie addon has default.py + service.py, the TV addon
+                                                       # has default.py only -- no background service of its own)
     )
 
     $addonXml = Join-Path $AddonRoot "addon.xml"
@@ -115,7 +116,7 @@ function Build-ChronicleAddon {
 }
 
 $movieZip = Build-ChronicleAddon -AddonRoot $repoRoot -RootFiles @("addon.xml", "default.py", "service.py", "icon.png", "LICENSE")
-$tvZip    = Build-ChronicleAddon -AddonRoot (Join-Path $repoRoot "tv_addon") -RootFiles @("addon.xml", "icon.png", "LICENSE")
+$tvZip    = Build-ChronicleAddon -AddonRoot (Join-Path $repoRoot "tv_addon") -RootFiles @("addon.xml", "default.py", "icon.png", "LICENSE")
 
 Write-Host "======================================"
 Write-Host " ALL BUILDS COMPLETE"

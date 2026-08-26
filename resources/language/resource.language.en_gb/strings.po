@@ -103,6 +103,10 @@ msgctxt "#32084"
 msgid "Expires in {0}"
 msgstr ""
 
+msgctxt "#32085"
+msgid "Chronicle URL is not set — enter it above, then try Connect again."
+msgstr ""
+
 # ── Local Files ──────────────────────────────────────────────────────────────
 
 msgctxt "#32090"

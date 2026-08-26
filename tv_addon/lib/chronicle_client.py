@@ -9,6 +9,7 @@ device-auth flow as Chronicle_Scrobbler).
 """
 
 import json
+import threading
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -20,6 +21,39 @@ ADDON = xbmcaddon.Addon()
 log   = Logger('client')
 
 _USER_AGENT = 'Kodi/Chronicle-Scraper/1.0'
+
+# urlopen(timeout=N) only bounds the socket once it exists -- the DNS lookup
+# (getaddrinfo) that happens before that is NOT covered by that timeout on
+# any platform. A dead/unreachable DNS server or a stale hostname can hang
+# a "timed" call forever, well past whatever timeout= was passed in, which
+# is exactly what "Chronicle is unreachable and the scraper just hangs"
+# turned out to be -- not a missing timeout, but one that doesn't cover the
+# step that actually hung. call_with_timeout() is the backstop: it runs the
+# call on a daemon thread and gives up after timeout + _WATCHDOG_GRACE_SECONDS
+# even if that thread never returns, leaving the runaway thread to die on
+# its own (daemon=True means it can't block Kodi from exiting).
+_WATCHDOG_GRACE_SECONDS = 5
+
+
+def call_with_timeout(fn, timeout):
+    result = {}
+
+    def _target():
+        try:
+            result['value'] = fn()
+        except BaseException as exc:
+            result['error'] = exc
+
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+    t.join(timeout + _WATCHDOG_GRACE_SECONDS)
+    if t.is_alive():
+        raise TimeoutError('no response within {0}s (DNS/network hang)'.format(
+            timeout + _WATCHDOG_GRACE_SECONDS))
+    if 'error' in result:
+        raise result['error']
+    return result.get('value')
+
 
 # search_movie/search_show can trigger Chronicle's resolve-or-create path for a
 # title it's never seen before -- which walks every configured metadata
@@ -152,13 +186,18 @@ class ChronicleClient:
         url = '{0}/api/v1/scraper/movies/{1}/resolved-file'.format(self._base_url, media_item_id)
         data = json.dumps({'fileName': filename}).encode('utf-8')
         req = self._build_request(url, data=data, method='POST')
-        try:
+
+        def _do():
             with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status == 200:
-                    log.info('report_resolved_file({0}, {1!r}): recorded'.format(media_item_id, filename))
-                else:
-                    log.warning('report_resolved_file({0}, {1!r}): unexpected HTTP {2}'.format(
-                                media_item_id, filename, resp.status))
+                return resp.status
+
+        try:
+            status = call_with_timeout(_do, 10)
+            if status == 200:
+                log.info('report_resolved_file({0}, {1!r}): recorded'.format(media_item_id, filename))
+            else:
+                log.warning('report_resolved_file({0}, {1!r}): unexpected HTTP {2}'.format(
+                            media_item_id, filename, status))
         except urllib.error.HTTPError as exc:
             log.warning('report_resolved_file({0}, {1!r}): Chronicle returned HTTP {2} ({3})'.format(
                         media_item_id, filename, exc.code, exc.reason))
@@ -185,14 +224,19 @@ class ChronicleClient:
             self._base_url, media_item_id, urllib.parse.quote(source, safe=''))
         data = json.dumps({'metadata': metadata}).encode('utf-8')
         req = self._build_request(url, data=data, method='POST')
-        try:
+
+        def _do():
             with urllib.request.urlopen(req, timeout=20) as resp:
-                if resp.status == 200:
-                    log.info('contribute_metadata({0}, {1!r}): {2} field(s) contributed'.format(
-                             media_item_id, source, len(metadata)))
-                else:
-                    log.warning('contribute_metadata({0}, {1!r}): unexpected HTTP {2}'.format(
-                                media_item_id, source, resp.status))
+                return resp.status
+
+        try:
+            status = call_with_timeout(_do, 20)
+            if status == 200:
+                log.info('contribute_metadata({0}, {1!r}): {2} field(s) contributed'.format(
+                         media_item_id, source, len(metadata)))
+            else:
+                log.warning('contribute_metadata({0}, {1!r}): unexpected HTTP {2}'.format(
+                            media_item_id, source, status))
         except urllib.error.HTTPError as exc:
             log.warning('contribute_metadata({0}, {1!r}): Chronicle returned HTTP {2} ({3})'.format(
                         media_item_id, source, exc.code, exc.reason))
@@ -214,11 +258,15 @@ class ChronicleClient:
         url = '{0}/api/health'.format(self._base_url)
         req = self._build_request(url)
 
-        try:
+        def _do():
             with urllib.request.urlopen(req, timeout=10) as resp:
-                if resp.status == 200:
-                    return True, ''
-                return False, 'Unexpected HTTP {0}'.format(resp.status)
+                return resp.status
+
+        try:
+            status = call_with_timeout(_do, 10)
+            if status == 200:
+                return True, ''
+            return False, 'Unexpected HTTP {0}'.format(status)
         except urllib.error.HTTPError as exc:
             return False, 'HTTP {0}: {1}'.format(exc.code, exc.reason)
         except Exception as exc:
@@ -235,10 +283,14 @@ class ChronicleClient:
 
         url = path_or_url if full_url else '{0}{1}'.format(self._base_url, path_or_url)
         req = self._build_request(url)
-        try:
+
+        def _do():
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 body = json.loads(resp.read().decode('utf-8'))
                 return body.get('data')
+
+        try:
+            return call_with_timeout(_do, timeout)
         except urllib.error.HTTPError as exc:
             # Chronicle is reachable but returned an error status (e.g. 500 from an
             # unrelated request being canceled server-side, 401 from a stale API
