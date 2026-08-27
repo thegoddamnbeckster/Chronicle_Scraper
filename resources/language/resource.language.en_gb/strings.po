@@ -188,3 +188,19 @@ msgstr ""
 msgctxt "#32109"
 msgid "Turn On and Continue"
 msgstr ""
+
+msgctxt "#32110"
+msgid "Chronicle approved this device, but the connection key wasn't received -- it may have already been used up by an earlier attempt. Please try Connect again."
+msgstr ""
+
+msgctxt "#32111"
+msgid "This clears the saved Chronicle URL ({0}) and connection key, so you can enter a new one. Continue?"
+msgstr ""
+
+msgctxt "#32112"
+msgid "Change Chronicle URL"
+msgstr ""
+
+msgctxt "#32113"
+msgid "Chronicle returned an unexpected response. Please try again, or check the server."
+msgstr ""

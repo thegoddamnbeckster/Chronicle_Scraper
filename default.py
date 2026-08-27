@@ -72,10 +72,17 @@ def _warn_if_localhost():
     """Catch a URL that will only work if Chronicle runs on this same device --
     Kodi and Chronicle are commonly on separate machines. Runs right after
     Connect saves a new URL.
+
+    Returns True when it's fine to proceed with the URL just saved (nothing to
+    warn about, or the user chose to keep it anyway), False when the user
+    declined -- chronicle_url is cleared on disk in that case, and the caller
+    must stop using the URL it just read rather than proceeding with it
+    regardless. Previously this returned nothing and the caller pressed on
+    with the declined URL anyway; see _connect_to_chronicle()'s own docstring.
     """
     url = ADDON.getSetting('chronicle_url').lower()
     if not url or not any(marker in url for marker in _LOOPBACK_MARKERS):
-        return
+        return True
 
     keep = xbmcgui.Dialog().yesno(
         ADDON.getLocalizedString(32000),   # "Chronicle Scraper"
@@ -83,6 +90,7 @@ def _warn_if_localhost():
     )
     if not keep:
         ADDON.setSetting('chronicle_url', '')
+    return keep
 
 
 def show_menu():
@@ -96,6 +104,9 @@ def show_menu():
     if args.get('action') == 'auth':
         _connect_to_chronicle()
         return
+    if args.get('action') == 'change_url':
+        _change_chronicle_url()
+        return
     if args.get('action') == 'rebuild_nfos':
         _rebuild_nfos()
         return
@@ -105,6 +116,7 @@ def show_menu():
     options = [
         ADDON.getLocalizedString(32012),  # Test Connection
         ADDON.getLocalizedString(32061),  # Edit Connection
+        ADDON.getLocalizedString(32112),  # Change Chronicle URL
         ADDON.getLocalizedString(32093),  # Rebuild local NFOs from Chronicle
         ADDON.getLocalizedString(32013),  # Open Settings
     ]
@@ -117,8 +129,10 @@ def show_menu():
     elif choice == 1:
         _connect_to_chronicle()
     elif choice == 2:
-        _rebuild_nfos()
+        _change_chronicle_url()
     elif choice == 3:
+        _rebuild_nfos()
+    elif choice == 4:
         _refresh_auth_status()
         ADDON.openSettings()
 
@@ -178,12 +192,15 @@ def _connect_to_chronicle():
             return
         ADDON.setSetting('chronicle_url', entered)
         log.info('_connect_to_chronicle: saved new URL {0!r}'.format(entered))
-        _warn_if_localhost()
+        if not _warn_if_localhost():
+            log.info('_connect_to_chronicle: user declined loopback URL -- aborting')
+            return
         current = entered
 
     log.info('_connect_to_chronicle: calling DeviceAuthManager(base_url={0!r}).run()'.format(current))
+    connected = False
     try:
-        DeviceAuthManager(base_url=current).run()
+        connected = DeviceAuthManager(base_url=current).run()
     except Exception:
         # RunScript-launched scripts have no visible crash surface -- an unhandled
         # exception here would otherwise look EXACTLY like "the connection window
@@ -195,8 +212,39 @@ def _connect_to_chronicle():
             ADDON.getLocalizedString(32060),
             'Connect failed unexpectedly -- see kodi.log for details.',
         )
-    log.info('_connect_to_chronicle: DeviceAuthManager().run() returned')
-    _refresh_auth_status()
+    log.info('_connect_to_chronicle: DeviceAuthManager().run() returned {0}'.format(connected))
+    if not connected:
+        # A successful run() already wrote auth_status="Connected" itself, through
+        # its OWN module-level Addon() instance. Re-deriving it here immediately
+        # afterward would re-read api_key through THIS module's own (different)
+        # Addon() instance -- not guaranteed to see that just-written value yet,
+        # the same cross-instance staleness this session already hit once (see
+        # DeviceAuthManager.__init__'s own docstring). Only re-sync status on a
+        # non-success, where nothing was just written and there's nothing to race.
+        _refresh_auth_status()
+
+
+def _change_chronicle_url():
+    """Explicit escape hatch for a saved-but-wrong chronicle_url (server moved, a
+    typo, a decommissioned host) -- the ONLY way to correct a non-empty
+    chronicle_url anywhere in this addon: _connect_to_chronicle() only prompts
+    for a URL when chronicle_url is currently empty, and Settings' own field is
+    read-only (see resources/settings.xml). Confirms first since this also
+    clears api_key -- the old key belongs to whatever server chronicle_url used
+    to point at, not to wherever the user is about to point it next.
+    """
+    current = ADDON.getSetting('chronicle_url')
+    if current:
+        confirmed = xbmcgui.Dialog().yesno(
+            ADDON.getLocalizedString(32000),
+            ADDON.getLocalizedString(32111).format(current),
+        )
+        if not confirmed:
+            return
+        ADDON.setSetting('chronicle_url', '')
+        ADDON.setSetting('api_key', '')
+        log.info('_change_chronicle_url: cleared saved URL {0!r} and api_key'.format(current))
+    _connect_to_chronicle()
 
 
 def _rebuild_nfos():

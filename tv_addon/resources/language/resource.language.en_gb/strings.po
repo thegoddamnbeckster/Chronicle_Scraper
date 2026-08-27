@@ -130,3 +130,19 @@ msgstr ""
 msgctxt "#32106"
 msgid "Adds a <fileinfo><streamdetails> block to the NFO with Kodi's own probe of the real file -- video codec/resolution/HDR type, audio codec/language/channels, subtitle track languages. This is data only Kodi itself has; Chronicle has no way to supply it. Requires an extra lookup against Kodi's own library on top of the normal NFO write, so it's off by default -- if you run this addon on more than one Kodi instance pointed at the same shared library, you only need this ON for whichever one is responsible for maintaining the shared NFOs; the others just read the NFO that instance already wrote, streamdetails included, so there's nothing to gain (and real extra work to lose) by also turning this on for them."
 msgstr ""
+
+msgctxt "#32110"
+msgid "Chronicle approved this device, but the connection key wasn't received -- it may have already been used up by an earlier attempt. Please try Connect again."
+msgstr ""
+
+msgctxt "#32111"
+msgid "This clears the saved Chronicle URL ({0}) and connection key, so you can enter a new one. Continue?"
+msgstr ""
+
+msgctxt "#32112"
+msgid "Change Chronicle URL"
+msgstr ""
+
+msgctxt "#32113"
+msgid "Chronicle returned an unexpected response. Please try again, or check the server."
+msgstr ""

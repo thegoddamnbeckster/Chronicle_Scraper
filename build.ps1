@@ -20,9 +20,16 @@ $outputDir = "C:\Temp"
 function Build-ChronicleAddon {
     param(
         [Parameter(Mandatory)][string]$AddonRoot,   # folder containing this addon's own addon.xml
-        [Parameter(Mandatory)][string[]]$RootFiles   # root-level files this addon actually has (varies: the
+        [Parameter(Mandatory)][string[]]$RootFiles,  # root-level files this addon actually has (varies: the
                                                        # movie addon has default.py + service.py, the TV addon
                                                        # has default.py only -- no background service of its own)
+        [hashtable]$SharedFiles = @{}                 # dest-relative-path -> absolute-source-path, copied in
+                                                       # AFTER the normal lib/python/resources copy below,
+                                                       # overwriting whatever this addon's own tree had there.
+                                                       # Used so files that must stay byte-identical across the
+                                                       # movie/TV split (e.g. lib/device_auth.py) have exactly
+                                                       # ONE checked-in copy -- the movie addon's own -- instead
+                                                       # of a second copy nothing enforces staying in sync.
     )
 
     $addonXml = Join-Path $AddonRoot "addon.xml"
@@ -72,6 +79,14 @@ function Build-ChronicleAddon {
     Get-ChildItem -Path $sourcePath -Directory -Recurse -Filter "__pycache__" -ErrorAction SilentlyContinue |
         Remove-Item -Recurse -Force
     Write-Host "  Copied: lib/, python/, resources/ (cleaned __pycache__)"
+
+    foreach ($destRel in $SharedFiles.Keys) {
+        $destPath = Join-Path $sourcePath $destRel
+        New-Item -ItemType Directory -Path (Split-Path $destPath -Parent) -Force | Out-Null
+        Copy-Item $SharedFiles[$destRel] $destPath -Force
+        Write-Host "  Synced from movie addon: $destRel"
+    }
+
     Write-Host "  build_temp ready."
 
     # Step 2: Create ZIP
@@ -116,7 +131,9 @@ function Build-ChronicleAddon {
 }
 
 $movieZip = Build-ChronicleAddon -AddonRoot $repoRoot -RootFiles @("addon.xml", "default.py", "service.py", "icon.png", "LICENSE")
-$tvZip    = Build-ChronicleAddon -AddonRoot (Join-Path $repoRoot "tv_addon") -RootFiles @("addon.xml", "default.py", "icon.png", "LICENSE")
+$tvZip    = Build-ChronicleAddon -AddonRoot (Join-Path $repoRoot "tv_addon") -RootFiles @("addon.xml", "default.py", "icon.png", "LICENSE") -SharedFiles @{
+    "lib\device_auth.py" = Join-Path $repoRoot "lib\device_auth.py"
+}
 
 Write-Host "======================================"
 Write-Host " ALL BUILDS COMPLETE"
