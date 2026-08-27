@@ -140,7 +140,41 @@ def _test_connection():
 
 
 def _connect_to_chronicle():
-    """Launch the QR device-auth flow to obtain an API key."""
+    """Launch the QR device-auth flow to obtain an API key.
+
+    Confirms the Chronicle URL right here rather than trusting whatever is
+    already on disk in chronicle_url -- when this is reached via the
+    "Connect to Chronicle" action button INSIDE the still-open Settings
+    dialog (RunScript launches this as a brand new process while Settings
+    is still up), a URL the user just typed into that same dialog is not
+    guaranteed to have been flushed to the addon's on-disk settings.xml yet
+    -- ADDON.getSetting('chronicle_url') here could then read the OLD value
+    even though the new one is visibly still sitting in the field a few
+    pixels away. Confirmed live complaint: switching URLs and immediately
+    clicking Connect built the QR code against the stale one. Asking
+    explicitly here -- rather than only ever trusting whatever settings.xml
+    happens to already contain -- sidesteps that GUI-commit-timing question
+    entirely, and doubles as the fix for a fresh install with no URL yet:
+    the user is prompted for it right here instead of needing Settings to
+    already have a value flushed before Connect can do anything useful with it.
+    """
+    current = ADDON.getSetting('chronicle_url')
+    entered = xbmcgui.Dialog().input(
+        ADDON.getLocalizedString(32002), defaultt=current)  # "Chronicle URL"
+    entered = (entered or '').strip()
+
+    if not entered:
+        if not current:
+            xbmcgui.Dialog().ok(
+                ADDON.getLocalizedString(32060),
+                ADDON.getLocalizedString(32085),  # "Chronicle URL is not set..."
+            )
+        return  # cancelled, or genuinely nothing to connect to
+
+    if entered != current:
+        ADDON.setSetting('chronicle_url', entered)
+        log.info('Chronicle URL updated via Connect flow: {0}'.format(entered))
+
     DeviceAuthManager().run()
 
 
