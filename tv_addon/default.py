@@ -56,8 +56,17 @@ def _get_args():
 
 
 def _refresh_auth_status():
-    """Keep the read-only Settings status field honest before Settings is shown."""
-    connected = bool(ADDON.getSetting('api_key'))
+    """Keep the read-only Settings status field honest before Settings is shown.
+
+    Requires BOTH chronicle_url and api_key -- matching _is_configured()'s own
+    check. Previously checked api_key alone, so it kept showing "Connected"
+    purely because an api_key from a PAST successful connection was still
+    saved, even while chronicle_url sat empty and every actual Connect
+    attempt was failing outright. Confirmed live (2026-08-27): status showed
+    "Connected" immediately after a Connect attempt that never got past
+    "URL not set."
+    """
+    connected = bool(ADDON.getSetting('chronicle_url')) and bool(ADDON.getSetting('api_key'))
     ADDON.setSetting(
         'auth_status',
         ADDON.getLocalizedString(32081 if connected else 32082),  # "Connected" / "Not connected"

@@ -157,6 +157,26 @@ class DeviceAuthManager:
         xbmc.sleep(500)
         base_url = ADDON.getSetting('chronicle_url').rstrip('/')
         log.info('_initiate(): chronicle_url after settle wait = {0!r}'.format(base_url))
+
+        if not base_url:
+            # Both default.py's close-Settings-to-force-a-flush and this settle wait
+            # have failed to produce a non-empty chronicle_url -- confirmed live
+            # (2026-08-27): still empty even after Settings was fully closed, not
+            # just delayed. Something about the on-screen-keyboard edit to that
+            # field isn't reliably landing in the underlying setting at all on this
+            # setup. Rather than fail outright, fall back once to a single,
+            # guaranteed-reliable modal prompt -- xbmcgui.Dialog().input() has its
+            # own explicit confirm step, entirely independent of whatever is going
+            # wrong with the Settings screen's own text control.
+            log.warning('_initiate(): chronicle_url still empty -- falling back to a direct input prompt')
+            entered = xbmcgui.Dialog().input(ADDON.getLocalizedString(32002))  # "Chronicle URL"
+            entered = (entered or '').strip()
+            log.info('_initiate(): fallback input prompt returned {0!r}'.format(entered))
+            if entered:
+                ADDON.setSetting('chronicle_url', entered)
+                base_url = entered.rstrip('/')
+                log.info('_initiate(): saved fallback URL {0!r}'.format(base_url))
+
         if not base_url:
             self._last_error = ADDON.getLocalizedString(32085)  # "Chronicle URL is not set."
             return None
