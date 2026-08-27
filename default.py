@@ -154,47 +154,22 @@ def _test_connection():
 def _connect_to_chronicle():
     """Launch the QR device-auth flow to obtain an API key.
 
-    Confirms the Chronicle URL right here rather than trusting whatever is
-    already on disk in chronicle_url -- when this is reached via the
-    "Connect to Chronicle" action button INSIDE the still-open Settings
-    dialog (RunScript launches this as a brand new process while Settings
-    is still up), a URL the user just typed into that same dialog is not
-    guaranteed to have been flushed to the addon's on-disk settings.xml yet
-    -- ADDON.getSetting('chronicle_url') here could then read the OLD value
-    even though the new one is visibly still sitting in the field a few
-    pixels away. Confirmed live complaint: switching URLs and immediately
-    clicking Connect built the QR code against the stale one. Asking
-    explicitly here -- rather than only ever trusting whatever settings.xml
-    happens to already contain -- sidesteps that GUI-commit-timing question
-    entirely, and doubles as the fix for a fresh install with no URL yet:
-    the user is prompted for it right here instead of needing Settings to
-    already have a value flushed before Connect can do anything useful with it.
+    Reads chronicle_url straight from settings.xml -- no confirmation step.
+    A short-lived earlier version of this function (v3.1.1) always prompted
+    to re-enter the URL first, to guard against a just-edited Settings field
+    not being flushed to disk yet before this action button (reached from
+    inside the still-open Settings dialog) fired as a brand new process.
+    Reverted (2026-08-27): confirmed live that the prompt was worse than the
+    problem it guarded against -- every ordinary reconnect now needed a full
+    on-screen-keyboard URL retype, and the actual repro that prompted this
+    revert turned out to be the user understandably backing out of that
+    unexpected prompt within ~2 seconds, not a stale value ever being used.
+    If the original staleness issue resurfaces, close Settings fully before
+    clicking Connect from the main menu (rather than the in-Settings action
+    button) -- that path always reads the already-flushed value.
     """
-    current = ADDON.getSetting('chronicle_url')
-    log.info('_connect_to_chronicle: invoked; chronicle_url on disk = {0!r}'.format(current))
-
-    entered = xbmcgui.Dialog().input(
-        ADDON.getLocalizedString(32002), defaultt=current)  # "Chronicle URL"
-    log.info('_connect_to_chronicle: URL prompt returned {0!r}'.format(entered))
-    entered = (entered or '').strip()
-
-    if not entered:
-        if not current:
-            log.warning('_connect_to_chronicle: no URL entered and none already set -- aborting')
-            xbmcgui.Dialog().ok(
-                ADDON.getLocalizedString(32060),
-                ADDON.getLocalizedString(32085),  # "Chronicle URL is not set..."
-            )
-        else:
-            log.info('_connect_to_chronicle: prompt returned empty (cancelled) -- '
-                      'keeping existing URL {0!r}, aborting Connect'.format(current))
-        return  # cancelled, or genuinely nothing to connect to
-
-    if entered != current:
-        ADDON.setSetting('chronicle_url', entered)
-        log.info('_connect_to_chronicle: URL changed {0!r} -> {1!r}, saved'.format(current, entered))
-    else:
-        log.info('_connect_to_chronicle: URL unchanged, proceeding')
+    log.info('_connect_to_chronicle: invoked; chronicle_url on disk = {0!r}'.format(
+             ADDON.getSetting('chronicle_url')))
 
     log.info('_connect_to_chronicle: calling DeviceAuthManager().run()')
     try:
