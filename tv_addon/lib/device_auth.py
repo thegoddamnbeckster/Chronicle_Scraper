@@ -261,8 +261,19 @@ class DeviceAuthManager:
             return ''
 
     def _poll_loop(self, code: str, api_key_holder: list, stop_event: threading.Event):
-        """Background thread: poll Chronicle until approved, denied, expired, or cancelled."""
-        base_url = ADDON.getSetting('chronicle_url').rstrip('/')
+        """Background thread: poll Chronicle until approved, denied, expired, or cancelled.
+
+        Uses self._base_url (see __init__'s own docstring for why) instead of
+        re-reading chronicle_url from settings -- this method independently
+        did its own ADDON.getSetting('chronicle_url') read and was missed
+        when _initiate() was fixed for the exact same cross-instance
+        Addon() issue. Confirmed live (2026-08-27): polling failed with
+        "unknown url type: '/api/v1/auth/device/{code}/poll'" -- a schemeless,
+        hostless path, meaning base_url read back empty here even though the
+        QR code and _initiate()'s own POST (already using self._base_url by
+        then) had worked correctly moments earlier.
+        """
+        base_url = (self._base_url or ADDON.getSetting('chronicle_url')).rstrip('/')
         url      = '{0}/api/v1/auth/device/{1}/poll'.format(base_url, code)
 
         while not stop_event.is_set():
