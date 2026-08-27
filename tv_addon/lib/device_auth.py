@@ -20,6 +20,7 @@ import json
 import urllib.request
 import urllib.error
 
+import xbmc
 import xbmcvfs
 import xbmcgui
 import xbmcaddon
@@ -133,8 +134,29 @@ class DeviceAuthManager:
     def _initiate(self):
         """POST /api/v1/auth/device — returns parsed JSON data dict, or None on
         failure. On None, self._last_error carries a specific, user-facing
-        reason — see the docstring on _last_error's declaration above."""
+        reason — see the docstring on _last_error's declaration above.
+
+        Waits briefly before its first read of chronicle_url. "Connect to
+        Chronicle" is reachable via an action button INSIDE the addon's own
+        still-open Settings dialog (RunScript launches this as a brand-new
+        process while Settings is still up), and a URL field the user just
+        typed there is not guaranteed to already be flushed to the on-disk
+        settings.xml the instant that button fires. Confirmed live
+        (2026-08-27): chronicle_url read back completely empty immediately
+        after typing a URL and clicking Connect, for a URL that WAS saved
+        correctly moments later -- and the same race applies just as much to
+        an EDITED (not just first-time) URL, since a stale-but-non-empty old
+        value looks exactly as "valid" as a correctly-flushed new one from
+        here, with no way to tell them apart except by waiting. A short fixed
+        wait is imperceptible in a flow that already involves a real network
+        round-trip and dialog rendering, and needs no user-visible retype
+        step -- unlike the confirm-prompt approach this replaces (added in
+        v3.1.1/v1.1.1/v2.2.1, reverted in v3.1.4/v1.1.3/v2.2.3 for exactly
+        that reason).
+        """
+        xbmc.sleep(500)
         base_url = ADDON.getSetting('chronicle_url').rstrip('/')
+        log.info('_initiate(): chronicle_url after settle wait = {0!r}'.format(base_url))
         if not base_url:
             self._last_error = ADDON.getLocalizedString(32085)  # "Chronicle URL is not set."
             return None
