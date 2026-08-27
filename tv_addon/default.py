@@ -17,12 +17,36 @@ cross-process signal files under special://temp/chronicle_scraper/, not by
 addon id, so either addon's rebuild pass reaches both). Adding a second copy
 of that menu entry here would just be two buttons that do the exact same
 thing.
+
+## Chronicle URL: one entry point, not two
+
+Settings' own chronicle_url text field is READ-ONLY (enable="false" in
+resources/settings.xml) -- it exists only to show what's currently saved,
+not to accept edits. That was a deliberate change (2026-08-27), not an
+oversight: Kodi's on-screen-keyboard edit to that field was confirmed live
+to not reliably land in the underlying setting at all on some setups, even
+after the whole Settings dialog was fully closed -- not a timing issue, an
+entry-not-committing one, upstream of anything this addon controls. Asking
+the user to fight that control, and then potentially retype the same URL
+into a fallback prompt when it silently failed, was worse than just having
+one single, always-reliable entry point.
+
+"Edit Connection" (_connect_to_chronicle(), reachable from both the main
+menu and the Settings action button) is now that one entry point: it only
+ever prompts for a URL when there isn't already a saved one, via
+xbmcgui.Dialog().input() -- a dialog with its own explicit confirm step,
+proven reliable where the Settings text field wasn't. An already-connected
+reconnect skips the prompt entirely and goes straight to the QR window, so
+a working URL is never asked for twice. To actually change an existing URL,
+clear api_key first (or just run through "Edit Connection" again after a
+server move -- a non-empty-but-wrong URL will simply fail Test Connection,
+at which point re-running Connect after clearing chronicle_url via this same
+flow is the fix).
 """
 
 import sys
 import traceback
 
-import xbmc
 import xbmcgui
 import xbmcaddon
 
@@ -32,17 +56,6 @@ from lib.device_auth import DeviceAuthManager
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('default')
-
-
-def _is_configured():
-    """True once a server URL and API key are both present.
-
-    "Connect to Chronicle" lives as an action button on the Settings page
-    itself (resources/settings.xml), not in this menu -- so requiring the key
-    here doesn't create a dead end: an unconfigured click goes straight to
-    Settings, where the URL field and the connect button sit side by side.
-    """
-    return bool(ADDON.getSetting('chronicle_url')) and bool(ADDON.getSetting('api_key'))
 
 
 def _get_args():
@@ -58,13 +71,12 @@ def _get_args():
 def _refresh_auth_status():
     """Keep the read-only Settings status field honest before Settings is shown.
 
-    Requires BOTH chronicle_url and api_key -- matching _is_configured()'s own
-    check. Previously checked api_key alone, so it kept showing "Connected"
-    purely because an api_key from a PAST successful connection was still
-    saved, even while chronicle_url sat empty and every actual Connect
-    attempt was failing outright. Confirmed live (2026-08-27): status showed
-    "Connected" immediately after a Connect attempt that never got past
-    "URL not set."
+    Requires BOTH chronicle_url and api_key. Previously checked api_key alone,
+    so it kept showing "Connected" purely because an api_key from a PAST
+    successful connection was still saved, even while chronicle_url sat empty
+    and every actual Connect attempt was failing outright. Confirmed live
+    (2026-08-27): status showed "Connected" immediately after a Connect
+    attempt that never got past "URL not set."
     """
     connected = bool(ADDON.getSetting('chronicle_url')) and bool(ADDON.getSetting('api_key'))
     ADDON.setSetting(
@@ -79,8 +91,7 @@ _LOOPBACK_MARKERS = ('localhost', '127.0.0.1', '::1')
 def _warn_if_localhost():
     """Catch a URL that will only work if Chronicle runs on this same device --
     Kodi and Chronicle are commonly on separate machines. Runs right after
-    Settings closes rather than reactively on every settings change, so it
-    only fires once per visit instead of on every unrelated toggle.
+    Connect saves a new URL.
     """
     url = ADDON.getSetting('chronicle_url').lower()
     if not url or not any(marker in url for marker in _LOOPBACK_MARKERS):
@@ -95,27 +106,21 @@ def _warn_if_localhost():
 
 
 def show_menu():
-    """Display the main action menu, or jump straight to Settings on first run."""
+    """Display the main action menu. No auto-bounce to Settings on first run --
+    "Edit Connection" is directly reachable from here even when unconfigured,
+    since it's the one reliable place the URL ever gets entered. See this
+    module's own docstring for why the Settings screen no longer does that job.
+    """
     args = _get_args()
     if args.get('action') == 'auth':
         _connect_to_chronicle()
         return
 
-    if not _is_configured():
-        _refresh_auth_status()
-        xbmcgui.Dialog().notification(
-            ADDON.getLocalizedString(32000),   # "Chronicle Scraper (TV)"
-            ADDON.getLocalizedString(32079),   # "Not configured yet — opening settings…"
-            xbmcgui.NOTIFICATION_INFO,
-            4000,
-        )
-        ADDON.openSettings()
-        _warn_if_localhost()
-        return
+    _refresh_auth_status()
 
     options = [
         ADDON.getLocalizedString(32012),  # Test Connection
-        ADDON.getLocalizedString(32061),  # Connect to Chronicle
+        ADDON.getLocalizedString(32061),  # Edit Connection
         ADDON.getLocalizedString(32013),  # Open Settings
     ]
 
@@ -129,7 +134,6 @@ def show_menu():
     elif choice == 2:
         _refresh_auth_status()
         ADDON.openSettings()
-        _warn_if_localhost()
 
 
 def _test_connection():
@@ -151,53 +155,28 @@ def _test_connection():
 
 
 def _connect_to_chronicle():
-    """Launch the QR device-auth flow to obtain an API key.
+    """"Edit Connection" -- launches the QR device-auth flow to obtain an API key.
 
-    Closes the Settings dialog first, if it's the one that's actually open.
-    Root-caused (2026-08-27) by reading settings.xml directly moments after a
-    failed Connect attempt: chronicle_url was still sitting at its empty
-    default a full minute-plus after the user had typed a URL and could see
-    it in the field. Not a timing race -- an ORDERING one. Kodi's addon
-    Settings dialog only writes settings.xml to disk when the whole dialog
-    closes, not per-field as focus moves between controls. "Connect to
-    Chronicle" is a button INSIDE that same still-open dialog (RunScript
-    launches this as a brand-new script instance while Settings is still
-    up), so no amount of waiting afterward can see a value that was never
-    written in the first place -- an earlier fix here (v1.1.4) tried a
-    settle-wait before reading and confirmed exactly that: still empty after
-    waiting, because there was nothing to wait FOR yet.
-
-    Window.IsActive(addonsettings) gates the Action(Back) so this only ever
-    closes something when Settings is confirmed to actually be the active
-    window -- reached from the main menu (Settings already closed) this is a
-    no-op, never risking closing the wrong window.
-
-    Reopens Settings right after closing it (Addon.OpenSettings, NOT
-    ADDON.openSettings() -- the builtin fires the window open and returns
-    immediately, where the Python method blocks this script until the user
-    closes it again) so the close is a quick visual blip instead of dumping
-    the user back at whatever was behind Settings for the rest of the QR
-    flow. Kodi's own window manager remembers the last-focused control per
-    window, so this should land back on "Connect to Chronicle" automatically
-    -- not something this addon controls directly, so if it doesn't restore
-    focus exactly as expected on a given skin/Kodi version, that's a Kodi
-    behavior to note, not a sign this step failed to run.
+    Prompts for the Chronicle URL directly, via a reliable modal dialog, but
+    ONLY when there isn't already a saved one -- see this module's own
+    docstring for why Settings' text field is no longer trusted for this at
+    all. An already-connected reconnect (chronicle_url already set) skips the
+    prompt entirely and goes straight to the QR window: a working URL is
+    never asked for twice.
     """
-    settings_open = xbmc.getCondVisibility('Window.IsActive(addonsettings)')
-    log.info('_connect_to_chronicle: invoked; Settings dialog open = {0}'.format(settings_open))
-    if settings_open:
-        log.info('_connect_to_chronicle: closing Settings (Action(Back)) to force a flush')
-        xbmc.executebuiltin('Action(Back)')
-        xbmc.sleep(400)   # let the close + settings.xml write actually complete
-        log.info('_connect_to_chronicle: chronicle_url on disk = {0!r}'.format(
-                 ADDON.getSetting('chronicle_url')))
-        log.info('_connect_to_chronicle: reopening Settings (Addon.OpenSettings) as a quick blip')
-        xbmc.executebuiltin('Addon.OpenSettings({0})'.format(ADDON.getAddonInfo('id')))
-        xbmc.sleep(300)   # let the reopened Settings window actually render before the
-                          # QR overlay appears on top of it
-    else:
-        log.info('_connect_to_chronicle: chronicle_url on disk = {0!r}'.format(
-                 ADDON.getSetting('chronicle_url')))
+    current = ADDON.getSetting('chronicle_url')
+    log.info('_connect_to_chronicle: invoked; chronicle_url on disk = {0!r}'.format(current))
+
+    if not current:
+        entered = xbmcgui.Dialog().input(ADDON.getLocalizedString(32002), defaultt='')  # "Chronicle URL"
+        entered = (entered or '').strip()
+        log.info('_connect_to_chronicle: URL prompt returned {0!r}'.format(entered))
+        if not entered:
+            log.info('_connect_to_chronicle: cancelled -- aborting')
+            return
+        ADDON.setSetting('chronicle_url', entered)
+        log.info('_connect_to_chronicle: saved new URL {0!r}'.format(entered))
+        _warn_if_localhost()
 
     log.info('_connect_to_chronicle: calling DeviceAuthManager().run()')
     try:
@@ -214,6 +193,7 @@ def _connect_to_chronicle():
             'Connect failed unexpectedly -- see kodi.log for details.',
         )
     log.info('_connect_to_chronicle: DeviceAuthManager().run() returned')
+    _refresh_auth_status()
 
 
 if __name__ == '__main__':

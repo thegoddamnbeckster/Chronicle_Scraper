@@ -5,10 +5,13 @@
     <!-- Connection -->
     <!-- ============================================================================ -->
     <category label="32001">
-        <!-- No default here on purpose — Chronicle's address is unique per
-             install (LAN IP, hostname, or domain, plus port); a plausible-
-             looking default risks silently pointing at the wrong thing. -->
-        <setting id="chronicle_url" type="text" label="32002" default=""/>
+        <!-- Read-only display, not an input field — typing a URL here doesn't
+             reliably work (Kodi's on-screen-keyboard edit to a Settings text
+             field doesn't always land in the saved value, confirmed live
+             2026-08-27). "Edit Connection" below is the one real entry point:
+             it prompts for the URL itself via a proven-reliable dialog,
+             whenever there isn't already one saved. -->
+        <setting id="chronicle_url" type="text" label="32002" enable="false" default=""/>
         <setting id="authorization" type="action" label="32061" action="RunScript(script.chronicle.scraper.movie,action=auth)"/>
         <setting id="auth_status" type="text" label="32080" enable="false" default=""/>
         <!-- Set automatically by the QR/PIN flow above — not meant to be typed by hand -->

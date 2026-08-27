@@ -48,7 +48,7 @@ msgid "Connect to Chronicle"
 msgstr ""
 
 msgctxt "#32061"
-msgid "Connect to Chronicle"
+msgid "Edit Connection"
 msgstr ""
 
 msgctxt "#32063"

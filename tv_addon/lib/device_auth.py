@@ -20,7 +20,6 @@ import json
 import urllib.request
 import urllib.error
 
-import xbmc
 import xbmcvfs
 import xbmcgui
 import xbmcaddon
@@ -136,46 +135,19 @@ class DeviceAuthManager:
         failure. On None, self._last_error carries a specific, user-facing
         reason — see the docstring on _last_error's declaration above.
 
-        Waits briefly before its first read of chronicle_url. "Connect to
-        Chronicle" is reachable via an action button INSIDE the addon's own
-        still-open Settings dialog (RunScript launches this as a brand-new
-        process while Settings is still up), and a URL field the user just
-        typed there is not guaranteed to already be flushed to the on-disk
-        settings.xml the instant that button fires. Confirmed live
-        (2026-08-27): chronicle_url read back completely empty immediately
-        after typing a URL and clicking Connect, for a URL that WAS saved
-        correctly moments later -- and the same race applies just as much to
-        an EDITED (not just first-time) URL, since a stale-but-non-empty old
-        value looks exactly as "valid" as a correctly-flushed new one from
-        here, with no way to tell them apart except by waiting. A short fixed
-        wait is imperceptible in a flow that already involves a real network
-        round-trip and dialog rendering, and needs no user-visible retype
-        step -- unlike the confirm-prompt approach this replaces (added in
-        v3.1.1/v1.1.1/v2.2.1, reverted in v3.1.4/v1.1.3/v2.2.3 for exactly
-        that reason).
+        Reads chronicle_url straight from settings.xml with no wait or
+        fallback prompt of its own -- default.py's _connect_to_chronicle() is
+        now the single place a URL is ever entered (a proven-reliable
+        xbmcgui.Dialog().input(), used only when there isn't one yet), and it
+        guarantees a non-empty value is already saved before this ever runs,
+        or aborts before calling run() at all if the user cancelled that
+        prompt. See that function's own docstring for the full history of why
+        (a Settings-dialog settle-wait, then a close-Settings-to-force-a-flush,
+        then a fallback prompt HERE all turned out to be unnecessary once the
+        Settings text field was removed from the picture entirely).
         """
-        xbmc.sleep(500)
         base_url = ADDON.getSetting('chronicle_url').rstrip('/')
-        log.info('_initiate(): chronicle_url after settle wait = {0!r}'.format(base_url))
-
-        if not base_url:
-            # Both default.py's close-Settings-to-force-a-flush and this settle wait
-            # have failed to produce a non-empty chronicle_url -- confirmed live
-            # (2026-08-27): still empty even after Settings was fully closed, not
-            # just delayed. Something about the on-screen-keyboard edit to that
-            # field isn't reliably landing in the underlying setting at all on this
-            # setup. Rather than fail outright, fall back once to a single,
-            # guaranteed-reliable modal prompt -- xbmcgui.Dialog().input() has its
-            # own explicit confirm step, entirely independent of whatever is going
-            # wrong with the Settings screen's own text control.
-            log.warning('_initiate(): chronicle_url still empty -- falling back to a direct input prompt')
-            entered = xbmcgui.Dialog().input(ADDON.getLocalizedString(32002))  # "Chronicle URL"
-            entered = (entered or '').strip()
-            log.info('_initiate(): fallback input prompt returned {0!r}'.format(entered))
-            if entered:
-                ADDON.setSetting('chronicle_url', entered)
-                base_url = entered.rstrip('/')
-                log.info('_initiate(): saved fallback URL {0!r}'.format(base_url))
+        log.info('_initiate(): chronicle_url = {0!r}'.format(base_url))
 
         if not base_url:
             self._last_error = ADDON.getLocalizedString(32085)  # "Chronicle URL is not set."
