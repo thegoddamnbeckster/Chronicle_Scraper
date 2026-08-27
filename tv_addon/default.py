@@ -162,6 +162,17 @@ def _connect_to_chronicle():
     closes something when Settings is confirmed to actually be the active
     window -- reached from the main menu (Settings already closed) this is a
     no-op, never risking closing the wrong window.
+
+    Reopens Settings right after closing it (Addon.OpenSettings, NOT
+    ADDON.openSettings() -- the builtin fires the window open and returns
+    immediately, where the Python method blocks this script until the user
+    closes it again) so the close is a quick visual blip instead of dumping
+    the user back at whatever was behind Settings for the rest of the QR
+    flow. Kodi's own window manager remembers the last-focused control per
+    window, so this should land back on "Connect to Chronicle" automatically
+    -- not something this addon controls directly, so if it doesn't restore
+    focus exactly as expected on a given skin/Kodi version, that's a Kodi
+    behavior to note, not a sign this step failed to run.
     """
     settings_open = xbmc.getCondVisibility('Window.IsActive(addonsettings)')
     log.info('_connect_to_chronicle: invoked; Settings dialog open = {0}'.format(settings_open))
@@ -169,8 +180,15 @@ def _connect_to_chronicle():
         log.info('_connect_to_chronicle: closing Settings (Action(Back)) to force a flush')
         xbmc.executebuiltin('Action(Back)')
         xbmc.sleep(400)   # let the close + settings.xml write actually complete
-    log.info('_connect_to_chronicle: chronicle_url on disk = {0!r}'.format(
-             ADDON.getSetting('chronicle_url')))
+        log.info('_connect_to_chronicle: chronicle_url on disk = {0!r}'.format(
+                 ADDON.getSetting('chronicle_url')))
+        log.info('_connect_to_chronicle: reopening Settings (Addon.OpenSettings) as a quick blip')
+        xbmc.executebuiltin('Addon.OpenSettings({0})'.format(ADDON.getAddonInfo('id')))
+        xbmc.sleep(300)   # let the reopened Settings window actually render before the
+                          # QR overlay appears on top of it
+    else:
+        log.info('_connect_to_chronicle: chronicle_url on disk = {0!r}'.format(
+                 ADDON.getSetting('chronicle_url')))
 
     log.info('_connect_to_chronicle: calling DeviceAuthManager().run()')
     try:
