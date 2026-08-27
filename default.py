@@ -198,11 +198,24 @@ def _rebuild_nfos():
     so Chronicle repopulates them. See nfo_rebuild.py's module docstring for
     why this has to be a deliberate, explicit action rather than automatic."""
     if not ADDON.getSettingBool('write_nfo'):
-        xbmcgui.Dialog().ok(
-            ADDON.getLocalizedString(32000),  # "Chronicle Scraper"
-            ADDON.getLocalizedString(32108),
+        # Offer to turn it on right here instead of a hard refusal-and-bail -- this
+        # action button lives in the same Settings screen as the write_nfo checkbox
+        # (Local Files category), so the same GUI-commit-timing risk the Connect flow
+        # had applies here too: a box the user just ticked isn't guaranteed to be
+        # flushed to settings.xml before this brand-new RunScript process starts and
+        # reads it, so a stale False could be read even though the checkbox is
+        # visibly ticked. Writing True explicitly here, right before proceeding,
+        # makes the value actually used unambiguous regardless of what got read.
+        turn_on = xbmcgui.Dialog().yesno(
+            ADDON.getLocalizedString(32000),      # "Chronicle Scraper"
+            ADDON.getLocalizedString(32108),      # explanation + "Turn it on and continue?"
+            yeslabel=ADDON.getLocalizedString(32109),  # "Turn On and Continue"
+            nolabel=ADDON.getLocalizedString(32096),   # "Cancel"
         )
-        return
+        if not turn_on:
+            return
+        ADDON.setSettingBool('write_nfo', True)
+        log.info('write_nfo enabled via Rebuild flow')
 
     dialog = xbmcgui.Dialog()
     confirmed = dialog.yesno(
