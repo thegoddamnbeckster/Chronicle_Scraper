@@ -22,6 +22,7 @@ thing.
 import sys
 import traceback
 
+import xbmc
 import xbmcgui
 import xbmcaddon
 
@@ -143,21 +144,32 @@ def _test_connection():
 def _connect_to_chronicle():
     """Launch the QR device-auth flow to obtain an API key.
 
-    Reads chronicle_url straight from settings.xml -- no confirmation step.
-    A short-lived earlier version of this function (v1.1.1) always prompted
-    to re-enter the URL first, to guard against a just-edited Settings field
-    not being flushed to disk yet before this action button (reached from
-    inside the still-open Settings dialog) fired as a brand new process.
-    Reverted (2026-08-27): confirmed live that the prompt was worse than the
-    problem it guarded against -- every ordinary reconnect now needed a full
-    on-screen-keyboard URL retype, and the actual repro that prompted this
-    revert turned out to be the user understandably backing out of that
-    unexpected prompt within ~2 seconds, not a stale value ever being used.
-    If the original staleness issue resurfaces, close Settings fully before
-    clicking Connect from the main menu (rather than the in-Settings action
-    button) -- that path always reads the already-flushed value.
+    Closes the Settings dialog first, if it's the one that's actually open.
+    Root-caused (2026-08-27) by reading settings.xml directly moments after a
+    failed Connect attempt: chronicle_url was still sitting at its empty
+    default a full minute-plus after the user had typed a URL and could see
+    it in the field. Not a timing race -- an ORDERING one. Kodi's addon
+    Settings dialog only writes settings.xml to disk when the whole dialog
+    closes, not per-field as focus moves between controls. "Connect to
+    Chronicle" is a button INSIDE that same still-open dialog (RunScript
+    launches this as a brand-new script instance while Settings is still
+    up), so no amount of waiting afterward can see a value that was never
+    written in the first place -- an earlier fix here (v1.1.4) tried a
+    settle-wait before reading and confirmed exactly that: still empty after
+    waiting, because there was nothing to wait FOR yet.
+
+    Window.IsActive(addonsettings) gates the Action(Back) so this only ever
+    closes something when Settings is confirmed to actually be the active
+    window -- reached from the main menu (Settings already closed) this is a
+    no-op, never risking closing the wrong window.
     """
-    log.info('_connect_to_chronicle: invoked; chronicle_url on disk = {0!r}'.format(
+    settings_open = xbmc.getCondVisibility('Window.IsActive(addonsettings)')
+    log.info('_connect_to_chronicle: invoked; Settings dialog open = {0}'.format(settings_open))
+    if settings_open:
+        log.info('_connect_to_chronicle: closing Settings (Action(Back)) to force a flush')
+        xbmc.executebuiltin('Action(Back)')
+        xbmc.sleep(400)   # let the close + settings.xml write actually complete
+    log.info('_connect_to_chronicle: chronicle_url on disk = {0!r}'.format(
              ADDON.getSetting('chronicle_url')))
 
     log.info('_connect_to_chronicle: calling DeviceAuthManager().run()')
