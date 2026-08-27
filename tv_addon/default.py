@@ -20,6 +20,7 @@ thing.
 """
 
 import sys
+import traceback
 
 import xbmcgui
 import xbmcaddon
@@ -159,23 +160,46 @@ def _connect_to_chronicle():
     already have a value flushed before Connect can do anything useful with it.
     """
     current = ADDON.getSetting('chronicle_url')
+    log.info('_connect_to_chronicle: invoked; chronicle_url on disk = {0!r}'.format(current))
+
     entered = xbmcgui.Dialog().input(
         ADDON.getLocalizedString(32002), defaultt=current)  # "Chronicle URL"
+    log.info('_connect_to_chronicle: URL prompt returned {0!r}'.format(entered))
     entered = (entered or '').strip()
 
     if not entered:
         if not current:
+            log.warning('_connect_to_chronicle: no URL entered and none already set -- aborting')
             xbmcgui.Dialog().ok(
                 ADDON.getLocalizedString(32060),
                 ADDON.getLocalizedString(32085),  # "Chronicle URL is not set..."
             )
+        else:
+            log.info('_connect_to_chronicle: prompt returned empty (cancelled) -- '
+                      'keeping existing URL {0!r}, aborting Connect'.format(current))
         return  # cancelled, or genuinely nothing to connect to
 
     if entered != current:
         ADDON.setSetting('chronicle_url', entered)
-        log.info('Chronicle URL updated via Connect flow: {0}'.format(entered))
+        log.info('_connect_to_chronicle: URL changed {0!r} -> {1!r}, saved'.format(current, entered))
+    else:
+        log.info('_connect_to_chronicle: URL unchanged, proceeding')
 
-    DeviceAuthManager().run()
+    log.info('_connect_to_chronicle: calling DeviceAuthManager().run()')
+    try:
+        DeviceAuthManager().run()
+    except Exception:
+        # RunScript-launched scripts have no visible crash surface -- an unhandled
+        # exception here would otherwise look EXACTLY like "the connection window
+        # never showed up" to the user, with nothing in the log tying the two
+        # together unless this is caught and logged explicitly with a traceback.
+        log.error('_connect_to_chronicle: DeviceAuthManager().run() raised:\n{0}'.format(
+                  traceback.format_exc()))
+        xbmcgui.Dialog().ok(
+            ADDON.getLocalizedString(32060),
+            'Connect failed unexpectedly -- see kodi.log for details.',
+        )
+    log.info('_connect_to_chronicle: DeviceAuthManager().run() returned')
 
 
 if __name__ == '__main__':

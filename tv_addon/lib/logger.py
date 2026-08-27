@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Thin wrapper around xbmc.log for consistent Chronicle Scraper log lines.
+"""Thin wrapper around xbmc.log for consistent Chronicle Scraper (TV) log lines.
 
-Every message is prefixed with [ChronicleScraper][<component>] so it's easy
-to grep in the Kodi log.
+Every message is prefixed with [ChronicleScraperTV][<component>] so it's easy
+to grep in the Kodi log -- and, critically, so it's distinguishable from the
+sibling Movies addon's own [ChronicleScraper] lines. Both addons used to share
+the identical "[ChronicleScraper]" prefix (this file was a straight copy),
+which made it impossible to tell from kodi.log alone which addon a given line
+actually came from whenever both were installed -- confirmed as a real
+diagnostic dead-end while investigating a live Connect-flow bug report
+(2026-08-27).
 """
 
 import xbmc
 
-_PREFIX = '[ChronicleScraper]'
+_PREFIX = '[ChronicleScraperTV]'
 
 
 class Logger:

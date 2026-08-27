@@ -57,8 +57,12 @@ class DeviceAuthManager:
         Returns True if an API key was successfully obtained, False otherwise.
         """
         # ── 1. Initiate ─────────────────────────────────────────────────────
+        log.info('DeviceAuthManager.run(): starting; chronicle_url on disk = {0!r}'.format(
+                 ADDON.getSetting('chronicle_url')))
         self._last_error = None
         result = self._initiate()
+        log.info('DeviceAuthManager.run(): _initiate() returned {0}'.format(
+                 'None' if result is None else 'a result dict (code={0!r})'.format(result.get('code'))))
         if result is None:
             reason = self._last_error or ADDON.getLocalizedString(32065)
             xbmcgui.Dialog().ok(
@@ -93,6 +97,7 @@ class DeviceAuthManager:
         poll_thread.start()
 
         # ── 4. Show QR dialog ───────────────────────────────────────────────
+        log.info('DeviceAuthManager.run(): constructing QRDialog (qr_path={0!r})'.format(qr_path))
         dialog = QRDialog(
             qr_path          = qr_path or '',
             display_code     = display_code,
@@ -101,7 +106,9 @@ class DeviceAuthManager:
             stop_event       = stop_event,
             api_key_holder   = api_key_holder,
         )
+        log.info('DeviceAuthManager.run(): calling QRDialog.doModal()')
         dialog.doModal()     # Blocks until closed (approved, denied, expired, or cancelled)
+        log.info('DeviceAuthManager.run(): QRDialog.doModal() returned (dialog closed)')
         del dialog
 
         stop_event.set()
