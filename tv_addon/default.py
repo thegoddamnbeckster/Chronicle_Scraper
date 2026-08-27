@@ -163,6 +163,14 @@ def _connect_to_chronicle():
     all. An already-connected reconnect (chronicle_url already set) skips the
     prompt entirely and goes straight to the QR window: a working URL is
     never asked for twice.
+
+    Passes the resolved URL directly into DeviceAuthManager rather than
+    letting it re-read chronicle_url from settings itself. Confirmed live
+    (2026-08-27): a DIFFERENT xbmcaddon.Addon() instance's own getSetting()
+    call -- device_auth.py's own module-level ADDON, not this one -- did NOT
+    see the setSetting() this function had just done, even one line earlier
+    in the same process. Handing the value over directly sidesteps that
+    cross-instance consistency question entirely.
     """
     current = ADDON.getSetting('chronicle_url')
     log.info('_connect_to_chronicle: invoked; chronicle_url on disk = {0!r}'.format(current))
@@ -177,10 +185,11 @@ def _connect_to_chronicle():
         ADDON.setSetting('chronicle_url', entered)
         log.info('_connect_to_chronicle: saved new URL {0!r}'.format(entered))
         _warn_if_localhost()
+        current = entered
 
-    log.info('_connect_to_chronicle: calling DeviceAuthManager().run()')
+    log.info('_connect_to_chronicle: calling DeviceAuthManager(base_url={0!r}).run()'.format(current))
     try:
-        DeviceAuthManager().run()
+        DeviceAuthManager(base_url=current).run()
     except Exception:
         # RunScript-launched scripts have no visible crash surface -- an unhandled
         # exception here would otherwise look EXACTLY like "the connection window

@@ -38,8 +38,22 @@ _USER_AGENT    = 'Kodi/Chronicle-Scraper/1.0'
 class DeviceAuthManager:
     """Drives the full QR-code auth flow."""
 
-    def __init__(self):
+    def __init__(self, base_url=None):
+        """base_url, when given, is used as-is instead of re-reading
+        chronicle_url from settings here. Confirmed live (2026-08-27): a
+        DIFFERENT xbmcaddon.Addon() instance's setSetting('chronicle_url', ...)
+        -- default.py's own module-level ADDON, right after saving a freshly
+        entered URL -- is not reliably visible to THIS module's own
+        module-level ADDON's very next getSetting('chronicle_url'), even
+        though it's the same process, same addon, same settings.xml, and
+        happens on the literal next line. Kodi's Addon() binding apparently
+        doesn't guarantee cross-instance read-your-own-write consistency.
+        Rather than chase that further, the caller that JUST resolved (or
+        prompted for and saved) the URL now hands it over directly instead of
+        asking this object to go re-discover it independently.
+        """
         self._client     = ChronicleClient()
+        self._base_url   = base_url
         # Set by _initiate() whenever it returns None, so run() can show the
         # user what actually went wrong instead of one generic "could not
         # contact Chronicle" message regardless of cause (empty URL, DNS
@@ -57,8 +71,9 @@ class DeviceAuthManager:
         Returns True if an API key was successfully obtained, False otherwise.
         """
         # ── 1. Initiate ─────────────────────────────────────────────────────
-        log.info('DeviceAuthManager.run(): starting; chronicle_url on disk = {0!r}'.format(
-                 ADDON.getSetting('chronicle_url')))
+        log.info('DeviceAuthManager.run(): starting; base_url passed in = {0!r} '
+                 '(chronicle_url on disk = {1!r})'.format(
+                 self._base_url, ADDON.getSetting('chronicle_url')))
         self._last_error = None
         result = self._initiate()
         log.info('DeviceAuthManager.run(): _initiate() returned {0}'.format(
@@ -135,19 +150,17 @@ class DeviceAuthManager:
         failure. On None, self._last_error carries a specific, user-facing
         reason — see the docstring on _last_error's declaration above.
 
-        Reads chronicle_url straight from settings.xml with no wait or
-        fallback prompt of its own -- default.py's _connect_to_chronicle() is
-        now the single place a URL is ever entered (a proven-reliable
-        xbmcgui.Dialog().input(), used only when there isn't one yet), and it
-        guarantees a non-empty value is already saved before this ever runs,
-        or aborts before calling run() at all if the user cancelled that
-        prompt. See that function's own docstring for the full history of why
-        (a Settings-dialog settle-wait, then a close-Settings-to-force-a-flush,
-        then a fallback prompt HERE all turned out to be unnecessary once the
-        Settings text field was removed from the picture entirely).
+        Uses self._base_url (passed in by the caller -- see __init__'s own
+        docstring for why) when given, falling back to a fresh read of
+        chronicle_url only if it wasn't. default.py's _connect_to_chronicle()
+        is the single place a URL is ever entered (a proven-reliable
+        xbmcgui.Dialog().input(), used only when there isn't one yet) and
+        always passes it in directly now, so the fallback read here is a
+        belt-and-suspenders case for any other future caller, not the normal
+        path.
         """
-        base_url = ADDON.getSetting('chronicle_url').rstrip('/')
-        log.info('_initiate(): chronicle_url = {0!r}'.format(base_url))
+        base_url = (self._base_url or ADDON.getSetting('chronicle_url')).rstrip('/')
+        log.info('_initiate(): using base_url = {0!r}'.format(base_url))
 
         if not base_url:
             self._last_error = ADDON.getLocalizedString(32085)  # "Chronicle URL is not set."
