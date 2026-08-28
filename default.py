@@ -18,9 +18,15 @@ from lib.logger import Logger
 from lib.chronicle_client import ChronicleClient
 from lib.device_auth import DeviceAuthManager
 from lib import nfo_rebuild
+from lib import settings_mirror
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('default')
+
+# The sibling package's addon id -- see lib/settings_mirror.py's own
+# docstring for why write_nfo/write_streamdetails are worth offering to
+# mirror there.
+_SIBLING_ADDON_ID = 'script.chronicle.scraper.tv'
 
 
 def _format_duration(seconds):
@@ -134,7 +140,9 @@ def show_menu():
         _rebuild_nfos()
     elif choice == 4:
         _refresh_auth_status()
+        before = settings_mirror.snapshot(ADDON)
         ADDON.openSettings()
+        settings_mirror.offer_mirror(ADDON, before, _SIBLING_ADDON_ID)
 
 
 def _test_connection():
@@ -272,8 +280,14 @@ def _rebuild_nfos():
         )
         if not turn_on:
             return
+        before = settings_mirror.snapshot(ADDON)
         ADDON.setSettingBool('write_nfo', True)
         log.info('write_nfo enabled via Rebuild flow')
+        # This is exactly the mismatch that caused the live 2026-08-28 bug
+        # (see settings_mirror.py) -- turning write_nfo on here only helps
+        # movies get NFOs during the pass about to run; offer to close the
+        # same gap on the TV side too, since this rebuild covers TV as well.
+        settings_mirror.offer_mirror(ADDON, before, _SIBLING_ADDON_ID)
 
     dialog = xbmcgui.Dialog()
     confirmed = dialog.yesno(

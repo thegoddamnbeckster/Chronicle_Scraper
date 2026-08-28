@@ -146,3 +146,27 @@ msgstr ""
 msgctxt "#32113"
 msgid "Chronicle returned an unexpected response. Please try again, or check the server."
 msgstr ""
+
+msgctxt "#32114"
+msgid "{0} is also installed, with its own separate copy of these Local Files settings. Apply the same change there too?\n\n{1}"
+msgstr ""
+
+msgctxt "#32115"
+msgid "Apply to {0} Too"
+msgstr ""
+
+msgctxt "#32116"
+msgid "Just This One"
+msgstr ""
+
+msgctxt "#32117"
+msgid "Applied to {0}."
+msgstr ""
+
+msgctxt "#32118"
+msgid "On"
+msgstr ""
+
+msgctxt "#32119"
+msgid "Off"
+msgstr ""

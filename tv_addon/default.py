@@ -52,9 +52,15 @@ import xbmcaddon
 from lib.logger import Logger
 from lib.chronicle_client import ChronicleClient
 from lib.device_auth import DeviceAuthManager
+from lib import settings_mirror
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('default')
+
+# The sibling package's addon id -- see lib/settings_mirror.py's own
+# docstring for why write_nfo/write_streamdetails are worth offering to
+# mirror there.
+_SIBLING_ADDON_ID = 'script.chronicle.scraper.movie'
 
 
 def _get_args():
@@ -146,7 +152,9 @@ def show_menu():
         _change_chronicle_url()
     elif choice == 3:
         _refresh_auth_status()
+        before = settings_mirror.snapshot(ADDON)
         ADDON.openSettings()
+        settings_mirror.offer_mirror(ADDON, before, _SIBLING_ADDON_ID)
 
 
 def _test_connection():
