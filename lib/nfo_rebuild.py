@@ -57,6 +57,7 @@ import posixpath
 import xbmc
 import xbmcvfs
 
+from lib import episode_path_cache
 from lib import legacy_nfo
 from lib import rebuild_state
 from lib.collection_sync import preserve_local_movieset_file
@@ -285,8 +286,21 @@ def _run(progress_callback, is_cancelled, wait_progress_callback,
 
             if not _refresh_episode(episode['episodeid']):
                 refresh_errors += 1
-            elif expected_nfo:
-                pending[('episode', episode['episodeid'])] = (label, expected_nfo)
+            else:
+                # Stashed only once the refresh is actually issued (RefreshEpisode
+                # is fire-and-forget -- confirmed live 2026-08-03 for RefreshMovie,
+                # same queuing model here -- so there's no risk get_episode_details()'s
+                # callback runs before this line does), using file_path while it's
+                # still the real, already-committed value from BEFORE this refresh.
+                # See episode_path_cache.py's module docstring for why
+                # get_episode_details()'s own live VideoLibrary lookup for this same
+                # episode can't be trusted to find this once RefreshEpisode is in
+                # flight.
+                if file_path:
+                    episode_path_cache.save(episode.get('tvshowid'), episode.get('season'),
+                                             episode.get('episode'), file_path)
+                if expected_nfo:
+                    pending[('episode', episode['episodeid'])] = (label, expected_nfo)
 
             processed += 1
             xbmc.sleep(int(_ISSUE_PACING_SECONDS * 1000))
@@ -416,11 +430,13 @@ def _get_all_tvshows():
 def _get_all_episodes():
     """Every episode in the whole library, flat across every show -- no
     tvshowid filter, same as Kodi's own library views default to. showtitle
-    is requested purely for a readable progress label; nothing here needs
-    it for matching."""
+    is requested purely for a readable progress label; tvshowid is requested
+    so each episode's file path can be stashed (see episode_path_cache.py)
+    under the same (tvshowid, season, episode) key that tvshow_scraper.py's
+    get_episode_details() will look it up by."""
     request = {
         'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetEpisodes',
-        'params': {'properties': ['file', 'season', 'episode', 'showtitle']},
+        'params': {'properties': ['file', 'season', 'episode', 'showtitle', 'tvshowid']},
     }
     try:
         response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))

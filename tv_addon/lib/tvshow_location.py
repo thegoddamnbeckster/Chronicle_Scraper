@@ -174,17 +174,35 @@ def get_episode(tvshowid, season, episode):
     simpler to get right than trusting a two-field filter combination, and a
     single show's episode list is never large enough for that to matter.
 
+    A SECOND, distinct way this comes back empty, confirmed live via
+    kodi.log (2026-08-28): during an nfo_rebuild.py rebuild pass, this
+    episode's OWN VideoLibrary.RefreshEpisode() call is what's currently
+    running the very getepisodedetails() callback that calls this function
+    -- Kodi tears the episode's library row down for the duration of that
+    refresh and only recommits it once the callback returns (setResolvedUrl
+    + endOfDirectory), so asking VideoLibrary about this exact episode from
+    inside its own in-flight refresh legitimately finds nothing, no matter
+    how "already committed" the item was a moment before the refresh was
+    issued. This is NOT the brand-new-file race above (that's about an item
+    Kodi hasn't indexed yet at all; this is about an item Kodi is
+    momentarily un-indexing on purpose) and no retry fixes it -- the row
+    will not exist until this same call chain finishes. See
+    lib/episode_path_cache.py, which nfo_rebuild.py populates with each
+    episode's already-known file path before issuing the refresh, and which
+    tvshow_scraper.py's get_episode_details() falls back to whenever this
+    function comes back empty during a rebuild.
+
     Deliberately single-attempt, no retry: this is called synchronously from
     Kodi's own live library scan (getepisodedetails()), and its result only
     feeds the local NFO write / legacy-NFO harvest, not the episode's actual
     resolution into Kodi's library (that already happened via
     setResolvedUrl() before this runs) -- so blocking the scan with a sleep
-    here to chase the above race buys nothing for how fast files actually
-    show up in Kodi, only for how fast the local NFO catches up. A missed
-    NFO on this pass is caught on the next scan of the same episode, or
-    immediately if "Automatically rebuild NFOs after every library scan" is
-    enabled (see service.py / nfo_rebuild.py), which re-triggers
-    getepisodedetails() once the file is already fully committed."""
+    here to chase the brand-new-file race buys nothing for how fast files
+    actually show up in Kodi, only for how fast the local NFO catches up
+    (and does nothing at all for the in-flight-refresh race above, which no
+    amount of waiting resolves). A missed NFO outside a rebuild pass is
+    caught on the episode's next ordinary scan, or on the next explicit
+    rebuild."""
     if tvshowid is None:
         return None, None
 

@@ -140,6 +140,7 @@ Chronicle_Scraper/
 │   ├── collection_sync.py         # Fills/overwrites movie-set art and extrafanart in Kodi's local movie-sets folder
 │   ├── movie_art_sync.py          # Local poster/fanart sync + streamdetails lookup for movies
 │   ├── tvshow_location.py         # Locates a show/episode's files on disk
+│   ├── episode_path_cache.py      # Stashes an episode's known file path across nfo_rebuild.py's own RefreshEpisode race
 │   ├── nfo_common.py              # Shared NFO XML-building blocks
 │   ├── nfo_writer.py              # Movie NFO writer
 │   ├── tv_nfo_writer.py           # Show/episode NFO writer

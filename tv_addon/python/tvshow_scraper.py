@@ -42,6 +42,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.logger import Logger
 from lib import activity_tracker
+from lib import episode_path_cache
 from lib import legacy_nfo
 from lib import rebuild_state
 from lib.chronicle_client import ChronicleClient
@@ -274,6 +275,28 @@ def get_episode_details(encoded_ids, handle):
                 # endOfDirectory log lines in run()).
                 log.info('get_episode_details: tvshowid={0} S{1}E{2} -- VideoLibrary lookup found file_path={3!r}'.format(
                          tvshowid, details.get('season'), details.get('episode'), file_path))
+                if not file_path:
+                    # Confirmed live via kodi.log (2026-08-28): during a
+                    # rebuild pass, the VideoLibrary lookup just above comes
+                    # back empty for essentially every episode -- not
+                    # because the file is missing, but because this exact
+                    # episode's own RefreshEpisode() is what's currently
+                    # running this very callback, and its library row isn't
+                    # recommitted until this callback returns (see
+                    # episode_path_cache.py's module docstring). Fall back to
+                    # nfo_rebuild.py's own pre-refresh known-good path for
+                    # this episode, stashed there for exactly this gap.
+                    file_path = episode_path_cache.load_and_clear(
+                        tvshowid, details.get('season'), details.get('episode'))
+                    if file_path:
+                        log.info('get_episode_details: tvshowid={0} S{1}E{2} -- using nfo_rebuild.py\'s '
+                                 'cached pre-refresh path instead: {3!r}'.format(
+                                 tvshowid, details.get('season'), details.get('episode'), file_path))
+                    else:
+                        log.warning('get_episode_details: tvshowid={0} S{1}E{2} -- VideoLibrary lookup '
+                                    'found no file AND no cached pre-refresh path is available -- this '
+                                    'episode\'s NFO will NOT be written this pass'.format(
+                                    tvshowid, details.get('season'), details.get('episode')))
                 if file_path:
                     folder = posixpath.dirname(file_path) + '/'
                     video_basename = strip_video_ext(posixpath.basename(file_path))

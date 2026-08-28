@@ -160,6 +160,15 @@ def sync_episode_nfo(details, folder, video_basename, streamdetails=None):
     video file, named to match it exactly (Kodi's episode-NFO convention
     has no bare fallback name the way movie.nfo/tvshow.nfo have)."""
     if not folder or not video_basename:
+        # Logged (not a silent no-op) so a rebuild pass that never writes
+        # this episode's NFO has a visible cause in kodi.log instead of
+        # looking like a stall -- see tvshow_scraper.py's own
+        # get_episode_details() logging for why folder/video_basename can
+        # still be empty here (VideoLibrary lookup AND the pre-refresh path
+        # cache both came up empty for this episode).
+        log.warning('sync_episode_nfo: S{0}E{1} "{2}" -- no folder/video_basename resolved, '
+                    'skipping NFO write'.format(
+                    details.get('season'), details.get('episode'), details.get('title')))
         return
 
     dest = folder + video_basename + '.nfo'
