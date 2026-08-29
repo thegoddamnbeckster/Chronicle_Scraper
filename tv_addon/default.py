@@ -74,7 +74,8 @@ def _get_args():
 
 
 def _refresh_auth_status():
-    """Keep the read-only Settings status field honest before Settings is shown.
+    """Keep the read-only Settings status field (and show_menu()'s own dialog
+    heading -- see there) honest, and say WHO before offering to reconnect.
 
     Requires BOTH chronicle_url and api_key. Previously checked api_key alone,
     so it kept showing "Connected" purely because an api_key from a PAST
@@ -82,12 +83,42 @@ def _refresh_auth_status():
     and every actual Connect attempt was failing outright. Confirmed live
     (2026-08-27): status showed "Connected" immediately after a Connect
     attempt that never got past "URL not set."
+
+    When configured, also fetches the connected identity (GET /users/me,
+    5s-bounded -- see ChronicleClient.get_current_user()'s own docstring for
+    why this can't be allowed to make menu-opening feel stuck) so the status
+    reads "Connected as {name}" instead of a bare "Connected" -- per-user
+    request (2026-08-28): know WHO is connected before doing anything else,
+    not just whether a key happens to be saved. A saved key that's actually
+    been revoked server-side surfaces here too (the lookup fails, falling
+    back to the last-known name -- see below -- rather than silently keeping
+    a stale "Connected").
+
+    connected_display_name (hidden setting) caches the last successful
+    lookup so a transient network blip doesn't regress an already-known name
+    back to the bare fallback -- only a NEVER-yet-successful lookup (fresh
+    install, or a key that's never actually worked) falls all the way back
+    to the generic "Connected" with no name.
     """
     connected = bool(ADDON.getSetting('chronicle_url')) and bool(ADDON.getSetting('api_key'))
-    ADDON.setSetting(
-        'auth_status',
-        ADDON.getLocalizedString(32081 if connected else 32082),  # "Connected" / "Not connected"
-    )
+    if not connected:
+        ADDON.setSetting('auth_status', ADDON.getLocalizedString(32082))  # "Not connected"
+        return
+
+    user = ChronicleClient().get_current_user()
+    name = None
+    if user:
+        name = user.get('displayName') or user.get('username')
+        if name:
+            ADDON.setSetting('connected_display_name', name)
+
+    if not name:
+        name = ADDON.getSetting('connected_display_name')  # last-known, if any
+
+    if name:
+        ADDON.setSetting('auth_status', ADDON.getLocalizedString(32120).format(name))  # "Connected as {0}"
+    else:
+        ADDON.setSetting('auth_status', ADDON.getLocalizedString(32081))  # "Connected"
 
 
 _LOOPBACK_MARKERS = ('localhost', '127.0.0.1', '::1')
@@ -123,6 +154,14 @@ def show_menu():
     "Edit Connection" is directly reachable from here even when unconfigured,
     since it's the one reliable place the URL ever gets entered. See this
     module's own docstring for why the Settings screen no longer does that job.
+
+    The dialog's own heading carries the current connection status (see
+    _refresh_auth_status()) -- per-user request (2026-08-28): show whether
+    (and to whom) this addon is connected BEFORE offering "Edit Connection"
+    or anything else, not buried a click away in Settings. Refreshed every
+    time this menu opens, same as the Settings status field always was, so
+    it can't go stale between a Connect elsewhere and the next time this
+    menu is shown.
     """
     args = _get_args()
     if args.get('action') == 'auth':
@@ -141,8 +180,10 @@ def show_menu():
         ADDON.getLocalizedString(32013),  # Open Settings
     ]
 
+    heading = '{0} — {1}'.format(
+        ADDON.getLocalizedString(32000), ADDON.getSetting('auth_status'))
     dialog = xbmcgui.Dialog()
-    choice = dialog.select(ADDON.getLocalizedString(32000), options)
+    choice = dialog.select(heading, options)
 
     if choice == 0:
         _test_connection()

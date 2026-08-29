@@ -247,6 +247,23 @@ class ChronicleClient:
             log.warning('contribute_metadata({0}, {1!r}): unexpected error: {2}'.format(
                         media_item_id, source, exc))
 
+    def get_current_user(self):
+        """GET /api/v1/users/me -- the identity behind this addon's own API key.
+        Accepts the same X-Api-Key auth as every scraper endpoint (Chronicle's
+        default authorization policy takes either a JWT or an API key -- see
+        Chronicle.API's Program.cs), so this needs no separate auth path.
+
+        Used only for the connection-status display in default.py's menu
+        heading/Settings status field -- never anything scraping depends on.
+        Short 5s timeout (vs. the 20s default elsewhere in this client):
+        this runs every time the addon's menu opens, so a slow/unreachable
+        server must not make the menu itself feel stuck; a plain "Connected"
+        fallback (see default.py's _refresh_auth_status()) covers the miss.
+
+        Returns {'username', 'displayName', ...} dict, or None on any
+        failure (not configured, network error, revoked key)."""
+        return self._get('/api/v1/users/me', 'get_current_user()', timeout=5)
+
     def test_connection(self):
         """GET /api/health — verify connectivity and API key.
 

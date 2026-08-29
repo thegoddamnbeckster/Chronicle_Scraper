@@ -228,3 +228,7 @@ msgstr ""
 msgctxt "#32119"
 msgid "Off"
 msgstr ""
+
+msgctxt "#32120"
+msgid "Connected as {0}"
+msgstr ""
