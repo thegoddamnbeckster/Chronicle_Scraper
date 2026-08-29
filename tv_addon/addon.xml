@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.tv"
        name="Chronicle Scraper (TV)"
-       version="1.5.1"
+       version="1.5.2"
        provider-name="Michael Beck">
 
   <requires>
@@ -47,7 +47,15 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (TV)</summary>
     <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. "Rebuild local NFOs from Chronicle" and the corner status indicator live in the Movies addon and cover both movies and TV shows together; this addon doesn't duplicate them.</description>
-    <news>v1.5.1 - Packaging fix (2026-08-29): opening this addon threw an immediate
+    <news>v1.5.2 - Per-user request (2026-08-29): "each of the add-ons could check
+each other for the chronicle URL and just copy it in from another working
+add-on... save the typing." "Edit Connection"'s URL prompt now checks the other
+installed Chronicle addons (Scraper Movies, Scrobbler) for an already-configured
+chronicle_url and pre-fills the entry dialog with the first one found, instead
+of always starting blank -- still one explicit confirm step, never silently
+auto-connects. A sibling that isn't installed, or has nothing set yet itself,
+is simply skipped.
+v1.5.1 - Packaging fix (2026-08-29): opening this addon threw an immediate
 "Error - check log" with no dialog and no request ever reaching Chronicle -- confirmed
 live on a second device (upstairs Shield). Root cause: default.py imports
 lib.device_auth.DeviceAuthManager, but that module is deliberately NOT checked into

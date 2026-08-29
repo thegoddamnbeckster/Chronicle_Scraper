@@ -22,6 +22,43 @@ log   = Logger('client')
 
 _USER_AGENT = 'Kodi/Chronicle-Scraper/1.0'
 
+# Every OTHER Chronicle addon that independently asks the user for its own
+# chronicle_url -- used by find_shared_chronicle_url() below. Chronicle_Rating is
+# deliberately NOT here: it already reuses Chronicle_Scrobbler's saved connection
+# outright rather than asking for a URL of its own at all.
+_SIBLING_CHRONICLE_ADDON_IDS = (
+    'script.chronicle.scraper.movie',
+    'script.chronicle.scraper.tv',
+    'service.chronicle.scrobbler',
+)
+
+
+def find_shared_chronicle_url():
+    """Per-user request (2026-08-29): "each of the add-ons could check each other
+    for the chronicle URL and just copy it in from another working add-on... save
+    the typing." Checks every OTHER installed sibling Chronicle addon's own
+    chronicle_url setting (read-only from here -- this never writes to another
+    addon's settings, only reads) and returns the first non-blank one found, so
+    the "Edit Connection" URL prompt can be pre-filled instead of starting blank.
+    A sibling with nothing set of its own (fresh install, never configured) is
+    silently skipped, not treated as "the shared URL is blank" -- only a REAL,
+    already-working URL from another addon is ever offered. Returns None if no
+    sibling is installed, or none of the installed ones have a URL set yet.
+    """
+    this_id = ADDON.getAddonInfo('id')
+    for addon_id in _SIBLING_CHRONICLE_ADDON_IDS:
+        if addon_id == this_id:
+            continue
+        try:
+            other = xbmcaddon.Addon(addon_id)
+        except RuntimeError:
+            continue  # not installed on this device
+        url = (other.getSetting('chronicle_url') or '').strip()
+        if url:
+            log.info('find_shared_chronicle_url: found {0!r} from {1}'.format(url, addon_id))
+            return url
+    return None
+
 # urlopen(timeout=N) only bounds the socket once it exists -- the DNS lookup
 # (getaddrinfo) that happens before that is NOT covered by that timeout on
 # any platform. A dead/unreachable DNS server or a stale hostname can hang

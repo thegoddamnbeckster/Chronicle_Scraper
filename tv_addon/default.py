@@ -50,7 +50,7 @@ import xbmcgui
 import xbmcaddon
 
 from lib.logger import Logger
-from lib.chronicle_client import ChronicleClient
+from lib.chronicle_client import ChronicleClient, find_shared_chronicle_url
 from lib.device_auth import DeviceAuthManager
 from lib import settings_mirror
 
@@ -238,7 +238,11 @@ def _connect_to_chronicle():
     log.info('_connect_to_chronicle: invoked; chronicle_url on disk = {0!r}'.format(current))
 
     if not current:
-        entered = xbmcgui.Dialog().input(ADDON.getLocalizedString(32002), defaultt='')  # "Chronicle URL"
+        shared_url = find_shared_chronicle_url()
+        if shared_url:
+            log.info('_connect_to_chronicle: pre-filling URL prompt from a sibling addon: {0!r}'.format(shared_url))
+        entered = xbmcgui.Dialog().input(
+            ADDON.getLocalizedString(32002), defaultt=shared_url or '')  # "Chronicle URL"
         entered = (entered or '').strip()
         log.info('_connect_to_chronicle: URL prompt returned {0!r}'.format(entered))
         if not entered:

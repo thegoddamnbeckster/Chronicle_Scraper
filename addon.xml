@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.5.0"
+       version="3.5.1"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,15 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.5.0 - New: the main menu now shows connection status (and WHO's connected --
+    <news>v3.5.1 - Per-user request (2026-08-29): "each of the add-ons could check
+each other for the chronicle URL and just copy it in from another working
+add-on... save the typing." "Edit Connection"'s URL prompt now checks the other
+installed Chronicle addons (Scraper TV, Scrobbler) for an already-configured
+chronicle_url and pre-fills the entry dialog with the first one found, instead
+of always starting blank -- still one explicit confirm step, never silently
+auto-connects. A sibling that isn't installed, or has nothing set yet itself,
+is simply skipped.
+v3.5.0 - New: the main menu now shows connection status (and WHO's connected --
 "Connected as {name}", via GET /users/me) directly in the menu heading, before you'd
 ever click "Edit Connection" -- per-user request (2026-08-28): "update the scrapers
 and the scrobbler to show that they're connected or not before they try to make a
