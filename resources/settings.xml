@@ -14,6 +14,7 @@
         <setting id="chronicle_url" type="text" label="32002" enable="false" default=""/>
         <setting id="authorization" type="action" label="32061" action="RunScript(script.chronicle.scraper.movie,action=auth)"/>
         <setting id="change_url" type="action" label="32112" action="RunScript(script.chronicle.scraper.movie,action=change_url)"/>
+        <setting id="test_connection" type="action" label="32012" action="RunScript(script.chronicle.scraper.movie,action=test_connection)"/>
         <setting id="auth_status" type="text" label="32080" enable="false" default=""/>
         <!-- Set automatically by the QR/PIN flow above — not meant to be typed by hand -->
         <setting id="api_key" type="text" label="32003" visible="false"/>
