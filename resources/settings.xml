@@ -17,7 +17,7 @@
         <setting id="auth_status" type="text" label="32080" enable="false" default=""/>
         <!-- Set automatically by the QR/PIN flow above — not meant to be typed by hand -->
         <setting id="api_key" type="text" label="32003" visible="false"/>
-        <!-- Cached by _refresh_auth_status()'s GET /api/v1/users/me -- last-known display
+        <!-- Cached by _refresh_auth_status()'s GET /api/v1/users/me — last-known display
              name for whoever this API key belongs to, used as a fallback for the menu
              heading/auth_status when a fresh lookup can't reach Chronicle. Not user-facing
              on its own (auth_status already shows the formatted "Connected as {name}" text). -->
