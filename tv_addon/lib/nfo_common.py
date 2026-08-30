@@ -31,6 +31,13 @@ def add_actors(root, cast):
         if isinstance(actor, dict):
             add_text(actor_el, 'name', actor.get('name'))
             add_text(actor_el, 'role', actor.get('role'))
+            # Chronicle's own resolved headshot for this person (docs/plans/2026-08-28-
+            # people-section-design.md Section 7) -- null until Chronicle has actually
+            # resolved a photo for them, in which case add_text's own None/'' check
+            # skips the tag entirely, same as every other optional field here. Kodi's
+            # actor NFO schema already supports <thumb>, just never had anything to put
+            # in it before this.
+            add_text(actor_el, 'thumb', actor.get('thumbUrl'))
         else:
             add_text(actor_el, 'name', actor)
         add_text(actor_el, 'order', i)
