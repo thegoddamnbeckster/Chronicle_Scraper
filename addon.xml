@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.5.3"
+       version="3.5.4"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,18 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.5.3 - Per-user correction (2026-08-29): "I only ever want them to open the
+    <news>v3.5.4 - Per-user correction (2026-08-29): "you delete everything first and then
+rewrite everything ... look at each video item individually and delete and rebuild
+rather than doing all the deletes and then the whole rebuild." "Rebuild local NFOs from
+Chronicle" now fully processes one item (delete its old NFO, refresh, wait for the new
+one to actually reappear) before moving to the next, instead of deleting every item's NFO
+in a fast burst and only THEN waiting on the whole batch draining -- the old order meant
+the entire library could sit with no valid local NFO at all for the whole multi-minute
+wait, a real data-loss risk if the run was ever interrupted partway through. At most one
+item is ever without a valid NFO now, for at most 60s. Runs fully in the background with
+no Cancel control once started (per-user decision) -- same tradeoff the old wait phase
+already had for most of a run's duration, just now for the whole thing.
+v3.5.3 - Per-user correction (2026-08-29): "I only ever want them to open the
 regular settings window, not whatever [the old action-list menu] is" -- launching this
 addon from Kodi's Add-on browser now goes straight to Settings instead of showing a
 Dialog().select() menu first. Test Connection, previously only reachable from that menu,

@@ -9,6 +9,7 @@ connecting the addon to a Chronicle account, same UX as Chronicle_Scrobbler.
 """
 
 import sys
+import time
 import traceback
 
 import xbmcgui
@@ -319,73 +320,51 @@ def _rebuild_nfos():
     if not confirmed:
         return
 
-    # Issue phase: a real foreground DialogProgress, Cancel available -- the
-    # addon script is actively doing something here (issuing delete+refresh
-    # per movie) that's worth a Cancel button and worth blocking on.
-    progress = xbmcgui.DialogProgress()
-    progress.create(ADDON.getLocalizedString(32093))  # "Rebuild local NFOs from Chronicle"
-    state = {'modal_closed': False, 'bg': None}
+    # Per-user correction (2026-08-29): rebuild now processes one item fully
+    # (delete, refresh, wait for ITS OWN NFO to reappear) before moving to
+    # the next -- see nfo_rebuild.py's module docstring for why. There's no
+    # longer a distinct "issuing" phase worth blocking Kodi's UI for and a
+    # separate "draining" phase to hand off to -- it's one continuous pass
+    # from the first item to the last, which for a real library can still
+    # take a long time. A single background (non-blocking) indicator for the
+    # whole thing keeps Kodi fully usable -- including playback -- the same
+    # way the tail of the old two-phase flow already did; the tradeoff is no
+    # Cancel button once this starts (DialogProgressBG has none), same as
+    # that old tail already had for most of a run's duration.
+    xbmcgui.Dialog().ok(
+        ADDON.getLocalizedString(32093),
+        ADDON.getLocalizedString(32100),
+    )
+    bg = xbmcgui.DialogProgressBG()
+    bg.create(ADDON.getLocalizedString(32093))
+    start_time = time.time()
 
     def on_progress(index, total, label):
         percent = int(index * 100 / total) if total else 0
-        progress.update(percent, '{0}/{1}: {2}'.format(index + 1, total, label))
-
-    def on_issuing_complete(pending_total, budget_seconds):
-        # From here on, the only thing left is Kodi's own library queue
-        # draining -- nothing the user could usefully Cancel, and nothing
-        # that needs them watching. Close the modal, tell them once, then
-        # switch to a background (non-blocking) indicator so Kodi stays
-        # fully usable -- including playback -- for however long this takes.
-        progress.close()
-        state['modal_closed'] = True
-        xbmcgui.Dialog().ok(
-            ADDON.getLocalizedString(32093),
-            ADDON.getLocalizedString(32100).format(
-                pending_total, _format_duration(budget_seconds)),
-        )
-        bg = xbmcgui.DialogProgressBG()
-        bg.create(ADDON.getLocalizedString(32093))
-        state['bg'] = bg
-
-    def on_wait_progress(confirmed, pending_total, waited_seconds, budget_seconds):
-        bg = state['bg']
-        if bg is None:
-            return
-        # budget_seconds is nfo_rebuild's own ceiling, already sized off the
-        # pending count (floor + N seconds/movie), so "budget - elapsed" is
-        # an honest worst-case remaining estimate -- it can only under-run,
-        # never blow past what's shown, since confirmations that arrive
-        # faster than the per-movie budget just end the wait early.
-        remaining = max(0, budget_seconds - waited_seconds)
-        percent = int(confirmed * 100 / pending_total) if pending_total else 100
-        bg.update(percent, message=ADDON.getLocalizedString(32103).format(
-            confirmed, pending_total, _format_duration(remaining)))
+        message = ADDON.getLocalizedString(32103).format(index + 1, total, label)
+        # Estimated time remaining from this run's OWN observed pace so far
+        # (elapsed / items done so far * items left) -- grounded in what's
+        # actually happening this run, not a formula that assumed a
+        # different (batch) execution model.
+        if index > 0 and total:
+            avg_per_item = (time.time() - start_time) / index
+            message += ADDON.getLocalizedString(32121).format(
+                _format_duration(avg_per_item * (total - index)))
+        bg.update(percent, message=message)
 
     try:
-        result = nfo_rebuild.run(
-            progress_callback=on_progress, is_cancelled=progress.iscanceled,
-            wait_progress_callback=on_wait_progress, on_issuing_complete=on_issuing_complete)
+        result = nfo_rebuild.run(progress_callback=on_progress)
     finally:
-        if not state['modal_closed']:
-            progress.close()
-        if state['bg'] is not None:
-            state['bg'].close()
+        bg.close()
 
     # Two genuinely different outcomes get genuinely different messages,
     # rather than one line trying to carry every number at once (deleted
     # counts, confirmed counts, errors) with no explanation of how they
     # relate -- that was the actual problem with the old single summary.
-    if result['cancelled']:
-        # An explicit interruption, not a routine background finish -- worth
-        # a modal the user has to acknowledge, since it's telling them
-        # something they didn't expect (the run stopped short) rather than
-        # just confirming something they were already told to expect.
-        xbmcgui.Dialog().ok(
-            ADDON.getLocalizedString(32093),
-            ADDON.getLocalizedString(32102).format(result['processed'], result['total']),
-        )
-        return
-
+    # No cancelled-run branch -- per-user decision (2026-08-29): this runs
+    # fully in the background with no Cancel control once started (see the
+    # comment above), so nfo_rebuild.run()'s cancelled result is never True
+    # from this caller.
     problem_count = result['unconfirmed_count'] + result['refresh_errors']
     if problem_count == 0:
         message = ADDON.getLocalizedString(32097).format(result['total'])

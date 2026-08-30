@@ -37,10 +37,10 @@ file is still Kodi's own local-metadata copy, never the video file itself.
 
 Covers three item types in one combined pass -- movies, TV shows (their own
 tvshow.nfo), and individual episodes (their own per-file NFO) -- sharing a
-single issue-then-wait pipeline (see the pacing/batch-wait comment below)
-and a single combined result dict, so default.py's summary stays exactly
-as simple as it was when this only handled movies; the counts just now mean
-"across everything", not "movies only".
+single per-item pipeline (see the sequencing comment below) and a single
+combined result dict, so default.py's summary stays exactly as simple as it
+was when this only handled movies; the counts just now mean "across
+everything", not "movies only".
 
 Caveat worth flagging: the movie half of this file was hardened over many
 rounds of real, confirmed kodi.log-driven bug fixes (v2.2.0-v2.9.0 -- see
@@ -66,85 +66,69 @@ from lib.movie_art_sync import listdir_with_timeout, strip_video_ext
 
 log = Logger('nfo_rebuild')
 
-# Confirmed live 2026-08-03: VideoLibrary.RefreshMovie is fire-and-forget --
-# it acks the JSON-RPC call and queues the actual scrape (HTTP call to
-# Chronicle, image downloads, an NFO write) on Kodi's own library thread,
-# which processes that queue at whatever pace the real work takes -- observed
-# anywhere from ~1s to 8+s per movie depending on image downloads. A blind
-# fixed-interval sleep between RefreshMovie calls (previously 1.0s) has no
-# relationship to that: it made the loop *issue* one request per movie per
-# second while the actual rebuild dragged on for another ~20 minutes after
-# the loop reported "done", quietly reporting "N movies processed" when that
-# only ever meant "N refresh requests were accepted", not "N NFOs were
-# rewritten".
+# Per-user correction (2026-08-29): "you delete everything first and then
+# rewrite everything ... look at each video item individually and delete
+# and rebuild rather than doing all the deletes and then the whole
+# rebuild." Confirmed as a real problem, not just a perception one: even
+# though the PREVIOUS version of this module issued each item's delete
+# immediately before that same item's refresh, delete completes almost
+# instantly while VideoLibrary.RefreshMovie is fire-and-forget -- the
+# actual scrape+write happens later, whenever Kodi's own library thread
+# gets to it. Because every item's delete+refresh was issued in one fast
+# burst before ANY waiting began, the entire library could sit with NO
+# valid local NFO for the whole multi-minute (or longer) batch-wait
+# window -- worse than the "everything is briefly gone" this rewrite is
+# meant to fix, and a real data-loss risk if the run is interrupted
+# (Kodi crash, network drop, cancel) anywhere in that window: every item
+# whose old NFO was already deleted but whose new one hadn't landed yet
+# is left with nothing.
 #
-# First fix attempt (2026-08-03) waited per-movie for its own NFO to reappear
-# before issuing the next delete+refresh, capped at 20s. Confirmed WRONG live
-# 2026-08-04: Kodi's internal scrape queue does not drain in lockstep with
-# issue order -- "Crawl"'s wait gave up at 09:20:36 (no NFO within 20s), but
-# the NFO was actually written at 09:22:04, ~88s later. The queue's own depth
-# (everything already in flight from prior refreshes, plus whatever a
-# concurrent library scan is doing) determines how long any single movie
-# actually takes to reach the front, and that has no fixed relationship to
-# a per-movie timeout -- a real success just gets misreported as "not
-# confirmed", which is exactly the same class of dishonest count as the
-# original bug, just inverted (too pessimistic instead of too optimistic).
+# This version never issues item N+1's delete until item N's own refresh
+# has either been confirmed on disk or timed out -- at most ONE item is
+# ever without a valid NFO at a time, for at most _PER_ITEM_TIMEOUT_SECONDS.
 #
-# Correct model: issuing delete+refresh is cheap and shouldn't be gated on
-# any one item's own completion -- fire them all (paced only enough to not
-# slam Chronicle/the SMB shares with an instant burst), then wait on the
-# WHOLE BATCH draining, checking off each item's NFO as it reappears,
-# instead of demanding item N finish before item N+1 even starts.
-_ISSUE_PACING_SECONDS = 0.3
+# This looks superficially like the "confirmed WRONG live 2026-08-04"
+# per-item-wait attempt mentioned in this module's git history, so it's
+# worth being explicit about why it isn't the same mistake: that attempt
+# waited (capped at 20s) for one item's NFO AFTER a whole batch of refreshes
+# had ALREADY been issued in a burst -- Kodi's queue was already deep by
+# the time the wait started, so a single item's real completion time (one
+# case took ~88s) had no relationship to a per-item timeout sized for the
+# uncontended case. THIS version never creates that backlog in the first
+# place -- at most one refresh is ever in flight, so each item's own
+# processing time should stay close to the ~1-8s per-movie range observed
+# when Kodi's queue isn't backed up, and _PER_ITEM_TIMEOUT_SECONDS below is
+# sized with real headroom above that, not against the deep-queue outlier.
+_PER_ITEM_TIMEOUT_SECONDS = 60.0
 _POLL_INTERVAL_SECONDS = 3.0
-# Overall batch-wait budget scales with how much work was actually queued,
-# not a flat per-item number -- floor covers small batches where per-item
-# variance dominates, the per-item factor covers large ones where queue
-# depth dominates. 6s/item comfortably covers the ~88s-for-one-movie-deep-
-# in-the-queue case observed live without being so long a genuinely-failed
-# match blocks the run for hours.
-_BATCH_WAIT_FLOOR_SECONDS = 180.0
-_BATCH_WAIT_PER_ITEM_SECONDS = 6.0
+# Tiny pacing floor between items even when one resolves almost instantly
+# (e.g. a fast local Chronicle response) -- avoids hammering Chronicle/the
+# SMB share with a tight back-to-back loop; negligible next to a real
+# item's multi-second wait.
+_MIN_ITEM_SPACING_SECONDS = 0.3
 
 
-def run(progress_callback=None, is_cancelled=None, wait_progress_callback=None,
-        on_issuing_complete=None, wait_is_cancelled=None):
-    """Deletes every local .nfo/tvshow.nfo/movieset-* file for every movie,
-    TV show, and episode already in Kodi's library, then refreshes each one
-    so Chronicle_Scraper repopulates them fresh. Issues all delete+refresh
-    requests first (briefly paced so it's not one instant burst), then waits
-    on the whole combined batch reappearing together -- see the module-level
-    comment above for why waiting on each item individually before starting
-    the next was wrong.
+def run(progress_callback=None, is_cancelled=None):
+    """Deletes and rebuilds every local .nfo/tvshow.nfo/movieset-* file for
+    every movie, TV show, and episode already in Kodi's library, ONE ITEM AT
+    A TIME: delete this item's old file(s), issue its refresh, wait for its
+    own new NFO to actually reappear on disk (or time out), THEN move on to
+    the next item. See the module-level comment above for why this
+    sequencing -- not a batch delete-everything-then-wait-on-everything --
+    is both safer (at most one item is ever without a valid NFO) and, once
+    Kodi's queue isn't artificially backlogged by a burst of refreshes,
+    about as fast in practice.
 
     progress_callback(index, total, label), if given, is called once per
-    item (movie, then show, then episode) during the issue phase.
-    is_cancelled(), if given, is checked between items during the issue
-    phase AND during the batch wait, and stops the run early (already-issued
-    refreshes keep running in Kodi's own queue either way -- there's no way
-    to un-issue them).
+    item (movie, then show, then episode), right as that item starts
+    processing -- covers the whole delete+refresh+wait for that item, not
+    just the issue step, so a caller's progress UI stays accurate for
+    however long that one item actually takes.
 
-    wait_progress_callback(confirmed, pending_total, waited_seconds,
-    budget_seconds), if given, is called once per poll during the batch wait
-    -- this phase has no natural "index/total item" progress of its own
-    (nothing is being issued anymore, just waited on), so without this a
-    caller's progress UI has nothing to update for however long the wait
-    takes and looks frozen even though the batch is actively draining.
-
-    on_issuing_complete(pending_total, budget_seconds), if given, is called
-    once, right as the issue phase ends and the (possibly long) batch wait is
-    about to start -- lets a caller swap a foreground/blocking progress UI
-    for a background one at exactly the point the user no longer needs to be
-    watching: everything left to do from here is Kodi's own library queue
-    draining, not anything the addon script is still driving that a user
-    could meaningfully interrupt.
-
-    wait_is_cancelled, if given, is checked instead of is_cancelled during
-    the batch wait (separate from the issue-phase check) -- a caller that
-    moves to a non-interactive background indicator for the wait phase (see
-    on_issuing_complete above) has nothing left offering a Cancel button by
-    that point, so it should leave this unset rather than reuse a check tied
-    to a UI control it already closed.
+    is_cancelled(), if given, is checked before each item starts AND between
+    polls while waiting on the current item, and stops the run early
+    (whatever refresh is already in flight for the current item keeps
+    running in Kodi's own queue regardless -- there's no way to un-issue it).
 
     Returns a dict (deliberately named, not positional) -- every count is a
     COMBINED total across movies, shows, and episodes (movieset_deleted is
@@ -153,44 +137,40 @@ def run(progress_callback=None, is_cancelled=None, wait_progress_callback=None,
     only ever handled movies:
       total              -- movies + shows + episodes in the library when
                              this started
-      processed          -- how many were actually issued a delete+refresh
-                             (< total only if cancelled during the issue phase)
-      cancelled           -- True if the issue phase was stopped early via
-                             is_cancelled(); the wait phase always runs to
-                             completion on whatever was issued regardless
+      processed          -- how many were fully handled (delete+refresh+wait,
+                             confirmed or not) before a cancel, if any
+      cancelled           -- True if the run was stopped early via
+                             is_cancelled()
       pending_total       -- of `processed`, how many got a real refresh
-                             request accepted and so are expected to produce
-                             a new NFO (`processed` minus refresh_errors,
-                             minus any whose NFO path couldn't be predicted)
+                             request accepted and so were actually waited on
+                             (`processed` minus refresh_errors, minus any
+                             whose NFO path couldn't be predicted)
       nfo_confirmed        -- of `pending_total`, how many were actually
-                             observed back on disk by the end of the wait --
-                             the honest "actually done" count
+                             observed back on disk before their own timeout
       unconfirmed_count    -- pending_total - nfo_confirmed; never reappeared
-                             within the wait budget (see kodi.log for which)
-      nfo_deleted           -- old .nfo/tvshow.nfo files removed during the
-                             issue phase, across all three item types
+                             within that item's own wait budget (see
+                             kodi.log for which)
+      nfo_deleted           -- old .nfo/tvshow.nfo files removed, across all
+                             three item types
       movieset_deleted      -- old movieset-* art files removed likewise
                              (movies only)
       refresh_errors        -- items where Kodi's own Refresh* JSON-RPC call
                              itself was rejected -- never even entered the wait
     """
-    # Set for the entire issue-and-wait pass, not just the issue phase --
-    # Kodi's own Refresh* queue can call back into get_details()/
-    # get_episode_details() at any point up to the very end of the batch
-    # wait (see the queue-timing comment above), and rebuild_state is what
-    # tells those calls it's safe to actually write the NFO this time.
-    # finally guarantees this clears even on an unexpected exception, so a
-    # crash here can't leave inline NFO writing silently stuck on forever.
+    # Set for the entire pass -- Kodi's own Refresh* queue can call back into
+    # get_details()/get_episode_details() at any point up to the very end of
+    # the current item's wait, and rebuild_state is what tells those calls
+    # it's safe to actually write the NFO this time. finally guarantees this
+    # clears even on an unexpected exception, so a crash here can't leave
+    # inline NFO writing silently stuck on forever.
     rebuild_state.mark_started()
     try:
-        return _run(progress_callback, is_cancelled, wait_progress_callback,
-                     on_issuing_complete, wait_is_cancelled)
+        return _run(progress_callback, is_cancelled)
     finally:
         rebuild_state.mark_finished()
 
 
-def _run(progress_callback, is_cancelled, wait_progress_callback,
-         on_issuing_complete, wait_is_cancelled):
+def _run(progress_callback, is_cancelled):
     movies = _get_all_movies()
     shows = _get_all_tvshows()
     episodes = _get_all_episodes()
@@ -199,19 +179,41 @@ def _run(progress_callback, is_cancelled, wait_progress_callback,
     nfo_deleted = 0
     movieset_deleted = 0
     refresh_errors = 0
+    pending_total = 0
+    nfo_confirmed = 0
+    unconfirmed = []
     processed = 0
     cancelled = False
-    pending = {}  # (kind, id) -> (label, expected_nfo_path)
 
     log.info('nfo_rebuild: starting -- {0} movies, {1} shows, {2} episodes in library'.format(
              len(movies), len(shows), len(episodes)))
 
     def _cancelled_now():
         if is_cancelled is not None and is_cancelled():
-            log.warning('nfo_rebuild: cancelled by user during issue phase at {0}/{1}'.format(
-                        processed, total))
+            log.warning('nfo_rebuild: cancelled by user at {0}/{1}'.format(processed, total))
             return True
         return False
+
+    def _finish_item(label, expected_nfo, refresh_ok):
+        """Shared tail end of processing one item, once its delete+refresh
+        have already been issued -- waits for expected_nfo (if predictable
+        and the refresh was accepted), tallies every counter this function
+        closes over. Nothing to wait on (refresh rejected, or the path
+        couldn't be predicted) just falls straight through."""
+        nonlocal refresh_errors, pending_total, nfo_confirmed, unconfirmed
+        if not refresh_ok:
+            refresh_errors += 1
+            return
+        if not expected_nfo:
+            return
+        pending_total += 1
+        if _wait_for_one(expected_nfo, _PER_ITEM_TIMEOUT_SECONDS, is_cancelled):
+            nfo_confirmed += 1
+        else:
+            unconfirmed.append((label, expected_nfo))
+            log.warning('nfo_rebuild: "{0}" -- NFO never reappeared at {1} within {2:.0f}s '
+                        '(scraper may not have matched this title; check kodi.log)'.format(
+                        label, expected_nfo, _PER_ITEM_TIMEOUT_SECONDS))
 
     for movie in movies:
         if _cancelled_now():
@@ -235,13 +237,11 @@ def _run(progress_callback, is_cancelled, wait_progress_callback,
             nfo_deleted += deleted_nfo
             movieset_deleted += deleted_movieset
 
-        if not _refresh_movie(movie['movieid']):
-            refresh_errors += 1
-        elif expected_nfo:
-            pending[('movie', movie['movieid'])] = (movie.get('label') or str(movie['movieid']), expected_nfo)
+        refresh_ok = _refresh_movie(movie['movieid'])
+        _finish_item(movie.get('label') or str(movie['movieid']), expected_nfo, refresh_ok)
 
         processed += 1
-        xbmc.sleep(int(_ISSUE_PACING_SECONDS * 1000))
+        xbmc.sleep(int(_MIN_ITEM_SPACING_SECONDS * 1000))
 
     if not cancelled:
         for show in shows:
@@ -259,13 +259,12 @@ def _run(progress_callback, is_cancelled, wait_progress_callback,
             if folder and _delete_show_nfo(folder, stash_key):
                 nfo_deleted += 1
 
-            if not _refresh_show(show['tvshowid']):
-                refresh_errors += 1
-            elif folder:
-                pending[('show', show['tvshowid'])] = (show.get('label') or str(show['tvshowid']), folder + 'tvshow.nfo')
+            refresh_ok = _refresh_show(show['tvshowid'])
+            expected_nfo = folder + 'tvshow.nfo' if folder else None
+            _finish_item(show.get('label') or str(show['tvshowid']), expected_nfo, refresh_ok)
 
             processed += 1
-            xbmc.sleep(int(_ISSUE_PACING_SECONDS * 1000))
+            xbmc.sleep(int(_MIN_ITEM_SPACING_SECONDS * 1000))
 
     if not cancelled:
         for episode in episodes:
@@ -284,9 +283,8 @@ def _run(progress_callback, is_cancelled, wait_progress_callback,
             if folder and stash_key and _delete_episode_nfo(folder, stash_key):
                 nfo_deleted += 1
 
-            if not _refresh_episode(episode['episodeid']):
-                refresh_errors += 1
-            else:
+            refresh_ok = _refresh_episode(episode['episodeid'])
+            if refresh_ok:
                 # Stashed only once the refresh is actually issued (RefreshEpisode
                 # is fire-and-forget -- confirmed live 2026-08-03 for RefreshMovie,
                 # same queuing model here -- so there's no risk get_episode_details()'s
@@ -299,22 +297,10 @@ def _run(progress_callback, is_cancelled, wait_progress_callback,
                 if file_path:
                     episode_path_cache.save(episode.get('tvshowid'), episode.get('season'),
                                              episode.get('episode'), file_path)
-                if expected_nfo:
-                    pending[('episode', episode['episodeid'])] = (label, expected_nfo)
+            _finish_item(label, expected_nfo, refresh_ok)
 
             processed += 1
-            xbmc.sleep(int(_ISSUE_PACING_SECONDS * 1000))
-
-    budget = max(_BATCH_WAIT_FLOOR_SECONDS, len(pending) * _BATCH_WAIT_PER_ITEM_SECONDS)
-    log.info('nfo_rebuild: issue phase done -- {0} refreshes issued, waiting up to {1:.0f}s '
-             'for the batch to drain'.format(len(pending), budget))
-    if on_issuing_complete is not None:
-        on_issuing_complete(len(pending), budget)
-    nfo_confirmed, unconfirmed = _wait_for_batch(pending, budget, wait_is_cancelled, wait_progress_callback)
-
-    for label, path in unconfirmed:
-        log.warning('nfo_rebuild: "{0}" -- NFO never reappeared at {1} within the batch wait '
-                    '(scraper may not have matched this title; check kodi.log)'.format(label, path))
+            xbmc.sleep(int(_MIN_ITEM_SPACING_SECONDS * 1000))
 
     log.info('nfo_rebuild: done -- {0}/{1} items processed, {2} confirmed rewritten, '
              '{3} nfo deleted, {4} movieset files deleted, {5} refresh errors'.format(
@@ -323,7 +309,7 @@ def _run(progress_callback, is_cancelled, wait_progress_callback,
         'total': total,
         'processed': processed,
         'cancelled': cancelled,
-        'pending_total': len(pending),
+        'pending_total': pending_total,
         'nfo_confirmed': nfo_confirmed,
         'unconfirmed_count': len(unconfirmed),
         'nfo_deleted': nfo_deleted,
@@ -337,11 +323,11 @@ def _expected_movie_nfo_path(folder, file_path):
     will write this item's NFO -- same naming rule both use: the real video
     file's own basename with a .nfo extension. Not guaranteed (falls back to
     "movie.nfo" if the writer's own location lookup fails for some reason
-    this one can't predict), but right often enough to make polling
+    this one can't predict), but right often enough to make waiting
     worthwhile; a wrong guess just means this item never gets checked off
-    during the batch wait and shows up as unconfirmed, even if the real
-    write succeeded under a different filename. Despite the name, this
-    applies equally to episodes -- they use the identical convention."""
+    and shows up as unconfirmed, even if the real write succeeded under a
+    different filename. Despite the name, this applies equally to episodes
+    -- they use the identical convention."""
     if not folder or not file_path:
         return None
     basename = file_path.rsplit('/', 1)[-1]
@@ -349,50 +335,21 @@ def _expected_movie_nfo_path(folder, file_path):
     return folder + stem + '.nfo'
 
 
-def _wait_for_batch(pending, budget_seconds, is_cancelled=None, wait_progress_callback=None):
-    """Polls every (label, path) in pending until each path exists, checking
-    off confirmed ones as it goes, up to budget_seconds total (not per-item
-    -- see the module docstring for why a per-item cap was wrong). Returns
-    (confirmed_count, [(label, path), ...] for whatever never showed up)."""
-    remaining = dict(pending)  # (kind, id) -> (label, path)
-    confirmed = 0
+def _wait_for_one(path, budget_seconds, is_cancelled=None):
+    """Polls a single expected NFO path until it exists, up to budget_seconds.
+    Returns True if it appeared in time, False otherwise (timeout, or
+    cancelled mid-wait)."""
     waited = 0.0
-    total = len(pending)
-    next_log_at = 30.0  # heartbeat in kodi.log every ~30s even with no UI watching
-
-    while remaining and waited < budget_seconds:
+    while waited < budget_seconds:
+        if xbmcvfs.exists(path):
+            return True
         if is_cancelled is not None and is_cancelled():
-            log.warning('nfo_rebuild: cancelled during batch wait -- {0}/{1} still pending'.format(
-                        len(remaining), len(pending)))
-            break
-
-        done = [key for key, (_label, path) in remaining.items() if xbmcvfs.exists(path)]
-        for key in done:
-            del remaining[key]
-            confirmed += 1
-
-        if wait_progress_callback is not None:
-            wait_progress_callback(confirmed, total, waited, budget_seconds)
-
-        if waited >= next_log_at:
-            log.info('nfo_rebuild: batch wait -- {0}/{1} confirmed, {2:.0f}s/{3:.0f}s elapsed'.format(
-                      confirmed, total, waited, budget_seconds))
-            next_log_at += 30.0
-
-        if not remaining:
-            break
-
+            return False
         xbmc.sleep(int(_POLL_INTERVAL_SECONDS * 1000))
         waited += _POLL_INTERVAL_SECONDS
-
-    # Final check -- a path may have appeared in the gap between the last
-    # loop iteration's check and the wait budget running out.
-    for key, (_label, path) in list(remaining.items()):
-        if xbmcvfs.exists(path):
-            del remaining[key]
-            confirmed += 1
-
-    return confirmed, list(remaining.values())
+    # Final check -- the file may have appeared in the gap between the last
+    # loop iteration's check and the budget running out.
+    return xbmcvfs.exists(path)
 
 
 def _get_all_movies():

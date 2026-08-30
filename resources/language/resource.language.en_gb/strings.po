@@ -142,7 +142,7 @@ msgid "All {0} items (movies, TV shows, and episodes) were rebuilt successfully.
 msgstr ""
 
 msgctxt "#32100"
-msgid "Chronicle has been asked to rebuild {0} item(s). Kodi will keep working through the list in the background -- you don't need to keep watching this, and can carry on using Kodi normally (including playback) while it finishes. Estimated time to finish: {1}."
+msgid "Chronicle will rebuild your library's local NFOs in the background, one item at a time (delete, then rebuild, before moving to the next) -- you don't need to keep watching this, and can carry on using Kodi normally (including playback) while it finishes. There's no way to cancel once this starts; close Kodi if you need to stop it."
 msgstr ""
 
 msgctxt "#32101"
@@ -154,11 +154,15 @@ msgid "You stopped this before it finished -- Chronicle had gotten through {0} o
 msgstr ""
 
 msgctxt "#32103"
-msgid "Waiting for Kodi to work through the list -- {0}/{1} confirmed. Estimated time remaining: {2}"
+msgid "{0}/{1}: {2}"
 msgstr ""
 
 msgctxt "#32104"
 msgid "less than a minute"
+msgstr ""
+
+msgctxt "#32121"
+msgid " -- about {0} left"
 msgstr ""
 
 msgctxt "#32098"
