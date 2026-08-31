@@ -59,6 +59,7 @@ from lib.kodi_video_info import (
 from lib.collection_sync import sync_collection_art
 from lib.movie_art_sync import sync_movie_art, find_movie_location, get_streamdetails
 from lib.nfo_writer import sync_movie_nfo
+from lib import progress_sync
 
 log = Logger('scraper')
 ADDON = xbmcaddon.Addon()
@@ -269,6 +270,25 @@ def get_details(media_item_id, handle):
 
     apply_ratings(vtag, details.get('ratings'))
     apply_artwork(listitem, details.get('artwork'))
+
+    # Rating + resume reconciliation, inline with this same scrape -- per-user
+    # request (2026-08-30): "I don't want a separate sync task in Kodi for
+    # ratings. this needs to happen with the scraper automatically as part of
+    # the scrape process." Rating is push-only (see progress_sync module doc:
+    # Kodi has no per-rating timestamp to compare against). Resume is genuinely
+    # bidirectional, using Kodi's own lastplayed the same way Chronicle_Scrobbler's
+    # now-retired periodic sync did.
+    if details.get('userRating'):
+        vtag.setUserRating(details['userRating'])
+
+    kodi_state = progress_sync.lookup_movie_state(details.get('title'), details.get('year'))
+    direction, value = progress_sync.resolve_progress_direction(
+        details.get('resumePositionPercent'), details.get('resumeUpdatedAt'), kodi_state)
+    if direction == 'push':
+        progress_sync.apply_resume_push(vtag, value, details.get('runtimeMinutes'))
+    elif direction == 'pull':
+        ChronicleClient().push_resume(
+            media_item_id, value, progress_sync.kodi_lastplayed_to_iso(kodi_state.get('lastplayed')))
 
     sync_movie_art(details.get('title'), details.get('year'), details.get('artwork'), location=location)
 
