@@ -95,6 +95,15 @@ _SET_ART_FILENAMES = {
 # than this is treated as a new scan and allowed to alert again.
 _ALERT_SUPPRESS_SECONDS = 600
 
+# Per-user request (2026-09-04): a folder Chronicle can't immediately reach should be
+# retried "exactly as any other folder that Kodi scans" -- a momentary SMB/NAS hiccup
+# (share still waking up, a brief network blip) is not the same thing as the folder
+# genuinely being gone, and the old code alerted on the very first failed attempt with
+# no retry at all. Only after every attempt here fails is it treated as a real,
+# user-actionable problem (fix the share/path) worth a popup for.
+_FOLDER_RETRY_ATTEMPTS = 5
+_FOLDER_RETRY_DELAY_SECONDS = 10
+
 
 def sync_collection_art(collection):
     """collection is the same dict the /movies/details response returns under
@@ -119,7 +128,7 @@ def sync_collection_art(collection):
 
     if not xbmcvfs.exists(folder):
         base_readable = xbmcvfs.exists(base)
-        mkdirs_ok = xbmcvfs.mkdirs(folder)
+        mkdirs_ok = _mkdirs_with_retry(folder)
         log.info('Folder missing for "{0}": base_exists={1} folder={2} mkdirs_ok={3}'.format(
             name, base_readable, folder, mkdirs_ok))
         if not mkdirs_ok:
@@ -146,7 +155,7 @@ def sync_collection_art(collection):
         log.info('sync_collection_art: set "{0}" -- {1} {2}: {3} -> {4}'.format(
             name, filename, action, url, dest))
 
-        result = _write_remote_file(dest, url)
+        result = _write_remote_file_with_retry(dest, url)
         if result == 'ok':
             if exists:
                 # Same path, new bytes: Kodi would keep serving the cached copy for up
@@ -381,6 +390,39 @@ def _invalidate_texture(path):
                 texture.get('textureid'), exc))
 
     log.info('Invalidated {0} cached texture(s) for {1}'.format(removed, path))
+
+
+def _mkdirs_with_retry(folder):
+    """Like xbmcvfs.mkdirs(folder), but retries a failure up to _FOLDER_RETRY_ATTEMPTS
+    times, _FOLDER_RETRY_DELAY_SECONDS apart, before giving up -- see the module-level
+    constants' own doc for why a single failed attempt isn't treated as final."""
+    for attempt in range(1, _FOLDER_RETRY_ATTEMPTS + 1):
+        if xbmcvfs.mkdirs(folder):
+            return True
+        if attempt < _FOLDER_RETRY_ATTEMPTS:
+            log.warning('Folder not reachable yet (attempt {0}/{1}): {2} -- retrying in {3}s'.format(
+                attempt, _FOLDER_RETRY_ATTEMPTS, folder, _FOLDER_RETRY_DELAY_SECONDS))
+            xbmc.sleep(_FOLDER_RETRY_DELAY_SECONDS * 1000)
+    return False
+
+
+def _write_remote_file_with_retry(dest_path, url):
+    """Retries a 'write_failed' result from _write_remote_file up to
+    _FOLDER_RETRY_ATTEMPTS times, _FOLDER_RETRY_DELAY_SECONDS apart -- same reasoning as
+    _mkdirs_with_retry. A 'download_failed' result is NOT retried here: that says nothing
+    about the destination folder (a dead/expired art URL retrying on the same schedule
+    would just hammer Chronicle for no benefit), and the caller already treats it as a
+    separate, non-folder-related outcome."""
+    result = 'write_failed'
+    for attempt in range(1, _FOLDER_RETRY_ATTEMPTS + 1):
+        result = _write_remote_file(dest_path, url)
+        if result != 'write_failed':
+            return result
+        if attempt < _FOLDER_RETRY_ATTEMPTS:
+            log.warning('Write not reachable yet (attempt {0}/{1}): {2} -- retrying in {3}s'.format(
+                attempt, _FOLDER_RETRY_ATTEMPTS, dest_path, _FOLDER_RETRY_DELAY_SECONDS))
+            xbmc.sleep(_FOLDER_RETRY_DELAY_SECONDS * 1000)
+    return result
 
 
 def _write_remote_file(dest_path, url):
