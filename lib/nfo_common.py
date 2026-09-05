@@ -1,17 +1,25 @@
 # -*- coding: utf-8 -*-
 """Shared XML-building blocks for Kodi-native NFOs -- used by nfo_writer.py
-(movies) and tv_nfo_writer.py (TV shows/episodes). Everything here is
-genuinely identical between the two (actors, uniqueid, ratings,
-streamdetails, and the local-art-file lookup patterns), factored out once
-rather than kept as two independently-drifting copies.
+(movies) and tv_nfo_writer.py (TV shows/episodes).
+
+Chronicle's own data (actors, directors/writers, uniqueid, ratings, and
+Chronicle's own remote artwork candidates) is no longer built here -- as of
+docs/plans/2026-09-02-kodi-nfo-plugin-design.md, that logic moved server-side
+into Chronicle.Plugin.Kodi.NFO's KodiNfoBuilder, which both writers now fetch
+pre-built XML from (see ChronicleClient.fetch_movie_sidecar/fetch_show_sidecar/
+fetch_episode_sidecar) instead of assembling it in Python. What's left here is
+strictly Kodi-local data neither Chronicle's server nor that plugin can ever
+have: Kodi's own per-file technical probe (add_streamdetails) and local art
+files already sitting on disk (list_local_art_prefixed/list_local_art_plain,
+spliced in via splice_local_art_fallback) -- see that design doc's "Not
+solved here" section for why local-art discovery specifically stays
+client-side.
 """
 
 import re
 import xml.etree.ElementTree as ET
 
 from lib.movie_art_sync import listdir_with_timeout
-
-UNIQUEID_TYPES = ('imdb', 'tmdb', 'tvdb', 'trakt')
 
 _LOCAL_ART_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.tbn', '.bmp', '.gif')
 _FANART_SUFFIX_RE = re.compile(r'^fanart\d*\.')
@@ -23,60 +31,6 @@ def add_text(parent, tag, text):
     el = ET.SubElement(parent, tag)
     el.text = str(text)
     return el
-
-
-def add_actors(root, cast):
-    for i, actor in enumerate(cast or []):
-        actor_el = ET.SubElement(root, 'actor')
-        if isinstance(actor, dict):
-            add_text(actor_el, 'name', actor.get('name'))
-            add_text(actor_el, 'role', actor.get('role'))
-            # Chronicle's own resolved headshot for this person (docs/plans/2026-08-28-
-            # people-section-design.md Section 7) -- null until Chronicle has actually
-            # resolved a photo for them, in which case add_text's own None/'' check
-            # skips the tag entirely, same as every other optional field here. Kodi's
-            # actor NFO schema already supports <thumb>, just never had anything to put
-            # in it before this.
-            add_text(actor_el, 'thumb', actor.get('thumbUrl'))
-        else:
-            add_text(actor_el, 'name', actor)
-        add_text(actor_el, 'order', i)
-
-
-def add_directors_and_writers(root, crew):
-    """Kodi's NFO only has dedicated person-tags for director and writer
-    ("credits") -- every other job title (producer, composer, etc.) has no
-    NFO-equivalent tag, so it isn't written even though Chronicle's own API
-    keeps every crew credit it was given."""
-    for member in crew or []:
-        if not isinstance(member, dict):
-            continue
-        job = (member.get('job') or '').lower()
-        if job == 'director':
-            add_text(root, 'director', member.get('name'))
-        elif job in ('writer', 'screenplay', 'story', 'teleplay'):
-            add_text(root, 'credits', member.get('name'))
-
-
-def add_uniqueids(root, external_ids):
-    for id_type in UNIQUEID_TYPES:
-        value = (external_ids or {}).get(id_type)
-        if not value:
-            continue
-        uid_el = ET.SubElement(root, 'uniqueid', {'type': id_type})
-        if id_type == 'imdb':
-            uid_el.set('default', 'true')
-        uid_el.text = str(value)
-
-
-def add_ratings(root, ratings):
-    if not ratings:
-        return
-    ratings_el = ET.SubElement(root, 'ratings')
-    for source, rating in ratings.items():
-        rating_el = ET.SubElement(ratings_el, 'rating', {'name': source, 'max': '10'})
-        add_text(rating_el, 'value', rating.get('rating'))
-        add_text(rating_el, 'votes', rating.get('votes') or 0)
 
 
 def add_streamdetails(root, streamdetails):
@@ -121,34 +75,41 @@ def add_streamdetails(root, streamdetails):
         add_text(s_el, 'language', s.get('language'))
 
 
-def build_art_block(root, artwork, local_art, art_tags):
-    """Builds the <art> element shared by movie and TV-show NFOs: Chronicle's
-    own top-ranked remote candidate per slot, falling back to a local file
-    only when Chronicle has nothing for that slot at all, plus every local
-    fanart alternate appended after Chronicle's own fanart candidates (see
-    art_tags -- the same (art_type, tag) pairs both nfo_writer.py and
-    tv_nfo_writer.py use). Removes the <art> element again if it ended up
-    empty. local_art is a {art_type: [bare filenames]} dict, e.g. from
-    list_local_art_prefixed()/list_local_art_plain() below."""
-    artwork = artwork or {}
+def splice_local_art_fallback(root, local_art, art_tags):
+    """Fills whatever art slot the sidecar Chronicle already built left empty (it only ever
+    writes a slot it has a real remote candidate for), from local image files sitting next to
+    the item -- list_local_art_prefixed()/list_local_art_plain() below. Only ever ADDS to the
+    <art> element the fetched sidecar came with (creating one if the sidecar had none at all);
+    never touches or reorders anything Chronicle's own data already supplied there. See
+    docs/plans/2026-09-02-kodi-nfo-plugin-design.md's "Not solved here": local-art-file
+    discovery is deliberately not server-side, since Chronicle's server has no way to browse
+    the item's own folder on whatever machine is running this addon. local_art is a {art_type:
+    [bare filenames]} dict, e.g. from list_local_art_prefixed()/list_local_art_plain() below;
+    art_tags is the same (art_type, tag) pairs both nfo_writer.py and tv_nfo_writer.py use."""
     local_art = local_art or {}
-    art_el = ET.SubElement(root, 'art')
+    if not local_art:
+        return
+
+    art_el = root.find('art')
+    if art_el is None:
+        art_el = ET.SubElement(root, 'art')
+
     for art_type, tag in art_tags:
-        candidates = artwork.get(art_type)
         local_files = local_art.get(art_type) or []
+        if not local_files:
+            continue
         if art_type == 'fanart':
-            if not candidates and not local_files:
-                continue
-            fanart_el = ET.SubElement(art_el, 'fanart')
-            for candidate in candidates or []:
-                add_text(fanart_el, 'thumb', candidate['url'])
+            fanart_el = art_el.find('fanart')
+            if fanart_el is None:
+                fanart_el = ET.SubElement(art_el, 'fanart')
             for filename in local_files:
                 add_text(fanart_el, 'thumb', filename)
-        else:
-            if candidates:
-                add_text(art_el, tag, candidates[0]['url'])
-            elif local_files:
-                add_text(art_el, tag, local_files[0])
+        elif art_el.find(tag) is None:
+            # Chronicle already supplied this slot (a <tag> element is already present) --
+            # a local file never overrides Chronicle's own remote candidate, only fills a
+            # genuine gap.
+            add_text(art_el, tag, local_files[0])
+
     if len(art_el) == 0:
         root.remove(art_el)
 

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.tv"
        name="Chronicle Scraper (TV)"
-       version="1.7.0"
+       version="1.8.0"
        provider-name="Michael Beck">
 
   <requires>
@@ -47,7 +47,16 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (TV)</summary>
     <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. "Rebuild local NFOs from Chronicle" and the corner status indicator live in the Movies addon and cover both movies and TV shows together; this addon doesn't duplicate them.</description>
-    <news>v1.7.0 - Per-user request (2026-09-05): an episode completed on one Shield stayed
+    <news>v1.8.0 - "Recreate local NFO" now fetches each show/episode NFO's own document
+pre-built from Chronicle's server (a new companion plugin, Chronicle.Plugin.Kodi.NFO) instead
+of building the XML on this device in Python -- same document, same fields, just assembled on
+the more capable machine. This addon now only splices in the two things Chronicle's server
+structurally cannot know: Kodi's own streamdetails probe (episodes only) and local art files
+already sitting on disk. No behaviour change for ordinary library scans (NFO writing was, and
+remains, rebuild-pass-only) -- this only affects how the "Recreate local NFO" action itself
+builds each document.
+
+v1.7.0 - Per-user request (2026-09-05): an episode completed on one Shield stayed
 permanently unwatched on another, with no error -- Chronicle clears its own resume-percent/
 timestamp the moment an item is marked watched (nothing left to "resume"), so the existing
 resume reconciliation had no signal at all to work with for a fully-finished episode.

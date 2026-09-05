@@ -39,9 +39,12 @@ treats any existing local NFO the same way (an opportunity to refresh it
 with Chronicle's own data), consistent with movie_art_sync.py's own decision
 to always overwrite rather than preserve.
 
-See lib/nfo_common.py for the XML-building blocks shared with
-tv_nfo_writer.py (actors, uniqueid, ratings, streamdetails, art block, local
-art file lookup) -- only the movie-specific field layout lives here.
+Chronicle's own fields (title, cast, uniqueid, ratings, remote artwork, etc.)
+are built server-side (see Chronicle.Plugin.Kodi.NFO's KodiNfoBuilder,
+fetched here via ChronicleClient.fetch_movie_sidecar) -- this module's own
+job is splicing in what only Kodi itself can know (streamdetails, local art
+files) and writing the result to disk. See lib/nfo_common.py for those
+Kodi-local building blocks, shared with tv_nfo_writer.py.
 """
 
 import posixpath
@@ -49,6 +52,7 @@ import xml.etree.ElementTree as ET
 
 import xbmcvfs
 
+from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
 from lib.movie_art_sync import find_movie_location
 from lib import nfo_common
@@ -80,60 +84,22 @@ _LOCAL_ART_SUFFIXES = (
 )
 
 
-def _build_movie_nfo(details, streamdetails=None, local_art=None):
-    root = ET.Element('movie')
+def sync_movie_nfo(media_item_id, title, year, location=None, streamdetails=None):
+    """Writes a fresh Kodi-native NFO for this movie, overwriting whatever was there before --
+    see module docstring for why this deliberately doesn't try to detect/special-case a prior
+    NFO's own authorship. Preserving a prior NFO's *data* is handled one layer up: see
+    lib/legacy_nfo.py and lib/nfo_rebuild.py's delete step, plus scraper.py's get_details(),
+    which merges any harvested data into Chronicle's own contribution before ever calling this.
 
-    nfo_common.add_text(root, 'title', details.get('title'))
-    nfo_common.add_text(root, 'originaltitle', details.get('title'))
-    nfo_common.add_text(root, 'year', details.get('year'))
-    nfo_common.add_text(root, 'plot', details.get('overview'))
-    nfo_common.add_text(root, 'tagline', details.get('tagline'))
-    if details.get('runtimeMinutes'):
-        nfo_common.add_text(root, 'runtime', details['runtimeMinutes'])
-    nfo_common.add_text(root, 'mpaa', details.get('mpaa'))
-    nfo_common.add_text(root, 'premiered', details.get('premiered'))
-    nfo_common.add_text(root, 'country', details.get('country'))
-    nfo_common.add_text(root, 'studio', details.get('studio'))
+    The document itself is fetched pre-built from Chronicle (GET .../movies/sidecar --see
+    ChronicleClient.fetch_movie_sidecar and docs/plans/2026-09-02-kodi-nfo-plugin-design.md)
+    rather than assembled here -- this function's own job is only to splice in the two things
+    that plugin structurally cannot know (Kodi's own streamdetails probe, and local art files
+    sitting on disk) and write the result to the right path.
 
-    for genre in details.get('genres') or []:
-        nfo_common.add_text(root, 'genre', genre)
-    for tag in details.get('tags') or []:
-        nfo_common.add_text(root, 'tag', tag)
-
-    collection = details.get('collection') or {}
-    if collection.get('name'):
-        set_el = ET.SubElement(root, 'set')
-        nfo_common.add_text(set_el, 'name', collection['name'])
-        nfo_common.add_text(set_el, 'overview', collection.get('overview'))
-
-    nfo_common.add_directors_and_writers(root, details.get('crew'))
-    nfo_common.add_actors(root, details.get('cast'))
-    nfo_common.add_uniqueids(root, details.get('externalIds'))
-    nfo_common.add_ratings(root, details.get('ratings'))
-    nfo_common.build_art_block(root, details.get('artwork'), local_art, _ART_TAGS)
-
-    if details.get('trailerUrl'):
-        nfo_common.add_text(root, 'trailer', details['trailerUrl'])
-
-    nfo_common.add_streamdetails(root, streamdetails)
-
-    return root
-
-
-def sync_movie_nfo(title, year, details, location=None, streamdetails=None):
-    """Writes a fresh Kodi-native NFO for this movie from Chronicle's
-    `details` dict (the same one ScraperController's /movies/details
-    returns), overwriting whatever was there before -- see module docstring
-    for why this deliberately doesn't try to detect/special-case a prior
-    NFO's own authorship. Preserving a prior NFO's *data* is handled one
-    layer up: see lib/legacy_nfo.py and lib/nfo_rebuild.py's delete step,
-    plus scraper.py's get_details(), which merges any harvested data into
-    `details` before ever calling this.
-
-    location, if given, is a pre-resolved (folder, video_basename) tuple --
-    pass this when the caller already looked the movie up for another reason
-    (e.g. also syncing local art) so this doesn't repeat the same
-    VideoLibrary/source-browsing lookup a second time.
+    location, if given, is a pre-resolved (folder, video_basename) tuple -- pass this when the
+    caller already looked the movie up for another reason (e.g. also syncing local art) so
+    this doesn't repeat the same VideoLibrary/source-browsing lookup a second time.
 
     streamdetails, if given, is Kodi's own per-file technical info (see
     lib/movie_art_sync.py's get_streamdetails()) -- written into a
@@ -148,6 +114,20 @@ def sync_movie_nfo(title, year, details, location=None, streamdetails=None):
     filename = (video_basename or 'movie') + '.nfo'
     dest = folder + filename
 
+    xml_bytes_in = ChronicleClient().fetch_movie_sidecar(media_item_id)
+    if not xml_bytes_in:
+        log.warning('sync_movie_nfo: Chronicle returned no sidecar for media_item_id={0} -- '
+                    'NFO not written this pass'.format(media_item_id))
+        return
+    try:
+        root = ET.fromstring(xml_bytes_in)
+    except ET.ParseError as exc:
+        log.warning('sync_movie_nfo: sidecar from Chronicle for media_item_id={0} was not '
+                    'parseable XML: {1}'.format(media_item_id, exc))
+        return
+
+    nfo_common.add_streamdetails(root, streamdetails)
+
     # A movie's local art may be named after either the real video file's
     # own basename or the containing folder's name -- movie_art_sync.py's
     # own sync_movie_art() writes using the folder name, while other tools
@@ -156,8 +136,8 @@ def sync_movie_nfo(title, year, details, location=None, streamdetails=None):
     folder_name = posixpath.basename(folder.rstrip('/'))
     prefixes = [p for p in (video_basename, folder_name) if p]
     local_art = nfo_common.list_local_art_prefixed(folder, prefixes, _LOCAL_ART_SUFFIXES)
+    nfo_common.splice_local_art_fallback(root, local_art, _ART_TAGS)
 
-    root = _build_movie_nfo(details, streamdetails=streamdetails, local_art=local_art)
     xml_bytes = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + ET.tostring(root, encoding='utf-8')
 
     try:

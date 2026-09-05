@@ -328,7 +328,7 @@ def get_details(media_item_id, handle):
         streamdetails = None
         if folder and full_filename and ADDON.getSettingBool('write_streamdetails'):
             streamdetails = get_streamdetails(folder + full_filename)
-        sync_movie_nfo(details.get('title'), details.get('year'), details, location=location,
+        sync_movie_nfo(media_item_id, details.get('title'), details.get('year'), location=location,
                         streamdetails=streamdetails)
 
     if details.get('cast'):

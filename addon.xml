@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.8.0"
+       version="3.9.0"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,16 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.8.0 - Per-user request (2026-09-05): a movie completed on one Shield stayed
+    <news>v3.9.0 - "Recreate local NFO" now fetches the NFO's own document pre-built from
+Chronicle's server (a new companion plugin, Chronicle.Plugin.Kodi.NFO) instead of building
+the XML on this device in Python -- same document, same fields, just assembled on the more
+capable machine. This addon now only splices in the two things Chronicle's server
+structurally cannot know: Kodi's own streamdetails probe and local art files already sitting
+on disk. No behaviour change for ordinary library scans (NFO writing was, and remains,
+rebuild-pass-only) -- this only affects how the "Recreate local NFO" action itself builds
+each document.
+
+v3.8.0 - Per-user request (2026-09-05): a movie completed on one Shield stayed
 permanently unwatched on another, with no error -- nothing was actually broken, the
 existing resume-position reconciliation was simply never able to help here. Chronicle
 clears its own resume-percent/timestamp the moment an item is marked watched (nothing left

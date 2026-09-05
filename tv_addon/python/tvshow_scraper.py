@@ -202,7 +202,7 @@ def get_details(show_id, handle):
     # NFO writing only ever happens as part of an explicit rebuild pass -- see
     # lib/rebuild_state.py and python/scraper.py's own identical gate.
     if ADDON.getSettingBool('write_nfo') and rebuild_state.is_active():
-        sync_show_nfo(details.get('title'), details.get('year'), details, location=location)
+        sync_show_nfo(show_id, details.get('title'), details.get('year'), location=location)
 
     # Kodi echoes this back verbatim as the "url" param to getepisodelist.
     vtag.setEpisodeGuide(build_lookup_string(show_id))
@@ -409,7 +409,7 @@ def get_episode_details(encoded_ids, handle):
     # NFO writing only ever happens as part of an explicit rebuild pass -- see
     # lib/rebuild_state.py and python/scraper.py's own identical gate.
     if ADDON.getSettingBool('write_nfo') and rebuild_state.is_active():
-        sync_episode_nfo(details, folder, video_basename, streamdetails=streamdetails)
+        sync_episode_nfo(episode_id, details, folder, video_basename, streamdetails=streamdetails)
 
     xbmcplugin.setResolvedUrl(handle=handle, succeeded=True, listitem=listitem)
     log.info('get_episode_details: episode_id={0} S{1}E{2} title={3!r} -- setResolvedUrl sent to Kodi'.format(
