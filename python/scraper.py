@@ -290,6 +290,22 @@ def get_details(media_item_id, handle):
         ChronicleClient().push_resume(
             media_item_id, value, progress_sync.kodi_lastplayed_to_iso(kodi_state.get('lastplayed')))
 
+    # Fully-watched reconciliation -- separate from resume above on purpose. Chronicle clears
+    # resumePositionPercent/resumeUpdatedAt to null the moment an item is marked watched
+    # (nothing left to "resume"), so a completed item gives resolve_progress_direction nothing
+    # to compare and it correctly no-ops. isWatched/lastWatchedAt are never cleared, so this
+    # is the only path that can ever sync a finished watch onto a Kodi instance that's never
+    # played the item. Confirmed live (2026-09-05): a movie completed on one Shield stayed
+    # permanently unwatched on another with no error, since nothing was actually wrong --
+    # nothing was trying to reconcile watched status at all.
+    watched_direction, watched_value = progress_sync.resolve_watched_direction(
+        details.get('isWatched'), details.get('lastWatchedAt'), kodi_state)
+    if watched_direction == 'push':
+        progress_sync.apply_watched_push(vtag, watched_value)
+    elif watched_direction == 'pull':
+        ChronicleClient().push_watched(
+            media_item_id, progress_sync.kodi_lastplayed_to_iso(watched_value))
+
     sync_movie_art(details.get('title'), details.get('year'), details.get('artwork'), location=location)
 
     # NFO writing only ever happens as part of an explicit rebuild pass

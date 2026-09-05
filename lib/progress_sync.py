@@ -121,6 +121,53 @@ def resolve_progress_direction(chronicle_pct, chronicle_ts, kodi_item):
     return 'push', chronicle_pct
 
 
+def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item):
+    """Sibling of resolve_progress_direction, for FULLY WATCHED status rather than partial
+    resume position -- per-user request (2026-09-05): a movie completed on one Shield stayed
+    permanently unwatched on another. resolve_progress_direction alone can never fix this:
+    Chronicle clears ResumePositionPercent/ResumeUpdatedAt to null the moment an item is
+    marked watched (nothing left to "resume"), so a completed item carries no signal for that
+    function to compare -- it correctly returns (None, None) and nothing happens. This
+    function compares Chronicle's own IsWatched/LastWatchedAt (which are NEVER cleared, see
+    ScraperMovieDetailsDto's own doc) against Kodi's local playcount/lastplayed instead, using
+    the identical "whichever side is more recent wins, one-sided data always wins outright"
+    logic as resolve_progress_direction.
+
+    Returns ('push', chronicle_watched_at) to mark Kodi as watched from Chronicle's side,
+    ('pull', kodi_lastplayed) to report Kodi's own watched state into Chronicle instead, or
+    (None, None) when neither side has anything to reconcile.
+    """
+    if kodi_item is None:
+        return ('push', chronicle_watched_at) if chronicle_watched else (None, None)
+
+    kodi_lastplayed = kodi_item.get('lastplayed')
+    kodi_playcount  = kodi_item.get('playcount') or 0
+
+    has_kodi = kodi_playcount > 0 and bool(kodi_lastplayed)
+    has_chronicle = bool(chronicle_watched)
+
+    if not has_kodi and not has_chronicle:
+        return None, None
+    if has_kodi and not has_chronicle:
+        return 'pull', kodi_lastplayed
+    if has_chronicle and not has_kodi:
+        return 'push', chronicle_watched_at
+
+    if _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_watched_at):
+        return 'pull', kodi_lastplayed
+    return 'push', chronicle_watched_at
+
+
+def apply_watched_push(vtag, watched_at_iso):
+    """Sets Kodi's playcount/lastplayed via InfoTagVideo -- part of the same getdetails
+    response Kodi is already consuming this scrape, no extra JSON-RPC call needed. Mirrors
+    apply_resume_push's own no-op guards: nothing to do without a real timestamp."""
+    if not watched_at_iso:
+        return
+    vtag.setPlaycount(1)
+    vtag.setLastPlayed(watched_at_iso.replace('T', ' ')[:19])
+
+
 def apply_resume_push(vtag, resume_pct, runtime_minutes):
     """Sets Kodi's resume point via InfoTagVideo.setResumePoint() -- part of the
     SAME getdetails/getepisodedetails response Kodi is already consuming this

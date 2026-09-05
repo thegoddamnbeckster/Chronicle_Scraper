@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.7.0"
+       version="3.8.0"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,17 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.7.0 - Per-user request (2026-09-04): the movie-sets folder popup ("Movie
+    <news>v3.8.0 - Per-user request (2026-09-05): a movie completed on one Shield stayed
+permanently unwatched on another, with no error -- nothing was actually broken, the
+existing resume-position reconciliation was simply never able to help here. Chronicle
+clears its own resume-percent/timestamp the moment an item is marked watched (nothing left
+to "resume"), so a fully-completed item carried no signal at all for the scraper to compare
+against another Kodi instance's own state. Watched status is now reconciled the same way
+resume position already was, but from its own signal (Chronicle's watched flag and
+completion time, which are never cleared) -- whichever side is more recent pushes its
+playcount/lastplayed to the other, in either direction.
+
+v3.7.0 - Per-user request (2026-09-04): the movie-sets folder popup ("Movie
 collections folder not reachable: smb://...") fired on the very first failed attempt to
 create/write that folder, with no retry -- a momentary SMB/NAS hiccup (share still waking
 up, a brief network blip) looked identical to the folder genuinely being gone. Both the

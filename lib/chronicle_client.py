@@ -284,6 +284,44 @@ class ChronicleClient:
             log.warning('contribute_metadata({0}, {1!r}): unexpected error: {2}'.format(
                         media_item_id, source, exc))
 
+    def push_watched(self, media_item_id: int, timestamp_iso):
+        """POST /api/v1/scrobble -- imports Kodi's own local watched status into Chronicle
+        when it's newer than what Chronicle already has (see lib/progress_sync.py's
+        resolve_watched_direction). Sibling of push_resume, same reasoning: reuses the
+        scrobble endpoint's own existing "most recent wins" guard server-side rather than
+        duplicating it here. Best-effort: failures are logged and swallowed."""
+        if not self._base_url or not self._api_key:
+            return
+        url = '{0}/api/v1/scrobble'.format(self._base_url)
+        payload = {
+            'mediaItemId':     media_item_id,
+            'progressPercent': 100,
+            'markedAsWatched': True,
+            'deviceName':      'Chronicle Scraper (reconciled from local Kodi playback)',
+        }
+        if timestamp_iso:
+            payload['timestamp'] = timestamp_iso
+        data = json.dumps(payload).encode('utf-8')
+        req = self._build_request(url, data=data, method='POST')
+
+        def _do():
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status
+
+        try:
+            status = call_with_timeout(_do, 10)
+            if status == 200:
+                log.info('push_watched({0}): recorded'.format(media_item_id))
+            else:
+                log.warning('push_watched({0}): unexpected HTTP {1}'.format(media_item_id, status))
+        except urllib.error.HTTPError as exc:
+            log.warning('push_watched({0}): Chronicle returned HTTP {1} ({2})'.format(
+                        media_item_id, exc.code, exc.reason))
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            log.warning('push_watched({0}): Chronicle not reachable ({1})'.format(media_item_id, exc))
+        except Exception as exc:
+            log.warning('push_watched({0}): unexpected error: {1}'.format(media_item_id, exc))
+
     def push_resume(self, media_item_id: int, progress_percent: float, timestamp_iso):
         """POST /api/v1/scrobble -- imports Kodi's own local resume position into
         Chronicle when it's newer than what Chronicle already has (see
