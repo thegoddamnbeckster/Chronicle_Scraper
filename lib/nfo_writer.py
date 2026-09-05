@@ -107,7 +107,7 @@ def sync_movie_nfo(media_item_id, title, year, location=None, streamdetails=None
     if location:
         folder, video_basename = location
     else:
-        folder, video_basename, _full_filename, _via_fallback = find_movie_location(title, year)
+        folder, video_basename, _full_filename, _via_fallback, _movie_id = find_movie_location(title, year)
     if not folder:
         return
 

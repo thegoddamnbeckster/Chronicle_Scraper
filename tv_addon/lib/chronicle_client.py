@@ -245,6 +245,40 @@ class ChronicleClient:
             log.warning('report_resolved_file({0}, {1!r}): unexpected error: {2}'.format(
                         media_item_id, filename, exc))
 
+    def report_kodi_id(self, media_item_id: int, kind: str, kodi_id: int):
+        """POST /api/v1/scraper/report-kodi-id -- tells Chronicle this device's own internal
+        VideoLibrary id (tvshowid/episodeid) for a MediaItem, so a future NFO update can be
+        pushed straight to this device (see Chronicle's own NfoPushService/KodiRpcClient)
+        instead of waiting for a manual/scheduled rebuild pass or this device's own next scan.
+        A no-op server-side (not an error) when this device hasn't registered itself yet, e.g.
+        remote control is off in Kodi's own Settings -- see lib/device_registration.py.
+        Best-effort: failures are logged and swallowed, same as
+        report_resolved_file()/contribute_metadata()."""
+        if not self._base_url or not self._api_key:
+            return
+        url = '{0}/api/v1/scraper/report-kodi-id'.format(self._base_url)
+        data = json.dumps({'mediaItemId': media_item_id, 'kind': kind, 'kodiId': kodi_id}).encode('utf-8')
+        req = self._build_request(url, data=data, method='POST')
+
+        def _do():
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status
+
+        try:
+            status = call_with_timeout(_do, 10)
+            if status != 200:
+                log.warning('report_kodi_id({0}, {1!r}, {2}): unexpected HTTP {3}'.format(
+                            media_item_id, kind, kodi_id, status))
+        except urllib.error.HTTPError as exc:
+            log.warning('report_kodi_id({0}, {1!r}, {2}): Chronicle returned HTTP {3} ({4})'.format(
+                        media_item_id, kind, kodi_id, exc.code, exc.reason))
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            log.warning('report_kodi_id({0}, {1!r}, {2}): Chronicle not reachable ({3})'.format(
+                        media_item_id, kind, kodi_id, exc))
+        except Exception as exc:
+            log.warning('report_kodi_id({0}, {1!r}, {2}): unexpected error: {3}'.format(
+                        media_item_id, kind, kodi_id, exc))
+
     def contribute_metadata(self, media_item_id: int, source: str, metadata: dict):
         """POST /api/v1/media/{id}/metadata/{source} -- contributes fields
         harvested from a local source (e.g. a pre-existing NFO another tool

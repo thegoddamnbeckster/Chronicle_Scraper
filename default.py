@@ -9,6 +9,7 @@ connecting the addon to a Chronicle account, same UX as Chronicle_Scrobbler.
 """
 
 import sys
+import threading
 import time
 import traceback
 
@@ -18,6 +19,7 @@ import xbmcaddon
 from lib.logger import Logger
 from lib.chronicle_client import ChronicleClient, find_shared_chronicle_url
 from lib.device_auth import DeviceAuthManager
+from lib import device_registration
 from lib import nfo_rebuild
 from lib import settings_mirror
 
@@ -242,6 +244,12 @@ def _connect_to_chronicle():
             'Connect failed unexpectedly -- see kodi.log for details.',
         )
     log.info('_connect_to_chronicle: DeviceAuthManager().run() returned {0}'.format(connected))
+    if connected:
+        # Best-effort, on a background thread -- registration itself makes a couple of
+        # local JSON-RPC calls plus one Chronicle POST, nothing this UI flow should block
+        # returning on. See lib/device_registration.py's own doc.
+        threading.Thread(target=device_registration.register, name='chronicle-device-register',
+                          daemon=True).start()
     if not connected:
         # A successful run() already wrote auth_status="Connected" itself, through
         # its OWN module-level Addon() instance. Re-deriving it here immediately

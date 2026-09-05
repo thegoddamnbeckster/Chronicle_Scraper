@@ -142,6 +142,13 @@ def get_details(show_id, handle):
         # runs.
         folder, tvshowid = find_show_location(details.get('title'), details.get('year'))
         location = (folder, tvshowid)
+        if tvshowid is not None:
+            # Lets Chronicle push a future NFO update straight to this device (see
+            # lib/chronicle_client.py's report_kodi_id() and Chronicle's own NfoPushService).
+            # Only reported when a rebuild pass already resolved tvshowid anyway (same gate
+            # as everything else in this block) -- an ordinary scan doesn't otherwise pay for
+            # this VideoLibrary lookup at the show level, unlike the episode level below.
+            ChronicleClient().report_kodi_id(show_id, 'tvshow', tvshowid)
 
         # If nfo_rebuild.py's rebuild action ran against this show, whatever
         # its previous tvshow.nfo contained (e.g. from tinyMediaManager) was
@@ -282,7 +289,14 @@ def get_episode_details(encoded_ids, handle):
             # both, but streamdetails is only ever kept (and written
             # into the NFO) when write_streamdetails is on. See
             # python/scraper.py's own comment for why that's opt-in.
-            file_path, episode_streamdetails = get_episode(tvshowid, details.get('season'), details.get('episode'))
+            file_path, episode_streamdetails, kodi_episode_id = get_episode(
+                tvshowid, details.get('season'), details.get('episode'))
+            if kodi_episode_id is not None:
+                # Lets Chronicle push a future NFO update straight to this device (see
+                # lib/chronicle_client.py's report_kodi_id() and Chronicle's own
+                # NfoPushService). Same rebuild-pass gate as this whole lookup -- an
+                # ordinary scan doesn't otherwise pay for this VideoLibrary call.
+                ChronicleClient().report_kodi_id(episode_id, 'episode', kodi_episode_id)
             # This is purely a rebuild-pass NFO/legacy-harvest lookup --
             # it does NOT gate whether the episode itself loads into
             # Kodi's library (setResolvedUrl() below runs regardless of

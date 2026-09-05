@@ -110,7 +110,7 @@ def sync_movie_art(title, year, artwork, location=None):
     if location:
         folder, _video_basename = location
     else:
-        folder, _video_basename, _full_filename, _via_fallback = find_movie_location(title, year)
+        folder, _video_basename, _full_filename, _via_fallback, _movie_id = find_movie_location(title, year)
     if not folder:
         return
 
@@ -135,7 +135,7 @@ def sync_movie_art(title, year, artwork, location=None):
 
 
 def find_movie_location(title, year, known_filename=None):
-    """Returns (folder, video_basename, full_filename, discovered_via_fallback).
+    """Returns (folder, video_basename, full_filename, discovered_via_fallback, kodi_movie_id).
     folder is the movie's own folder path (trailing slash); video_basename is
     the real video file's own name with its extension stripped -- this is
     what Kodi actually expects a local NFO to be named to take highest
@@ -149,7 +149,13 @@ def find_movie_location(title, year, known_filename=None):
     discovered_via_fallback is True when title/year matching had to be used
     (see below) -- callers can report full_filename back to Chronicle via
     POST .../resolved-file so it becomes a known fact for next time instead
-    of a re-derived guess on every future scrape.
+    of a re-derived guess on every future scrape. kodi_movie_id is Kodi's own
+    internal movieid when the VideoLibrary lookup found one (None from the
+    source-browsing fallback, since a movie only just discovered on disk
+    hasn't been committed to VideoLibrary yet and has no id at all) -- see
+    lib/chronicle_client.py's report_kodi_id(), which callers use to let
+    Chronicle push a future NFO update straight to this device via
+    VideoLibrary.RefreshMovie.
 
     known_filename, when given, is the real file's own basename exactly as
     Chronicle already recorded it -- a verified fact, not a re-derived title/
@@ -169,27 +175,27 @@ def find_movie_location(title, year, known_filename=None):
     video sources directly. See module docstring for why both of those exist
     and why the source-browsing fallback is the one that's actually reliable."""
     if known_filename:
-        file_path = _lookup_by_known_filename(known_filename)
+        file_path, movie_id = _lookup_by_known_filename(known_filename)
         if file_path:
             folder = posixpath.dirname(file_path) + '/'
             basename = posixpath.basename(file_path)
-            return folder, strip_video_ext(basename), basename, False
+            return folder, strip_video_ext(basename), basename, False, movie_id
 
-    file_path = _lookup_via_video_library(title, year)
+    file_path, movie_id = _lookup_via_video_library(title, year)
     if file_path:
         folder = posixpath.dirname(file_path) + '/'
         basename = posixpath.basename(file_path)
-        return folder, strip_video_ext(basename), basename, (known_filename is None)
+        return folder, strip_video_ext(basename), basename, (known_filename is None), movie_id
 
     result = _search_sources_for_movie(title, year)
     if result:
         folder, video_name = result
         stripped = strip_video_ext(video_name) if video_name else None
-        return folder, stripped, video_name, True
+        return folder, stripped, video_name, True, None
 
     log.info('No folder found for {0!r} ({1}) via VideoLibrary or source browsing -- '
              'will not sync local art/NFO this pass'.format(title, year))
-    return None, None, None, False
+    return None, None, None, False, None
 
 
 def _lookup_by_known_filename(filename):
@@ -198,9 +204,10 @@ def _lookup_by_known_filename(filename):
     scrape already discovered and reported back), not a re-derived title+
     year guess. Cheap: one VideoLibrary.GetMovies call already returns every
     movie's real file path; this just looks for an exact basename match.
-    Returns None if the file isn't in Kodi's library yet (e.g. this is the
-    very first scrape for a brand-new addition) -- callers fall back to the
-    title/year-based chain in that case, same as having no known filename."""
+    Returns (None, None) if the file isn't in Kodi's library yet (e.g. this is
+    the very first scrape for a brand-new addition) -- callers fall back to
+    the title/year-based chain in that case, same as having no known
+    filename. Otherwise returns (file_path, movieid)."""
     request = {
         'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetMovies',
         'params': {'properties': ['file']},
@@ -209,14 +216,14 @@ def _lookup_by_known_filename(filename):
         response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
     except Exception as exc:
         log.warning("Couldn't query VideoLibrary for known filename {0!r}: {1}".format(filename, exc))
-        return None
+        return None, None
     if 'error' in response:
-        return None
+        return None, None
     for movie in response.get('result', {}).get('movies') or []:
         file_path = movie.get('file') or ''
         if posixpath.basename(file_path) == filename:
-            return file_path
-    return None
+            return file_path, movie.get('movieid')
+    return None, None
 
 
 def get_streamdetails(file_path):
@@ -272,16 +279,16 @@ def strip_video_ext(filename):
 
 def _lookup_via_video_library(title, year):
     for attempt in range(1, _LOOKUP_RETRIES + 1):
-        file_path = _lookup_movie_file(title, year)
+        file_path, movie_id = _lookup_movie_file(title, year)
         if file_path:
-            return file_path
+            return file_path, movie_id
         if attempt < _LOOKUP_RETRIES:
             time.sleep(_LOOKUP_RETRY_DELAY_SECONDS)
-    return None
+    return None, None
 
 
 def _lookup_movie_file(title, year):
-    """Single VideoLibrary attempt -- returns the file path, or None.
+    """Single VideoLibrary attempt -- returns (file_path, movieid), or (None, None).
 
     Confirmed directly (2026-07-30) that this fast path is its own separate
     exposure to the exact same class of bug the slow path's weak fallback
@@ -307,15 +314,15 @@ def _lookup_movie_file(title, year):
         response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
     except Exception as exc:
         log.warning("Couldn't query VideoLibrary for {0!r}: {1}".format(title, exc))
-        return None
+        return None, None
 
     if 'error' in response:
         log.warning('VideoLibrary.GetMovies rejected title={0!r}: {1}'.format(title, response['error']))
-        return None
+        return None, None
 
     movies = response.get('result', {}).get('movies') or []
     if not movies:
-        return None
+        return None, None
 
     candidate = None
     if year:
@@ -328,7 +335,7 @@ def _lookup_movie_file(title, year):
 
     file_path = candidate.get('file')
     if not file_path:
-        return None
+        return None, None
 
     folder_name = posixpath.basename(posixpath.dirname(file_path).rstrip('/'))
     target = normalize(title)
@@ -338,9 +345,9 @@ def _lookup_movie_file(title, year):
                     'match the searched title, Kodi\'s own stored title for this entry is '
                     'likely wrong; refusing to trust it, falling back to source browsing '
                     'instead'.format(title, year, file_path))
-        return None
+        return None, None
 
-    return file_path
+    return file_path, candidate.get('movieid')
 
 
 def normalize(text):

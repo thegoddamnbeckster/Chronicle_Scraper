@@ -42,6 +42,7 @@ import xbmcgui
 
 from lib.logger import Logger
 from lib import activity_tracker
+from lib import device_registration
 from lib import nfo_rebuild
 
 ADDON = xbmcaddon.Addon()
@@ -54,6 +55,13 @@ log   = Logger('service')
 # on and off between individual items.
 _ACTIVITY_IDLE_TIMEOUT_SECONDS = 30
 _POLL_INTERVAL_SECONDS = 3
+# How often to re-register this device's own remote-control address with Chronicle (see
+# lib/device_registration.py) -- catches a DHCP-renewed LAN IP or a webserver setting toggled
+# since the last registration, on a long-running Kodi instance that's never been reconnected
+# through default.py's own one-time post-pairing registration. Deliberately not more frequent
+# than this: it's a handful of local JSON-RPC calls plus one Chronicle POST, cheap but pointless
+# to repeat more often than a LAN IP realistically changes.
+_DEVICE_REREGISTER_INTERVAL_SECONDS = 6 * 60 * 60
 
 
 class ChronicleMonitor(xbmc.Monitor):
@@ -121,10 +129,23 @@ def run():
     bg = None
     last_shown_count = None
 
+    # Registered once at service startup (covers a fresh Kodi boot picking up a changed LAN
+    # IP or webserver setting) and every _DEVICE_REREGISTER_INTERVAL_SECONDS thereafter -- see
+    # lib/device_registration.py. Best-effort and silent when there's nothing to register
+    # (remote control off, or not yet connected to Chronicle at all).
+    threading.Thread(target=device_registration.register, name='chronicle-device-register',
+                      daemon=True).start()
+    last_device_register = time.time()
+
     # Standard Kodi service idle loop: sleep in short increments so
     # abortRequested() (set on Kodi shutdown) is noticed promptly instead of
     # blocking in one long sleep.
     while not monitor.abortRequested():
+        if time.time() - last_device_register >= _DEVICE_REREGISTER_INTERVAL_SECONDS:
+            threading.Thread(target=device_registration.register, name='chronicle-device-register',
+                              daemon=True).start()
+            last_device_register = time.time()
+
         activity = activity_tracker.read_activity()
         is_active = activity is not None and \
             (time.time() - activity.get('timestamp', 0)) < _ACTIVITY_IDLE_TIMEOUT_SECONDS

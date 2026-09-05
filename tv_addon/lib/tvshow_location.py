@@ -202,9 +202,11 @@ def get_episode(tvshowid, season, episode):
     (and does nothing at all for the in-flight-refresh race above, which no
     amount of waiting resolves). A missed NFO outside a rebuild pass is
     caught on the episode's next ordinary scan, or on the next explicit
-    rebuild."""
+    rebuild. Also returns Kodi's own internal episodeid (None if not found) -- see
+    lib/chronicle_client.py's report_kodi_id(), which callers use to let Chronicle push a
+    future NFO update straight to this device via VideoLibrary.RefreshEpisode."""
     if tvshowid is None:
-        return None, None
+        return None, None, None
 
     request = {
         'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetEpisodes',
@@ -217,10 +219,10 @@ def get_episode(tvshowid, season, episode):
         response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
     except Exception as exc:
         log.warning("Couldn't query VideoLibrary.GetEpisodes for tvshowid={0}: {1}".format(tvshowid, exc))
-        return None, None
+        return None, None, None
     if 'error' in response:
         log.warning('VideoLibrary.GetEpisodes rejected tvshowid={0}: {1}'.format(tvshowid, response['error']))
-        return None, None
+        return None, None, None
 
     for ep in response.get('result', {}).get('episodes') or []:
         if ep.get('season') != season or ep.get('episode') != episode:
@@ -228,6 +230,6 @@ def get_episode(tvshowid, season, episode):
         file_path = ep.get('file')
         raw = ep.get('streamdetails') or {}
         streamdetails = raw if (raw.get('video') or raw.get('audio') or raw.get('subtitle')) else None
-        return file_path, streamdetails
+        return file_path, streamdetails, ep.get('episodeid')
 
-    return None, None
+    return None, None, None

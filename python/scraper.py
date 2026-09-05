@@ -107,7 +107,7 @@ def search_for_movie(title, year, handle):
     # early, so Chronicle can check "does this exact file already belong to
     # some other item" before ever considering creating a new one.
     try:
-        _, _, full_filename, _ = find_movie_location(title, year)
+        _, _, full_filename, _, _ = find_movie_location(title, year)
     except Exception as exc:
         log.warning('find: filename pre-check failed for {0!r} ({1}) -- continuing by title only'.format(
                     title, exc))
@@ -218,11 +218,17 @@ def get_details(media_item_id, handle):
     # find_movie_location()'s own docstring. When it had to fall back to
     # title/year matching anyway, report the discovered filename back so the
     # NEXT scrape gets to use the fast path too.
-    folder, video_basename, full_filename, discovered_via_fallback = find_movie_location(
+    folder, video_basename, full_filename, discovered_via_fallback, kodi_movie_id = find_movie_location(
         details.get('title'), details.get('year'), known_filename=details.get('knownFileName'))
     location = (folder, video_basename)
     if discovered_via_fallback and full_filename:
         ChronicleClient().report_resolved_file(media_item_id, full_filename)
+    if kodi_movie_id is not None:
+        # Lets Chronicle push a future NFO update straight to this device (see
+        # lib/chronicle_client.py's report_kodi_id() and Chronicle's own NfoPushService) instead
+        # of waiting for a manual/scheduled rebuild pass or this device's own next scan.
+        # Fired on every ordinary scan, not just during a rebuild, so the mapping stays fresh.
+        ChronicleClient().report_kodi_id(media_item_id, 'movie', kodi_movie_id)
 
     # If nfo_rebuild.py's "delete local NFO, force a re-scrape" action ran
     # against this movie, whatever its previous local NFO contained (e.g.
