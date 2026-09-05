@@ -384,6 +384,19 @@ def get_episode_details(encoded_ids, handle):
         ChronicleClient().push_resume(
             episode_id, value, progress_sync.kodi_lastplayed_to_iso(kodi_state.get('lastplayed')))
 
+    # Fully-watched reconciliation -- separate from resume above on purpose, see
+    # progress_sync.resolve_watched_direction's own doc (sibling of the movie addon's
+    # identical 2026-09-05 fix: an episode completed on one Shield stayed permanently
+    # unwatched on another, since resumePositionPercent/resumeUpdatedAt are cleared to null
+    # on completion and gave resolve_progress_direction nothing to compare).
+    watched_direction, watched_value = progress_sync.resolve_watched_direction(
+        details.get('isWatched'), details.get('lastWatchedAt'), kodi_state)
+    if watched_direction == 'push':
+        progress_sync.apply_watched_push(vtag, watched_value)
+    elif watched_direction == 'pull':
+        ChronicleClient().push_watched(
+            episode_id, progress_sync.kodi_lastplayed_to_iso(watched_value))
+
     if details.get('cast'):
         vtag.setCast([
             xbmc.Actor(name=actor.get('name') or '', role=actor.get('role') or '', order=i)
