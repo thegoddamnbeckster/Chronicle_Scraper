@@ -53,6 +53,7 @@ from lib.logger import Logger
 from lib.chronicle_client import ChronicleClient, find_shared_chronicle_url
 from lib.device_auth import DeviceAuthManager
 from lib import settings_mirror
+from lib import settings_upgrade
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('default')
@@ -285,4 +286,5 @@ def _change_chronicle_url():
 
 
 if __name__ == '__main__':
+    settings_upgrade.ensure_defaults_migrated()
     show_menu()

@@ -51,6 +51,7 @@ from lib.movie_art_sync import strip_video_ext
 from lib.tv_nfo_writer import sync_show_nfo, sync_episode_nfo
 from lib.tvshow_location import find_show_location, get_episode
 from lib import progress_sync
+from lib import settings_upgrade
 
 log = Logger('tvshow_scraper')
 ADDON = xbmcaddon.Addon()
@@ -468,6 +469,8 @@ def _resolve_lookup_id(params):
 
 
 def run():
+    settings_upgrade.ensure_defaults_migrated()
+
     params = get_params(sys.argv[1:])
 
     action = params.get('action')

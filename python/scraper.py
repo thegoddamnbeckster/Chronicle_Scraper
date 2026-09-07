@@ -60,6 +60,7 @@ from lib.collection_sync import sync_collection_art
 from lib.movie_art_sync import sync_movie_art, find_movie_location, get_streamdetails
 from lib.nfo_writer import sync_movie_nfo
 from lib import progress_sync
+from lib import settings_upgrade
 
 log = Logger('scraper')
 ADDON = xbmcaddon.Addon()
@@ -413,6 +414,8 @@ def _parse_year(raw):
 
 
 def run():
+    settings_upgrade.ensure_defaults_migrated()
+
     params = get_params(sys.argv[1:])
     enddir = True
 

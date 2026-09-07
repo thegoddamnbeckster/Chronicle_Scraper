@@ -10,6 +10,7 @@ device-auth flow as Chronicle_Scrobbler).
 
 import json
 import threading
+import time
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -90,6 +91,34 @@ def call_with_timeout(fn, timeout):
     if 'error' in result:
         raise result['error']
     return result.get('value')
+
+
+# Root-caused 2026-09-06 (TV addon side, same client shape here): a full library rescan fires a
+# burst of concurrent scraper HTTP calls against Chronicle all at once. Movies have
+# movie_art_sync.py's local-folder art as a fallback if a scrape never lands, but that's not true
+# for every caller of _get()/_get_bytes() below (e.g. show/episode detail lookups on the TV
+# addon's identical copy of this file have no such backstop) -- a single transient timeout during
+# that burst can permanently leave an item posterless until something re-triggers a fresh scrape.
+# Retrying a couple of times with a short backoff absorbs exactly that kind of transient
+# contention without masking a genuinely-down Chronicle (which will still fail every retry and
+# return None same as before). Deliberately NOT applied to HTTPError -- a 4xx/5xx is a real
+# response from a reachable server, not the "request never landed" shape this targets, and
+# retrying e.g. a 401 immediately would just be noise.
+_RETRY_BACKOFF_SECONDS = (1, 3)
+
+
+def _call_with_retries(fn, timeout, log_label):
+    attempts = len(_RETRY_BACKOFF_SECONDS) + 1
+    for attempt in range(attempts):
+        try:
+            return call_with_timeout(fn, timeout)
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            if attempt >= attempts - 1:
+                raise
+            delay = _RETRY_BACKOFF_SECONDS[attempt]
+            log.warning('{0}: attempt {1}/{2} failed ({3}) -- retrying in {4}s'.format(
+                        log_label, attempt + 1, attempts, exc, delay))
+            time.sleep(delay)
 
 
 # search_movie/search_show can trigger Chronicle's resolve-or-create path for a
@@ -278,6 +307,61 @@ class ChronicleClient:
         except Exception as exc:
             log.warning('report_kodi_id({0}, {1!r}, {2}): unexpected error: {3}'.format(
                         media_item_id, kind, kodi_id, exc))
+
+    def claim_rebuild_batch(self, batch_size=25):
+        """POST /api/v1/scraper/nfo-rebuild-queue/claim -- claims up to batch_size pending
+        items from Chronicle's cross-device NFO rebuild queue (see NfoRebuildQueueItem's own
+        doc server-side) for THIS device specifically -- Chronicle resolves which device from
+        the API key alone, same as report_kodi_id(). Returns {'items': [...], 'totalPending': N}
+        -- each item dict carries queueItemId/mediaItemId/kind/name/year/showName/showYear/
+        season/episode/knownFileName (movies only -- already a bare basename with extension,
+        no directory to strip; see NfoRebuildQueueClaimDto's own server-side doc) -- what
+        nfo_rebuild.py needs to resolve it in this device's own local VideoLibrary; totalPending
+        is the queue's overall remaining depth AFTER this
+        claim, for a progress bar that reflects the real backlog instead of resetting to "X of
+        {batch_size}" every single batch. Returns {'items': [], 'totalPending': 0} on any
+        failure -- a claim failure just means this pass finds nothing to do right now, not an
+        error worth surfacing further than the log. Logged at info level (not just on failure)
+        since this is the one call that tells you whether the rebuild is actually making
+        progress or has run dry."""
+        empty = {'items': [], 'totalPending': 0}
+        if not self._base_url or not self._api_key:
+            log.warning('claim_rebuild_batch: Chronicle URL or API key not configured -- skipped')
+            return empty
+        result = self._post('nfo-rebuild-queue/claim', {'batchSize': batch_size},
+                             'claim_rebuild_batch({0})'.format(batch_size))
+        if not result:
+            return empty
+        items = result.get('items') or []
+        total_pending = result.get('totalPending') or 0
+        log.info('claim_rebuild_batch({0}): claimed {1} item(s), {2} still pending overall'.format(
+                 batch_size, len(items), total_pending))
+        return {'items': items, 'totalPending': total_pending}
+
+    def complete_rebuild_item(self, queue_item_id: int):
+        """POST /api/v1/scraper/nfo-rebuild-queue/complete -- tells Chronicle this device
+        confirmed the item's NFO, so no other device (of this user's several -- upstairs,
+        downstairs, storage, vision, office) needs to redo it. Best-effort: a failure here just
+        means the item stays claimed until its lease lapses and becomes reclaimable again --
+        not silent data loss, just a wasted retry."""
+        if not self._base_url or not self._api_key:
+            return
+        result = self._post('nfo-rebuild-queue/complete', {'queueItemId': queue_item_id},
+                             'complete_rebuild_item({0})'.format(queue_item_id))
+        log.info('complete_rebuild_item({0}): {1}'.format(
+                 queue_item_id, 'confirmed' if result and result.get('completed') else 'failed'))
+
+    def release_rebuild_item(self, queue_item_id: int):
+        """POST /api/v1/scraper/nfo-rebuild-queue/release -- gives up a claim immediately (this
+        device determined it can't process the item, e.g. it doesn't have this file at all) so
+        another device doesn't have to wait out the full lease before it becomes claimable
+        again. Best-effort, same as complete_rebuild_item()."""
+        if not self._base_url or not self._api_key:
+            return
+        result = self._post('nfo-rebuild-queue/release', {'queueItemId': queue_item_id},
+                             'release_rebuild_item({0})'.format(queue_item_id))
+        log.info('release_rebuild_item({0}): {1}'.format(
+                 queue_item_id, 'released' if result and result.get('released') else 'failed'))
 
     def contribute_metadata(self, media_item_id: int, source: str, metadata: dict):
         """POST /api/v1/media/{id}/metadata/{source} -- contributes fields
@@ -504,7 +588,7 @@ class ChronicleClient:
                 return body.get('data')
 
         try:
-            return call_with_timeout(_do, timeout)
+            return _call_with_retries(_do, timeout, log_label)
         except urllib.error.HTTPError as exc:
             # Chronicle is reachable but returned an error status (e.g. 500 from an
             # unrelated request being canceled server-side, 401 from a stale API
@@ -513,7 +597,41 @@ class ChronicleClient:
             log.error('{0}: Chronicle returned HTTP {1} ({2})'.format(log_label, exc.code, exc.reason))
             return None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            log.error('{0}: Chronicle not reachable at {1} ({2})'.format(log_label, self._base_url, exc))
+            log.error('{0}: Chronicle not reachable at {1} after retrying ({2})'.format(
+                      log_label, self._base_url, exc))
+            return None
+        except Exception as exc:
+            log.error('{0}: unexpected error: {1}'.format(log_label, exc))
+            return None
+
+    def _post(self, path: str, body: dict, log_label: str, timeout: int = 20):
+        """Shared POST-with-JSON-body helper for the {success,data} envelope -- same shape as
+        _get(), for endpoints that take a request body (currently only the rebuild-queue
+        claim/complete/release trio). Retried/logged/swallowed identically to _get(); safe to
+        retry here too since all three of those endpoints are idempotent in effect (a repeated
+        claim just claims more, never double-claims a single row; complete/release repeated on
+        an already-completed/-released row is a no-op)."""
+        if not self._base_url or not self._api_key:
+            log.warning('Chronicle URL or API key not configured — {0} skipped'.format(log_label))
+            return None
+
+        url = '{0}/api/v1/scraper/{1}'.format(self._base_url, path)
+        data = json.dumps(body).encode('utf-8')
+        req = self._build_request(url, data=data, method='POST')
+
+        def _do():
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                parsed = json.loads(resp.read().decode('utf-8'))
+                return parsed.get('data')
+
+        try:
+            return _call_with_retries(_do, timeout, log_label)
+        except urllib.error.HTTPError as exc:
+            log.error('{0}: Chronicle returned HTTP {1} ({2})'.format(log_label, exc.code, exc.reason))
+            return None
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            log.error('{0}: Chronicle not reachable at {1} after retrying ({2})'.format(
+                      log_label, self._base_url, exc))
             return None
         except Exception as exc:
             log.error('{0}: unexpected error: {1}'.format(log_label, exc))
@@ -536,12 +654,13 @@ class ChronicleClient:
                 return resp.read()
 
         try:
-            return call_with_timeout(_do, timeout)
+            return _call_with_retries(_do, timeout, log_label)
         except urllib.error.HTTPError as exc:
             log.error('{0}: Chronicle returned HTTP {1} ({2})'.format(log_label, exc.code, exc.reason))
             return None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            log.error('{0}: Chronicle not reachable at {1} ({2})'.format(log_label, self._base_url, exc))
+            log.error('{0}: Chronicle not reachable at {1} after retrying ({2})'.format(
+                      log_label, self._base_url, exc))
             return None
         except Exception as exc:
             log.error('{0}: unexpected error: {1}'.format(log_label, exc))

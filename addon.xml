@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.10.0"
+       version="3.12.0"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,41 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.10.0 - Per-user request: speed up getting a Chronicle metadata change out to Kodi.
+    <news>v3.12.0 - New: automatic watch-history and rating sync. Previously, rating/resume/
+watched-status changes made directly in Kodi only ever reached Chronicle (and vice versa) as a
+side effect of Kodi re-scraping an item -- which, per v3.11.0's own fix, now only happens for
+genuinely new items or during an explicit rebuild pass. Added a separate, lightweight,
+non-destructive sync (new "Watch History and Ratings" settings category) that reconciles this
+directly via Kodi's own VideoLibrary fields, with no local file writes at all: on by default,
+runs once shortly after this service starts (toggle), and on a recurring interval you can set
+in 30-minute steps (default every 2 hours). A "Sync Watch History and Ratings Now" button runs
+it on demand any time. Caches each item's resolved Chronicle id locally after its first
+successful sync, so repeat passes skip Chronicle's slower resolve-or-create lookup entirely for
+already-known items.
+
+v3.11.1 - Fixed a gap in v3.11.0 below: a settings.xml default="..." only ever applies
+to a value Kodi has never persisted, so simply changing write_nfo/auto_rebuild_on_scan's shipped
+default did nothing for an already-installed copy of this addon (both settings would have stayed
+off forever, no matter how the addon was updated). Added a one-time code migration
+(lib/settings_upgrade.py) that actually turns both on for an existing install the moment any
+part of this addon next runs -- no Kodi restart, and no manual settings change needed.
+
+v3.11.0 - Root-caused why episodes/rating/progress changes were failing to reach Kodi at
+all on some libraries: both "Recreate local NFO file from Chronicle's data" and "Automatically
+rebuild NFOs after every library scan" defaulted OFF, so the one mechanism that gets Kodi to
+re-ask this scraper about an already-scraped item (a rebuild-forced refresh) never ran -- not
+just for NFOs, but for the rating/resume/watched reconciliation that also only happens inside
+that same callback. Both settings now default ON. The automatic rebuild pass also now shows a
+progress bar and start/completion notifications, matching the manual "Rebuild local NFOs"
+action -- previously it ran completely silently, log-only. Added a safety check: if
+auto-rebuild is on but NFO-writing somehow gets turned off, it now refuses (with a warning
+notification) instead of silently deleting local NFOs it will never rewrite. HTTP calls to
+Chronicle now retry twice with a short backoff on a transient network failure, absorbing the
+kind of timeout a full-library rescan's request burst can cause. Chronicle's own rating/watch
+endpoints (web UI and the rating add-on) now push a live refresh to Kodi immediately after a
+rating change or a completed watch, instead of only in the next rebuild pass.
+
+v3.10.0 - Per-user request: speed up getting a Chronicle metadata change out to Kodi.
 Editing an item in Chronicle now writes its NFO straight to disk immediately (server-side,
 via the same sidecar builder v3.9.0 introduced) and pushes a targeted refresh to any Kodi
 instance that has already reported its own internal id for that item -- instead of waiting

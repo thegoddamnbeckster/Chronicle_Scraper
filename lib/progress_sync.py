@@ -1,11 +1,23 @@
 # -*- coding: utf-8 -*-
-"""Reconciles playback progress (resume position) between Kodi's own local library
-state and Chronicle, inline as part of a normal scrape -- no separate background
-sync task. Per-user request (2026-08-30): "I don't want a separate sync task in
-Kodi for ratings. this needs to happen with the scraper automatically as part of
-the scrape process. Kodi may not call the scraper for each video, but you will
-still need to synchronize the playback progress and the ratings for each video
-at some point in the scrape process."
+"""Direction logic for reconciling playback progress (resume position) and fully-watched
+status between Kodi's own local library state and Chronicle -- the shared math/decision
+functions (resolve_progress_direction, resolve_watched_direction, resume_seconds, etc.), used
+by TWO different callers with two different triggers:
+
+  1. Inline as part of an ordinary scrape (get_details()/get_episode_details() in
+     python/scraper.py and tv_addon/python/tvshow_scraper.py) -- the ORIGINAL design, per-user
+     request (2026-08-30): "I don't want a separate sync task in Kodi for ratings. this needs
+     to happen with the scraper automatically as part of the scrape process."
+  2. lib/watch_rating_sync.py's own periodic background pass -- added 2026-09-06 per a
+     follow-up correction, after the original design's assumption stopped holding: once
+     nfo_rebuild.py grew a cross-device rebuild queue that deliberately never re-claims an
+     already-completed item, an item's own scrape (path 1 above) could stop recurring
+     entirely, with nothing left to reconcile rating/resume/watched changes made directly in
+     Kodi. See that module's own docstring for the full history.
+
+Both callers share this module specifically so the direction/threshold logic itself never
+disagrees between "reconciled as a scrape side effect" and "reconciled by the periodic sync" --
+only WHEN each one runs differs, not HOW either decides what to do.
 
 Direction logic ported from Chronicle_Scrobbler's lib/sync_engine.py
 (_resolve_progress_direction et al, the 2026-08-30 bidirectional-reconciliation
@@ -17,9 +29,9 @@ nfo_common.py are already duplicated between this addon and tv_addon.
 Ratings are NOT reconciled bidirectionally: Kodi exposes no "when was this
 rating set" signal (no lastplayed equivalent for userrating), so there's no
 safe way to tell a stale local rating from a fresh one. Chronicle's rating
-always wins and is pushed via InfoTagVideo.setUserRating() directly in
-get_details()/get_episode_details() -- no lookup needed, so it isn't in this
-module at all.
+always wins -- pushed via InfoTagVideo.setUserRating() directly during a scrape, or via
+VideoLibrary.SetMovieDetails/SetEpisodeDetails/SetTVShowDetails from the periodic sync -- no
+lookup needed, so it isn't in this module at all.
 """
 
 import json
@@ -37,7 +49,12 @@ log = Logger('progress_sync')
 # resume bar on something the user already completed.
 _RESUME_SKIP_THRESHOLD_PERCENT = 98
 
-_STATE_PROPERTIES = ['userrating', 'resume', 'playcount', 'lastplayed']
+# Public (not just used internally by lookup_movie_state/lookup_episode_state below) --
+# lib/watch_rating_sync.py's own bulk VideoLibrary.GetMovies/GetEpisodes calls need this exact
+# same field set (plus a few identity fields of their own, e.g. title/file/season/episode) and
+# extend this list rather than redeclaring it, so the two call sites can't quietly drift apart
+# on which fields reconciliation actually depends on.
+STATE_PROPERTIES = ['userrating', 'resume', 'playcount', 'lastplayed']
 
 
 def lookup_movie_state(title, year):
@@ -56,7 +73,7 @@ def lookup_movie_state(title, year):
         'method': 'VideoLibrary.GetMovies',
         'params': {
             'filter':     {'field': 'title', 'operator': 'is', 'value': title},
-            'properties': _STATE_PROPERTIES,
+            'properties': STATE_PROPERTIES,
         },
     }
     try:
@@ -168,18 +185,36 @@ def apply_watched_push(vtag, watched_at_iso):
     vtag.setLastPlayed(watched_at_iso.replace('T', ' ')[:19])
 
 
+def resume_seconds(resume_pct, runtime_minutes, log_label='resume_seconds'):
+    """Converts a resume percentage + runtime into (position_seconds, total_seconds), or None
+    if there's nothing worth setting (no percent, already finished, or no runtime to convert
+    against). Shared by apply_resume_push (sets it via InfoTagVideo, mid-scrape) and
+    lib/watch_rating_sync.py's own periodic sync (sets it via VideoLibrary.SetMovieDetails/
+    SetEpisodeDetails directly, no scrape involved) so the two never disagree on the threshold
+    or the conversion math -- including this warning: a caller that skips it (as a first cut of
+    watch_rating_sync.py once did) silently drops a real, pending resume push with no trace in
+    kodi.log, indistinguishable from "already in sync." log_label lets each caller's own log
+    lines stay identifiable (e.g. "watch_rating_sync: Alien (1979)") without this shared
+    function needing to know anything about its caller beyond a string."""
+    if resume_pct is None or resume_pct <= 0 or resume_pct >= _RESUME_SKIP_THRESHOLD_PERCENT:
+        return None
+    if not runtime_minutes:
+        log.warning('{0}: resume_pct={1} but no runtime available -- cannot compute a resume '
+                    'point in seconds, skipping'.format(log_label, resume_pct))
+        return None
+    total_seconds = runtime_minutes * 60
+    return resume_pct / 100.0 * total_seconds, total_seconds
+
+
 def apply_resume_push(vtag, resume_pct, runtime_minutes):
     """Sets Kodi's resume point via InfoTagVideo.setResumePoint() -- part of the
     SAME getdetails/getepisodedetails response Kodi is already consuming this
     scrape, no extra JSON-RPC call needed."""
-    if resume_pct is None or resume_pct <= 0 or resume_pct >= _RESUME_SKIP_THRESHOLD_PERCENT:
+    result = resume_seconds(resume_pct, runtime_minutes, log_label='apply_resume_push')
+    if result is None:
         return
-    if not runtime_minutes:
-        log.warning('apply_resume_push: no runtime available -- cannot compute a resume '
-                    'point in seconds, skipping')
-        return
-    total_seconds = runtime_minutes * 60
-    vtag.setResumePoint(resume_pct / 100.0 * total_seconds, total_seconds)
+    position, total = result
+    vtag.setResumePoint(position, total)
 
 
 def kodi_lastplayed_to_iso(kodi_lastplayed):

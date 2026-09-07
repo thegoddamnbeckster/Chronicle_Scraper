@@ -29,8 +29,14 @@
     <!-- Local Files -->
     <!-- ============================================================================ -->
     <category label="32090">
-        <setting id="write_nfo" type="bool" label="32091" default="false" help="32092"/>
+        <setting id="write_nfo" type="bool" label="32091" default="true" help="32092"/>
         <setting id="write_streamdetails" type="bool" label="32105" default="false" help="32106" enable="eq(-1,true)"/>
+        <!-- Set automatically by lib/settings_upgrade.py the first time this addon runs after
+             v1.10.0: a settings.xml default="..." only ever applies to a value Kodi has never
+             persisted, so this one-time code migration is what actually gets an
+             already-installed copy onto the new write_nfo default. Not meant to be touched by
+             hand. -->
+        <setting id="migrated_write_nfo_default_v1_10_0" type="bool" visible="false" default="false"/>
     </category>
 
 </settings>

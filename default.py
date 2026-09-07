@@ -22,6 +22,8 @@ from lib.device_auth import DeviceAuthManager
 from lib import device_registration
 from lib import nfo_rebuild
 from lib import settings_mirror
+from lib import settings_upgrade
+from lib import watch_rating_sync
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('default')
@@ -30,21 +32,6 @@ log   = Logger('default')
 # docstring for why write_nfo/write_streamdetails are worth offering to
 # mirror there.
 _SIBLING_ADDON_ID = 'script.chronicle.scraper.tv'
-
-
-def _format_duration(seconds):
-    """Renders a countdown as 'Xh Ym' / 'Ym' / 'less than a minute', for the
-    NFO rebuild's wait-phase ETA -- always rounds up so a shown estimate
-    never expires before the thing it's estimating actually can."""
-    minutes = int(seconds // 60) + (1 if seconds % 60 else 0)
-    if minutes <= 0:
-        return ADDON.getLocalizedString(32104)  # "less than a minute"
-    hours, minutes = divmod(minutes, 60)
-    if hours and minutes:
-        return '{0}h {1}m'.format(hours, minutes)
-    if hours:
-        return '{0}h'.format(hours)
-    return '{0}m'.format(minutes)
 
 
 def _get_args():
@@ -153,6 +140,9 @@ def show_menu():
         return
     if args.get('action') == 'rebuild_nfos':
         _rebuild_nfos()
+        return
+    if args.get('action') == 'sync_watch_ratings':
+        _sync_watch_ratings_now()
         return
     if args.get('action') == 'test_connection':
         _test_connection()
@@ -348,7 +338,13 @@ def _rebuild_nfos():
     start_time = time.time()
 
     def on_progress(index, total, label):
-        percent = int(index * 100 / total) if total else 0
+        # Clamped defensively, not because the current total-estimate math can go negative
+        # (nfo_rebuild.py's own total_estimate = processed + totalPending can't fall below
+        # processed by construction) -- but DialogProgressBG.update() is undocumented for
+        # out-of-range input, and total is an evolving cross-device estimate now rather than a
+        # fixed value, so a future change to that estimate shouldn't be able to hand this a
+        # value Kodi might reject.
+        percent = min(100, int(index * 100 / total)) if total else 0
         message = ADDON.getLocalizedString(32103).format(index + 1, total, label)
         # Estimated time remaining from this run's OWN observed pace so far
         # (elapsed / items done so far * items left) -- grounded in what's
@@ -357,7 +353,7 @@ def _rebuild_nfos():
         if index > 0 and total:
             avg_per_item = (time.time() - start_time) / index
             message += ADDON.getLocalizedString(32121).format(
-                _format_duration(avg_per_item * (total - index)))
+                nfo_rebuild.format_duration(avg_per_item * (total - index)))
         bg.update(percent, message=message)
 
     try:
@@ -392,5 +388,35 @@ def _rebuild_nfos():
     )
 
 
+def _sync_watch_ratings_now():
+    """Manual "Sync Watch History and Ratings Now" action -- runs the same
+    watch_rating_sync.run() pass the background service triggers automatically (on load, and on
+    its own interval), immediately and on demand. No confirmation dialog, unlike
+    "Rebuild local NFOs from Chronicle" above: this never touches a local file, only Kodi's own
+    VideoLibrary fields and Chronicle's API, so there's nothing destructive to warn about."""
+    bg = xbmcgui.DialogProgressBG()
+    bg.create(ADDON.getLocalizedString(32134))
+
+    def on_progress(index, total, label):
+        percent = min(100, int(index * 100 / total)) if total else 0
+        bg.update(percent, message=label)
+
+    try:
+        result = watch_rating_sync.run(progress_callback=on_progress)
+    finally:
+        bg.close()
+
+    message = ADDON.getLocalizedString(32135).format(
+        result['movies'], result['shows'], result['episodes'],
+        ADDON.getLocalizedString(32136).format(result['errors']) if result['errors'] else '')
+    xbmcgui.Dialog().notification(
+        ADDON.getLocalizedString(32134),
+        message,
+        icon=xbmcgui.NOTIFICATION_INFO if not result['errors'] else xbmcgui.NOTIFICATION_WARNING,
+        time=8000,
+    )
+
+
 if __name__ == '__main__':
+    settings_upgrade.ensure_defaults_migrated()
     show_menu()

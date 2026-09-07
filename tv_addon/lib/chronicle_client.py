@@ -10,6 +10,7 @@ device-auth flow as Chronicle_Scrobbler).
 
 import json
 import threading
+import time
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -90,6 +91,35 @@ def call_with_timeout(fn, timeout):
     if 'error' in result:
         raise result['error']
     return result.get('value')
+
+
+# Root-caused 2026-09-06: a full "reset TV shows" library rescan fires a burst of concurrent
+# get_show_details()/search_show() calls against Chronicle all at once, and unlike movies (which
+# have movie_art_sync.py's local-folder art as a fallback if a scrape never lands), TV has no
+# local-file backstop at all -- apply_artwork() only ever gets called if this HTTP round-trip
+# succeeds. A single transient timeout during that burst permanently leaves a show with zero
+# artwork candidates until something re-triggers a fresh scrape (confirmed live 2026-09-06:
+# "Lucky" had fully-resolved poster data server-side the whole time; nothing was ever wrong with
+# Chronicle's own data). Retrying a couple of times with a short backoff absorbs exactly that
+# kind of transient contention without masking a genuinely-down Chronicle (which will still fail
+# every retry and return None same as before). Deliberately NOT applied to HTTPError -- a 4xx/5xx
+# is a real response from a reachable server, not the "request never landed" shape this targets,
+# and retrying e.g. a 401 immediately would just be noise.
+_RETRY_BACKOFF_SECONDS = (1, 3)
+
+
+def _call_with_retries(fn, timeout, log_label):
+    attempts = len(_RETRY_BACKOFF_SECONDS) + 1
+    for attempt in range(attempts):
+        try:
+            return call_with_timeout(fn, timeout)
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            if attempt >= attempts - 1:
+                raise
+            delay = _RETRY_BACKOFF_SECONDS[attempt]
+            log.warning('{0}: attempt {1}/{2} failed ({3}) -- retrying in {4}s'.format(
+                        log_label, attempt + 1, attempts, exc, delay))
+            time.sleep(delay)
 
 
 # search_movie/search_show can trigger Chronicle's resolve-or-create path for a
@@ -474,7 +504,7 @@ class ChronicleClient:
                 return body.get('data')
 
         try:
-            return call_with_timeout(_do, timeout)
+            return _call_with_retries(_do, timeout, log_label)
         except urllib.error.HTTPError as exc:
             # Chronicle is reachable but returned an error status (e.g. 500 from an
             # unrelated request being canceled server-side, 401 from a stale API
@@ -483,7 +513,8 @@ class ChronicleClient:
             log.error('{0}: Chronicle returned HTTP {1} ({2})'.format(log_label, exc.code, exc.reason))
             return None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            log.error('{0}: Chronicle not reachable at {1} ({2})'.format(log_label, self._base_url, exc))
+            log.error('{0}: Chronicle not reachable at {1} after retrying ({2})'.format(
+                      log_label, self._base_url, exc))
             return None
         except Exception as exc:
             log.error('{0}: unexpected error: {1}'.format(log_label, exc))
@@ -506,12 +537,13 @@ class ChronicleClient:
                 return resp.read()
 
         try:
-            return call_with_timeout(_do, timeout)
+            return _call_with_retries(_do, timeout, log_label)
         except urllib.error.HTTPError as exc:
             log.error('{0}: Chronicle returned HTTP {1} ({2})'.format(log_label, exc.code, exc.reason))
             return None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            log.error('{0}: Chronicle not reachable at {1} ({2})'.format(log_label, self._base_url, exc))
+            log.error('{0}: Chronicle not reachable at {1} after retrying ({2})'.format(
+                      log_label, self._base_url, exc))
             return None
         except Exception as exc:
             log.error('{0}: unexpected error: {1}'.format(log_label, exc))

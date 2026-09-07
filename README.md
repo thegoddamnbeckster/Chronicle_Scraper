@@ -117,8 +117,12 @@ heartbeat file to know something is happening.
 |---|---|---|
 | Chronicle URL | _(empty)_ | Required — your server's host/IP (and port, if not behind a reverse proxy) |
 | API Key | _(empty, hidden)_ | Set automatically by the QR device-auth flow |
-| Write NFO files | Off | Writes/refreshes local NFOs alongside the scraper API responses |
+| Write NFO files | **On** | Writes/refreshes local NFOs alongside the scraper API responses -- needed for a rebuild pass to actually get episode/rating/progress changes to Kodi at all, see "Background service" below |
+| Automatically rebuild NFOs after every library scan | **On** | Closes the loop so Chronicle-side changes keep reaching an already-scraped library, not just brand-new files |
 | Write file metadata (streamdetails) | Off | Only shown when NFO writing is on; probes and writes stream/codec info per file |
+| Automatically sync watch history and ratings | **On** | Separate, lightweight, non-destructive pass (see "Watch history and ratings sync" below) -- reconciles resume/watched/rating directly via Kodi's own library fields, no NFO writes involved |
+| Sync once shortly after Kodi starts | On | |
+| Sync every (minutes) | 120 (2h) | 30-minute increments |
 
 ## Repository Structure
 
@@ -144,7 +148,11 @@ Chronicle_Scraper/
 │   ├── nfo_common.py              # Shared NFO XML-building blocks
 │   ├── nfo_writer.py              # Movie NFO writer
 │   ├── tv_nfo_writer.py           # Show/episode NFO writer
-│   ├── nfo_rebuild.py             # Rebuild-cache action: delete + regenerate across movies/shows/episodes
+│   ├── nfo_rebuild.py             # Rebuild action: claims work from Chronicle's cross-device queue, delete + regenerate
+│   ├── progress_sync.py           # Shared resume/watched/rating reconciliation logic (used by scrapes AND the periodic sync)
+│   ├── watch_rating_sync.py       # Periodic non-destructive watch-history/rating sync (own settings category, own timer)
+│   ├── media_id_cache.py          # Persists each item's resolved Chronicle id so watch_rating_sync.py skips re-resolving it
+│   ├── settings_upgrade.py        # One-time migration for settings whose shipped default changed after install
 │   ├── legacy_nfo.py              # Parses and stashes pre-existing NFO data for merge-back
 │   ├── activity_tracker.py        # Cross-process heartbeat file for the corner activity indicator
 │   ├── device_auth.py             # QR device-auth flow (shared design with Chronicle_Scrobbler)

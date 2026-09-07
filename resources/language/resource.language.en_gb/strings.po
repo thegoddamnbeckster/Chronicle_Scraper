@@ -118,7 +118,7 @@ msgid "Recreate local NFO file from Chronicle's data"
 msgstr ""
 
 msgctxt "#32092"
-msgid "Kodi always prefers a movie, TV show, or episode's own local NFO file over asking this scraper, even during an automatic library scan -- so anything already tagged by another tool (e.g. tinyMediaManager) may never actually reach Chronicle at all. Enabling this lets Chronicle write that local NFO from its own data -- but only as part of an explicit rebuild pass (the \"Rebuild local NFOs from Chronicle\" action below, or \"Automatically rebuild NFOs after every library scan\"), never during an ordinary scan, so getting new files into Kodi's library is never slowed down by a local-file write. Off by default -- if you have more than one Kodi instance pointed at the same shared library, you only need this ON for whichever one is responsible for maintaining the shared NFOs (e.g. your main box); the others just read the NFO that instance already wrote."
+msgid "Kodi always prefers a movie, TV show, or episode's own local NFO file over asking this scraper, even during an automatic library scan -- so anything already tagged by another tool (e.g. tinyMediaManager) may never actually reach Chronicle at all. Enabling this lets Chronicle write that local NFO from its own data -- but only as part of an explicit rebuild pass (the \"Rebuild local NFOs from Chronicle\" action below, or \"Automatically rebuild NFOs after every library scan\"), never during an ordinary scan, so getting new files into Kodi's library is never slowed down by a local-file write. On by default -- this is what lets a rebuild pass actually close the loop and get new/changed episodes pushed to Kodi. Safe to leave on across every Kodi instance sharing the same library: Chronicle's own rebuild queue coordinates which single device actually does the delete-and-rewrite for any given item, so multiple instances no longer race each other rewriting the same shared NFO. Turn it off on a specific device only if you'd rather it never participate in rebuilds at all."
 msgstr ""
 
 msgctxt "#32093"
@@ -170,7 +170,7 @@ msgid "Automatically rebuild NFOs after every library scan"
 msgstr ""
 
 msgctxt "#32099"
-msgid "Runs the same delete-and-rebuild as \"Rebuild local NFOs from Chronicle\" above, automatically, every time a video library scan finishes -- no need to remember to click the button. Every local .nfo/tvshow.nfo and movieset-poster/fanart/etc. file for every movie, TV show, and episode is deleted and repopulated from Chronicle each time, with NO confirmation prompt (there's no one there to ask). Data only some other tool put in those files is preserved and folded back in rather than lost, but this still means a large library can take a long time to process on every single scan. Off by default -- only turn this on if you want Chronicle to be the sole, permanent owner of every local NFO/set-art file."
+msgid "Runs the same delete-and-rebuild as \"Rebuild local NFOs from Chronicle\" above, automatically, every time a video library scan finishes -- no need to remember to click the button. Every local .nfo/tvshow.nfo and movieset-poster/fanart/etc. file for every movie, TV show, and episode is deleted and repopulated from Chronicle each time, with NO confirmation prompt (there's no one there to ask). Data only some other tool put in those files is preserved and folded back in rather than lost, but this still means a large library can take a long time to process on every single scan. On by default -- this is the only mechanism that reliably confirms a new or changed episode actually reached Kodi (Kodi never re-asks this scraper about an item once it has any local NFO at all); turn it off only if you'd rather trigger \"Rebuild local NFOs from Chronicle\" yourself, or if this is a secondary Kodi instance pointed at a library another instance already maintains."
 msgstr ""
 
 msgctxt "#32105"
@@ -235,4 +235,64 @@ msgstr ""
 
 msgctxt "#32120"
 msgid "Connected as {0}"
+msgstr ""
+
+msgctxt "#32122"
+msgid "Automatically rebuilding local NFOs after this scan…"
+msgstr ""
+
+msgctxt "#32123"
+msgid "Skipped automatic NFO rebuild: \"Recreate local NFO file from Chronicle's data\" is off. Turn it on in Settings to let automatic rebuilds actually write anything."
+msgstr ""
+
+msgctxt "#32124"
+msgid "Updated: \"Recreate local NFO\" and \"Automatically rebuild NFOs\" are now ON by default -- this is what lets episode, rating, and progress changes actually reach Kodi. Change this in Settings if you'd rather not."
+msgstr ""
+
+msgctxt "#32125"
+msgid "Watch History and Ratings"
+msgstr ""
+
+msgctxt "#32126"
+msgid "Automatically sync watch history and ratings"
+msgstr ""
+
+msgctxt "#32127"
+msgid "Periodically reconciles resume position, fully-watched status, and rating for every movie, TV show, and episode already in this device's own library against Chronicle, in both directions where applicable (Chronicle's rating always wins; resume/watched use whichever side changed most recently). Lightweight and non-destructive -- unlike \"Rebuild local NFOs\", this never touches local NFO files, so every device can run it independently on its own schedule with no risk of racing another device. On by default."
+msgstr ""
+
+msgctxt "#32128"
+msgid "Sync once shortly after Kodi starts"
+msgstr ""
+
+msgctxt "#32129"
+msgid "Runs one sync pass a short while after this device's Chronicle Scraper service starts (e.g. after a Kodi restart), in addition to the regular interval below. On by default."
+msgstr ""
+
+msgctxt "#32130"
+msgid "Sync every (minutes)"
+msgstr ""
+
+msgctxt "#32131"
+msgid "How often the automatic background sync runs, in 30-minute steps. Defaults to every 2 hours (120 minutes)."
+msgstr ""
+
+msgctxt "#32132"
+msgid "Sync Watch History and Ratings Now"
+msgstr ""
+
+msgctxt "#32133"
+msgid "Runs one sync pass immediately, regardless of the automatic settings above. Useful right after changing something in Chronicle you want reflected in Kodi without waiting for the next scheduled sync."
+msgstr ""
+
+msgctxt "#32134"
+msgid "Syncing watch history and ratings…"
+msgstr ""
+
+msgctxt "#32135"
+msgid "Synced {0} movie(s), {1} show(s), {2} episode(s){3}"
+msgstr ""
+
+msgctxt "#32136"
+msgid " -- {0} error(s), see kodi.log"
 msgstr ""

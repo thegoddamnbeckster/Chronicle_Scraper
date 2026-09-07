@@ -22,10 +22,16 @@ is needed for episodes. VideoLibrary.GetEpisodes is the one and only path,
 and the same call doubles as the source for Kodi's own streamdetails for
 that file.
 
-Also duplicated verbatim into the MOVIE addon's own lib/ (same reasoning as
-chronicle_client.py's duplication) -- nfo_rebuild.py lives there and needs
-these same two functions to resolve TV rebuild-queue items. If you fix a bug
-here, fix it in both copies.
+This is a byte-for-byte duplicate of tv_addon/lib/tvshow_location.py, not an
+import -- same reasoning as chronicle_client.py's own duplication (the two
+Chronicle Scraper addons have no runtime dependency on each other). Needed
+here, in the MOVIE addon, because nfo_rebuild.py (which lives here and
+handles all three item types -- movies, shows, episodes -- in one combined
+pass) uses find_show_location()/get_episode() to resolve a claimed
+rebuild-queue item (a Chronicle MediaItemId + title/year/season/episode) to
+THIS device's own local tvshowid/episodeid -- the reverse of what the TV
+addon's own tvshow_scraper.py needs it for. If you fix a bug here, fix it in
+both copies.
 """
 
 import json
