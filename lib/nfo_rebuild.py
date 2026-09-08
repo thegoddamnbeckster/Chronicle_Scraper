@@ -167,6 +167,19 @@ _CLAIM_BATCH_SIZE = 25
 # (raise it) or contention (lower it) -- no code changes needed elsewhere.
 _CONCURRENT_ITEMS = 3
 
+# How many CONSECUTIVE resolution failures of the same kind ("movie"/"tvshow"/"episode") this
+# device will absorb before giving up on that kind for the rest of THIS run. Root-caused live
+# (2026-09-08): a device whose local library covers only a fraction of the shared catalog
+# claimed, failed to resolve, and released 20,722 of 20,875 items in a single run -- almost
+# entirely the same doomed kind, one at a time, each still costing a JSON-RPC lookup and an HTTP
+# release round-trip. Per-user report the same day: "it should absolutely skip work that it
+# can't resolve." Deliberately small: unlike SIMKL's own analogous streak-based backstop (a
+# genuinely rare, transient condition worth 20 tries before concluding it's real), a device's
+# own local library coverage for a given kind doesn't fluctuate mid-run -- if it's failed this
+# many in a row, the next one is not meaningfully more likely to succeed, so there is little
+# value in a higher threshold and real cost (more wasted round-trips) in one.
+_KIND_FAILURE_STREAK_THRESHOLD = 10
+
 
 def run(progress_callback=None, is_cancelled=None):
     """Claims batches of pending work from Chronicle's cross-device rebuild queue and, for
@@ -215,6 +228,10 @@ def run(progress_callback=None, is_cancelled=None):
       refresh_errors      -- items where Kodi's own Refresh* JSON-RPC call itself was
                               rejected -- never even entered the wait, and left claimed
                               (not completed) so another device can retry once the lease lapses
+      excluded_kinds      -- kind(s) ("movie"/"tvshow"/"episode") this run gave up requesting
+                              after _KIND_FAILURE_STREAK_THRESHOLD consecutive resolution
+                              failures on this device -- empty on a device whose library covers
+                              everything it was asked to resolve
     """
     rebuild_state.mark_started()
     try:
@@ -252,6 +269,15 @@ def _run(progress_callback, is_cancelled):
     }
     unconfirmed = []
     cancelled = False
+    # Per-kind consecutive-failure streak and the kinds it's already tripped for -- see
+    # _KIND_FAILURE_STREAK_THRESHOLD's own doc. Both read/written only under state_lock, same as
+    # counters/unconfirmed above. Scoped to this one run() call (fresh on every trigger, not
+    # persisted) -- deliberately: it self-heals the moment this device's own library coverage
+    # actually improves (a rescan, a newly-mounted share), and a fresh run only ever "re-pays"
+    # up to _KIND_FAILURE_STREAK_THRESHOLD wasted attempts per kind to re-learn that, not
+    # thousands, so there's little to gain and real staleness risk in persisting it further.
+    consecutive_failures_by_kind = {}
+    excluded_kinds = set()
     # Guards counters/unconfirmed -- brief, in-memory mutations only, see this comment's own
     # note above about why _wait_for_one() is deliberately never called while this is held.
     state_lock = threading.Lock()
@@ -342,11 +368,20 @@ def _run(progress_callback, is_cancelled):
             cancelled = True
             break
 
-        batch = client.claim_rebuild_batch(_CLAIM_BATCH_SIZE)
+        with state_lock:
+            exclude_kinds_snapshot = sorted(excluded_kinds)
+        batch = client.claim_rebuild_batch(_CLAIM_BATCH_SIZE, exclude_kinds=exclude_kinds_snapshot)
         items = batch['items']
         if not items:
-            log.info('nfo_rebuild: queue is empty (or unreachable) -- nothing left to rebuild '
-                     'right now, {0} item(s) processed this run'.format(counters['processed']))
+            if exclude_kinds_snapshot:
+                log.info('nfo_rebuild: queue is empty (or unreachable) for the remaining kind(s) '
+                         '-- nothing left to rebuild right now, {0} item(s) processed this run, '
+                         '{1} excluded this run: {2}'.format(
+                         counters['processed'], len(exclude_kinds_snapshot),
+                         ', '.join(exclude_kinds_snapshot)))
+            else:
+                log.info('nfo_rebuild: queue is empty (or unreachable) -- nothing left to rebuild '
+                         'right now, {0} item(s) processed this run'.format(counters['processed']))
             break
 
         # Recomputed once per batch, not per item -- see run()'s own doc for what this
@@ -373,6 +408,24 @@ def _run(progress_callback, is_cancelled):
 
                 kind = claim.get('kind')
                 label = _label_for_claim(claim)
+
+                # A batch already in hand can still contain a kind that JUST tripped
+                # _KIND_FAILURE_STREAK_THRESHOLD from an earlier item in this same batch (the
+                # exclude_kinds sent with the claim request only takes effect on the NEXT claim
+                # round-trip) -- release immediately without even attempting local resolution,
+                # rather than paying for a lookup already known to fail. See
+                # _KIND_FAILURE_STREAK_THRESHOLD's own doc.
+                with state_lock:
+                    kind_already_excluded = kind in excluded_kinds
+                if kind_already_excluded:
+                    log.info('nfo_rebuild: queue item {0} ({1}) "{2}" -- {1} already excluded '
+                             'this run (see earlier warning), releasing without attempting local '
+                             'resolution'.format(queue_item_id, kind, label))
+                    client.release_rebuild_item(queue_item_id)
+                    with state_lock:
+                        counters['resolution_failures'] += 1
+                        counters['processed'] += 1
+                    return
 
                 with state_lock:
                     counters['dispatched'] += 1
@@ -402,6 +455,17 @@ def _run(progress_callback, is_cancelled):
                 with state_lock:
                     if not resolved:
                         counters['resolution_failures'] += 1
+                        streak = consecutive_failures_by_kind.get(kind, 0) + 1
+                        consecutive_failures_by_kind[kind] = streak
+                        if streak >= _KIND_FAILURE_STREAK_THRESHOLD and kind not in excluded_kinds:
+                            excluded_kinds.add(kind)
+                            log.warning(
+                                'nfo_rebuild: {0} consecutive "{1}" resolution failures on this '
+                                'device -- its local library doesn\'t cover this kind well enough '
+                                'right now; excluding {1} from further claims for the rest of '
+                                'this run'.format(streak, kind))
+                    else:
+                        consecutive_failures_by_kind[kind] = 0
                     counters['processed'] += 1
             except Exception as exc:
                 # Deliberately broad: an uncaught exception here would otherwise kill this
@@ -453,12 +517,15 @@ def _run(progress_callback, is_cancelled):
         if cancelled:
             break
 
+    excluded_kinds_final = sorted(excluded_kinds)
     log.info(
         'nfo_rebuild: done -- {0} item(s) processed this run, {1} resolution failure(s), '
         '{2} confirmed rewritten, {3} nfo deleted, {4} movieset file(s) deleted, '
-        '{5} refresh error(s)'.format(
+        '{5} refresh error(s){6}'.format(
             counters['processed'], counters['resolution_failures'], counters['nfo_confirmed'],
-            counters['nfo_deleted'], counters['movieset_deleted'], counters['refresh_errors']))
+            counters['nfo_deleted'], counters['movieset_deleted'], counters['refresh_errors'],
+            ', excluded this run: {0}'.format(', '.join(excluded_kinds_final))
+            if excluded_kinds_final else ''))
     return {
         # total_estimate should already be >= processed by construction (it's computed as
         # processed-so-far + the server's own pending count, which can't be negative) -- the
@@ -475,6 +542,10 @@ def _run(progress_callback, is_cancelled):
         'nfo_deleted': counters['nfo_deleted'],
         'movieset_deleted': counters['movieset_deleted'],
         'refresh_errors': counters['refresh_errors'],
+        # Kinds this run gave up requesting after _KIND_FAILURE_STREAK_THRESHOLD consecutive
+        # failures -- see that constant's own doc. Empty on a device whose library covers
+        # everything it was asked to resolve.
+        'excluded_kinds': excluded_kinds_final,
     }
 
 

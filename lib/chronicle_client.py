@@ -308,7 +308,7 @@ class ChronicleClient:
             log.warning('report_kodi_id({0}, {1!r}, {2}): unexpected error: {3}'.format(
                         media_item_id, kind, kodi_id, exc))
 
-    def claim_rebuild_batch(self, batch_size=25):
+    def claim_rebuild_batch(self, batch_size=25, exclude_kinds=None):
         """POST /api/v1/scraper/nfo-rebuild-queue/claim -- claims up to batch_size pending
         items from Chronicle's cross-device NFO rebuild queue (see NfoRebuildQueueItem's own
         doc server-side) for THIS device specifically -- Chronicle resolves which device from
@@ -323,19 +323,29 @@ class ChronicleClient:
         failure -- a claim failure just means this pass finds nothing to do right now, not an
         error worth surfacing further than the log. Logged at info level (not just on failure)
         since this is the one call that tells you whether the rebuild is actually making
-        progress or has run dry."""
+        progress or has run dry.
+
+        exclude_kinds, if given (a list of "movie"/"tvshow"/"episode" strings), asks Chronicle
+        to skip handing back any item of those kinds -- see nfo_rebuild.py's
+        _KIND_FAILURE_STREAK_THRESHOLD for why: this device already proved this run it can't
+        resolve that kind locally, so there's no point being handed more of it. Omitted from the
+        request body entirely when empty/None, not sent as an empty list -- keeps this an
+        additive, backward-compatible request shape."""
         empty = {'items': [], 'totalPending': 0}
         if not self._base_url or not self._api_key:
             log.warning('claim_rebuild_batch: Chronicle URL or API key not configured -- skipped')
             return empty
-        result = self._post('nfo-rebuild-queue/claim', {'batchSize': batch_size},
+        body = {'batchSize': batch_size}
+        if exclude_kinds:
+            body['excludeKinds'] = list(exclude_kinds)
+        result = self._post('nfo-rebuild-queue/claim', body,
                              'claim_rebuild_batch({0})'.format(batch_size))
         if not result:
             return empty
         items = result.get('items') or []
         total_pending = result.get('totalPending') or 0
-        log.info('claim_rebuild_batch({0}): claimed {1} item(s), {2} still pending overall'.format(
-                 batch_size, len(items), total_pending))
+        log.info('claim_rebuild_batch({0}, exclude_kinds={1}): claimed {2} item(s), {3} still '
+                 'pending overall'.format(batch_size, exclude_kinds or [], len(items), total_pending))
         return {'items': items, 'totalPending': total_pending}
 
     def complete_rebuild_item(self, queue_item_id: int):
