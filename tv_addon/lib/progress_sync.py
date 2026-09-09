@@ -156,11 +156,19 @@ def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item
 def apply_watched_push(vtag, watched_at_iso):
     """Sets Kodi's playcount/lastplayed via InfoTagVideo -- part of the same getepisodedetails
     response Kodi is already consuming this scrape, no extra JSON-RPC call needed. Mirrors
-    apply_resume_push's own no-op guard: nothing to do without a real timestamp."""
+    apply_resume_push's own no-op guard: nothing to do without a real timestamp.
+
+    Also explicitly zeroes the resume point -- see lib/progress_sync.py's identical fix (the
+    movie addon's own copy of this function) for the full root-cause writeup: a device with
+    its own stale local resume point kept it forever once resolve_progress_direction started
+    returning 'pull' (Chronicle's side already watched, nothing to push), even as
+    resolve_watched_direction independently pushed playcount=1 in the very same scrape.
+    """
     if not watched_at_iso:
         return
     vtag.setPlaycount(1)
     vtag.setLastPlayed(watched_at_iso.replace('T', ' ')[:19])
+    vtag.setResumePoint(0, 0)
 
 
 def apply_resume_push(vtag, resume_pct, runtime_minutes):

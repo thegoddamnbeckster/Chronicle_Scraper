@@ -178,11 +178,25 @@ def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item
 def apply_watched_push(vtag, watched_at_iso):
     """Sets Kodi's playcount/lastplayed via InfoTagVideo -- part of the same getdetails
     response Kodi is already consuming this scrape, no extra JSON-RPC call needed. Mirrors
-    apply_resume_push's own no-op guards: nothing to do without a real timestamp."""
+    apply_resume_push's own no-op guards: nothing to do without a real timestamp.
+
+    Also explicitly zeroes the resume point. Per-user report (2026-09-09): an item marked
+    watched still showed a progress percentage in Kodi. Root cause -- a device with its own
+    stale local resume point (partial playback that was never finished ON THAT DEVICE) gets
+    resolve_progress_direction returning 'pull' once Chronicle's side is watched (resume
+    cleared there), which only reports Kodi's value into Chronicle and never touches Kodi's
+    own resume point at all; resolve_watched_direction independently returns 'push' for the
+    SAME item since Kodi's local playcount is still 0. The two decisions used to run without
+    talking to each other -- playcount got set to 1 while the device's own stale resume point
+    was left completely untouched, so Kodi showed watched AND mid-progress at once. Called
+    strictly after any resume push in the same scrape (see scraper.py/tvshow_scraper.py's own
+    ordering), so this always wins if the two ever legitimately disagree in the same pass.
+    """
     if not watched_at_iso:
         return
     vtag.setPlaycount(1)
     vtag.setLastPlayed(watched_at_iso.replace('T', ' ')[:19])
+    vtag.setResumePoint(0, 0)
 
 
 def resume_seconds(resume_pct, runtime_minutes, log_label='resume_seconds'):

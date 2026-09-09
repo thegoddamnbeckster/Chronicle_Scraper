@@ -325,6 +325,14 @@ def _build_state_updates(details, kodi_item, client, media_item_id, log_label):
     if watched_direction == 'push' and watched_value:
         updates['playcount'] = 1
         updates['lastplayed'] = watched_value.replace('T', ' ')[:19]
+        # Explicitly zero the resume point -- see progress_sync.apply_watched_push's own doc
+        # for the full root-cause writeup (2026-09-09): a device with its own stale local
+        # resume point kept it forever once the resume direction above started returning
+        # 'pull' (nothing to push, Chronicle's own side already cleared), even as this
+        # watched-push independently set playcount=1 in the very same reconciliation pass.
+        # Placed after the resume block on purpose so it always wins if the two ever
+        # legitimately disagree here.
+        updates['resume'] = {'position': 0, 'total': 0}
     elif watched_direction == 'pull':
         client.push_watched(media_item_id, progress_sync.kodi_lastplayed_to_iso(kodi_lastplayed))
 
