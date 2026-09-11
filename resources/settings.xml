@@ -51,4 +51,12 @@
         <setting id="sync_watch_ratings_now" type="action" label="32132" action="RunScript(script.chronicle.scraper.movie,action=sync_watch_ratings)" help="32133"/>
     </category>
 
+    <!-- ============================================================================ -->
+    <!-- New Content Detection -->
+    <!-- ============================================================================ -->
+    <category label="32137">
+        <setting id="scan_signal_enabled" type="bool" label="32138" default="false" help="32139"/>
+        <setting id="scan_signal_interval_minutes" type="slider" label="32140" default="120" range="30,30,1440" option="int" help="32141" enable="eq(-1,true)"/>
+    </category>
+
 </settings>

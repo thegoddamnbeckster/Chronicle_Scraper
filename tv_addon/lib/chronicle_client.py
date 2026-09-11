@@ -444,6 +444,48 @@ class ChronicleClient:
             log.warning('push_resume({0}, {1}): unexpected error: {2}'.format(
                         media_item_id, progress_percent, exc))
 
+    def is_scan_needed(self):
+        """GET /api/v1/scraper/kodi-scan-signal -- true if Chronicle imported new movie/TV
+        content since this device last acknowledged (see acknowledge_scan_needed()). This is
+        how a brand-new episode file gets discovered by Kodi's own VideoLibrary at all --
+        VideoLibrary.Refresh* (what push_watched/push_resume and any NFO refresh rely on) only
+        works on an item Kodi already has a library entry for, never a file it hasn't seen yet.
+        Chronicle's server never calls this device's JSON-RPC directly for this: this addon
+        polls and runs the scan on itself via its own LOCAL xbmc.executeJSONRPC, so nothing here
+        needs "Allow remote control via HTTP" turned on, and nothing here needs this addon's own
+        device to have ever self-registered anywhere either -- resolved server-side by API token
+        alone. Returns False (not an error) on any failure -- a missed poll just means this
+        device checks again next cycle."""
+        result = self._get('/api/v1/scraper/kodi-scan-signal', 'is_scan_needed()', timeout=10)
+        return bool(result and result.get('scanNeeded'))
+
+    def acknowledge_scan_needed(self):
+        """POST /api/v1/scraper/kodi-scan-signal/ack -- reports that this device just ran its
+        own local VideoLibrary.Scan in response to is_scan_needed(). Call this AFTER the scan
+        actually completes, not before -- a device that dies mid-scan should still see itself as
+        due next poll rather than wrongly marked caught-up."""
+        if not self._base_url or not self._api_key:
+            return
+        url = '{0}/api/v1/scraper/kodi-scan-signal/ack'.format(self._base_url)
+        data = json.dumps({}).encode('utf-8')
+        req = self._build_request(url, data=data, method='POST')
+
+        def _do():
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status
+
+        try:
+            status = call_with_timeout(_do, 10)
+            log.info('acknowledge_scan_needed(): {0}'.format('acknowledged' if status == 200 else
+                      'unexpected HTTP {0}'.format(status)))
+        except urllib.error.HTTPError as exc:
+            log.warning('acknowledge_scan_needed(): Chronicle returned HTTP {0} ({1})'.format(
+                        exc.code, exc.reason))
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            log.warning('acknowledge_scan_needed(): Chronicle not reachable ({0})'.format(exc))
+        except Exception as exc:
+            log.warning('acknowledge_scan_needed(): unexpected error: {0}'.format(exc))
+
     def get_current_user(self):
         """GET /api/v1/users/me -- the identity behind this addon's own API key.
         Accepts the same X-Api-Key auth as every scraper endpoint (Chronicle's

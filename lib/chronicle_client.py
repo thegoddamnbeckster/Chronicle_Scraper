@@ -373,6 +373,28 @@ class ChronicleClient:
         log.info('release_rebuild_item({0}): {1}'.format(
                  queue_item_id, 'released' if result and result.get('released') else 'failed'))
 
+    def is_scan_needed(self):
+        """GET /api/v1/scraper/kodi-scan-signal -- true if Chronicle imported new movie/TV
+        content since this device last acknowledged (see acknowledge_scan_needed()). Unlike
+        nfo_rebuild.py's rebuild queue (which only refreshes an item Kodi ALREADY has a library
+        entry for), this is how a brand-new file gets discovered at all: VideoLibrary.Refresh*
+        cannot do that, only VideoLibrary.Scan can, and Chronicle's server never calls a device's
+        JSON-RPC directly for this -- this device polls and runs the scan on itself via its own
+        LOCAL xbmc.executeJSONRPC, so nothing here needs "Allow remote control via HTTP" turned
+        on. Returns False (not an error) on any failure -- a missed poll just means this device
+        checks again next cycle, not something worth surfacing further than the log."""
+        result = self._get('/api/v1/scraper/kodi-scan-signal', 'is_scan_needed()', timeout=10)
+        return bool(result and result.get('scanNeeded'))
+
+    def acknowledge_scan_needed(self):
+        """POST /api/v1/scraper/kodi-scan-signal/ack -- reports that this device just ran its
+        own local VideoLibrary.Scan in response to is_scan_needed(). Call this AFTER the scan
+        actually completes, not before -- see the server-side AcknowledgeScanAsync's own doc for
+        why (a device that dies mid-scan should still see itself as due next poll)."""
+        result = self._post('kodi-scan-signal/ack', {}, 'acknowledge_scan_needed()', timeout=10)
+        log.info('acknowledge_scan_needed(): {0}'.format(
+                 'acknowledged' if result and result.get('acknowledged') else 'failed'))
+
     def contribute_metadata(self, media_item_id: int, source: str, metadata: dict):
         """POST /api/v1/media/{id}/metadata/{source} -- contributes fields
         harvested from a local source (e.g. a pre-existing NFO another tool

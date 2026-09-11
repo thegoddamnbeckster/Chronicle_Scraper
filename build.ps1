@@ -21,8 +21,8 @@ function Build-ChronicleAddon {
     param(
         [Parameter(Mandatory)][string]$AddonRoot,   # folder containing this addon's own addon.xml
         [Parameter(Mandatory)][string[]]$RootFiles,  # root-level files this addon actually has (varies: the
-                                                       # movie addon has default.py + service.py, the TV addon
-                                                       # has default.py only -- no background service of its own)
+                                                       # movie addon's service.py does far more than the TV
+                                                       # addon's own -- see each one's own module docstring)
         [hashtable]$SharedFiles = @{}                 # dest-relative-path -> absolute-source-path, copied in
                                                        # AFTER the normal lib/python/resources copy below,
                                                        # overwriting whatever this addon's own tree had there.
@@ -131,8 +131,9 @@ function Build-ChronicleAddon {
 }
 
 $movieZip = Build-ChronicleAddon -AddonRoot $repoRoot -RootFiles @("addon.xml", "default.py", "service.py", "icon.png", "LICENSE")
-$tvZip    = Build-ChronicleAddon -AddonRoot (Join-Path $repoRoot "tv_addon") -RootFiles @("addon.xml", "default.py", "icon.png", "LICENSE") -SharedFiles @{
-    "lib\device_auth.py" = Join-Path $repoRoot "lib\device_auth.py"
+$tvZip    = Build-ChronicleAddon -AddonRoot (Join-Path $repoRoot "tv_addon") -RootFiles @("addon.xml", "default.py", "service.py", "icon.png", "LICENSE") -SharedFiles @{
+    "lib\device_auth.py"      = Join-Path $repoRoot "lib\device_auth.py"
+    "lib\kodi_scan_signal.py" = Join-Path $repoRoot "lib\kodi_scan_signal.py"
 }
 
 Write-Host "======================================"

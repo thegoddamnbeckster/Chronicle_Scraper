@@ -43,6 +43,7 @@ import xbmcgui
 from lib.logger import Logger
 from lib import activity_tracker
 from lib import device_registration
+from lib import kodi_scan_signal
 from lib import nfo_rebuild
 from lib import settings_upgrade
 from lib import watch_rating_sync
@@ -74,6 +75,16 @@ _WATCH_RATING_STARTUP_DELAY_SECONDS = 60
 # loop below) to decide when the next periodic pass is due.
 _WATCH_RATING_CHECK_INTERVAL_SECONDS = 60
 
+# Chronicle's "new content available" flag (lib/kodi_scan_signal.py) is always checked once
+# after Kodi starts, regardless of the scan_signal_enabled setting -- most imports land via
+# Chronicle's own nightly schedule, so the next Kodi startup already catches them with no
+# recurring poll needed. Periodic re-checking while Kodi keeps running is opt-in (default off,
+# see settings.xml) at a user-configurable interval (scan_signal_interval_minutes, default 120)
+# -- a triggered scan cascades into every OTHER addon's own onScanFinished handler too (confirmed
+# live: Chronicle_Scrobbler's VideoLibrary.Clean, SIMKL's own full sync pass), so this defaults
+# to conservative rather than "as fast as possible."
+_SCAN_SIGNAL_STARTUP_DELAY_SECONDS = 60
+
 
 class ChronicleMonitor(xbmc.Monitor):
     def __init__(self):
@@ -90,6 +101,10 @@ class ChronicleMonitor(xbmc.Monitor):
         # the way nfo_rebuild.run() does, so an overlap wouldn't corrupt anything, but it would
         # mean two full passes hammering Chronicle/VideoLibrary at once for no benefit.
         self._watch_rating_lock = threading.Lock()
+        # Guards against two check_and_scan() calls overlapping if one is still waiting on a
+        # slow/hanging network call when the next poll interval comes due -- cheap insurance,
+        # not a response to any observed failure.
+        self._scan_signal_lock = threading.Lock()
 
     def onScanFinished(self, library):
         # Kodi fires this for both 'video' and 'music' library scans --
@@ -272,6 +287,30 @@ class ChronicleMonitor(xbmc.Monitor):
 
         threading.Thread(target=_do, name='chronicle-watch-rating-sync', daemon=True).start()
 
+    def run_scan_signal_check(self):
+        """Runs one kodi_scan_signal.check_and_scan() pass on a background thread -- see that
+        module's own doc. Skipped (not queued) if a check is already in flight; the next poll
+        interval will simply try again."""
+        if not self._scan_signal_lock.acquire(False):
+            log.info('service: scan-signal check skipped -- another check is already running')
+            return
+        try:
+            threading.Thread(
+                target=lambda: self._run_scan_signal_check_locked(),
+                name='chronicle-scan-signal-check', daemon=True,
+            ).start()
+        except Exception:
+            self._scan_signal_lock.release()
+            raise
+
+    def _run_scan_signal_check_locked(self):
+        try:
+            kodi_scan_signal.check_and_scan()
+        except Exception as exc:
+            log.error('service: scan-signal check failed: {0}'.format(exc))
+        finally:
+            self._scan_signal_lock.release()
+
 
 def run():
     settings_upgrade.ensure_defaults_migrated()
@@ -316,6 +355,12 @@ def run():
     last_watch_rating_check = 0.0  # forces the very first loop iteration to check
     watch_rating_was_enabled = ADDON.getSettingBool('sync_watch_ratings_enabled')
 
+    # Own anchor, deliberately not shared with service_started_at above -- that one gets reset
+    # on a watch-rating off-to-on transition, which has nothing to do with this feature.
+    scan_signal_service_started_at = time.time()
+    scan_signal_startup_done = False
+    last_scan_signal_check = 0.0  # only consulted once scan_signal_enabled is on
+
     # Standard Kodi service idle loop: sleep in short increments so
     # abortRequested() (set on Kodi shutdown) is noticed promptly instead of
     # blocking in one long sleep.
@@ -359,6 +404,19 @@ def run():
                 # so re-enabling it doesn't immediately fire a sync that "should have" run
                 # during however long it was off.
                 last_watch_rating_sync = now
+
+        # Startup check: always runs exactly once, regardless of scan_signal_enabled -- see
+        # this module's own top-of-file doc for why a recurring poll isn't the default.
+        if not scan_signal_startup_done and \
+                now - scan_signal_service_started_at >= _SCAN_SIGNAL_STARTUP_DELAY_SECONDS:
+            scan_signal_startup_done = True
+            monitor.run_scan_signal_check()
+
+        if ADDON.getSettingBool('scan_signal_enabled'):
+            interval_seconds = max(30, ADDON.getSettingInt('scan_signal_interval_minutes')) * 60
+            if now - last_scan_signal_check >= interval_seconds:
+                last_scan_signal_check = now
+                monitor.run_scan_signal_check()
 
         activity = activity_tracker.read_activity()
         is_active = activity is not None and \

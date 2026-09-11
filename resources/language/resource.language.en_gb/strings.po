@@ -296,3 +296,23 @@ msgstr ""
 msgctxt "#32136"
 msgid " -- {0} error(s), see kodi.log"
 msgstr ""
+
+msgctxt "#32137"
+msgid "New Content Detection"
+msgstr ""
+
+msgctxt "#32138"
+msgid "Periodically check for new content"
+msgstr ""
+
+msgctxt "#32139"
+msgid "Chronicle can tell this device when new movies/TV content has been imported that Kodi hasn't discovered yet (VideoLibrary.Refresh, used everywhere else, only works on an item Kodi already has -- discovering a brand-new file needs a real library scan). This device always checks once when Kodi starts, regardless of this setting. Turning this on also checks periodically while Kodi keeps running, at the interval below -- off by default, since most imports happen on Chronicle's own nightly schedule and are already caught by the next Kodi startup. Only ever scans the source folder(s) this addon is actually the configured scraper for on this device, never anything else."
+msgstr ""
+
+msgctxt "#32140"
+msgid "Check every (minutes)"
+msgstr ""
+
+msgctxt "#32141"
+msgid "How often the periodic check runs, in 30-minute steps. Defaults to every 2 hours (120 minutes)."
+msgstr ""
