@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.tv"
        name="Chronicle Scraper (TV)"
-       version="1.11.2"
+       version="1.11.3"
        provider-name="Michael Beck">
 
   <requires>
@@ -58,7 +58,18 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (TV)</summary>
     <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. "Rebuild local NFOs from Chronicle" and the corner status indicator live in the Movies addon and cover both movies and TV shows together; this addon doesn't duplicate them. It does have its own small background service that keeps Kodi's library in sync with newly-imported content, independent of the Movies addon -- see this version's changelog.</description>
-    <news>v1.11.2 - getartwork (the picker behind "Choose Art", and part of a full Refresh) never
+    <news>v1.11.3 - Root-caused a real household library never fully scanning in: get_episode_details()
+called find_show_location() unconditionally, on EVERY episode -- re-resolving the exact same
+(folder, tvshowid) pair for every single episode of a show via a JSON-RPC round-trip back into
+Kodi's own API (with its own retry-and-sleep on a miss). During a first-time scan of 100+ shows,
+with Kodi running many of these scraper callbacks concurrently, this became self-inflicted
+contention on Kodi's own API from Kodi's own scan -- shows sat with only their most-recently-
+processed handful of episodes ever committed, no exception anywhere (in this addon's log or
+Kodi's own) to point at the cause, since a scraper callback that doesn't return in time just
+looks like one Kodi never got around to. Caches a show's resolved location for 15 minutes so
+every episode after the first one skips the redundant lookup entirely.
+
+v1.11.2 - getartwork (the picker behind "Choose Art", and part of a full Refresh) never
 worked: Kodi passes back this show's default uniqueid (imdb, since Chronicle's own NFOs always
 mark it default="true") as a bare string like "tt27497393" for this one action, instead of this
 addon's own opaque lookup string that find/getdetails exchange -- _resolve_lookup_id had no case

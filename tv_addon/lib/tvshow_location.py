@@ -30,9 +30,11 @@ here, fix it in both copies.
 
 import json
 import posixpath
+import re
 import time
 
 import xbmc
+import xbmcvfs
 
 from lib.logger import Logger
 from lib.movie_art_sync import get_video_sources, listdir_with_timeout, normalize, year_tolerant_match
@@ -42,6 +44,72 @@ log = Logger('tvshow_location')
 _LOOKUP_RETRIES = 2
 _LOOKUP_RETRY_DELAY_SECONDS = 1.0
 
+# Root-caused live (2026-09-12): find_show_location() runs unconditionally on EVERY
+# get_episode_details() call, re-resolving the exact same (folder, tvshowid) pair for every
+# single episode of a show -- 38 identical VideoLibrary.GetTVShows round-trips (each with its
+# own retry-with-sleep on a miss) for one 38-episode show, all asking Kodi's own JSON-RPC server
+# the same question from a scraper callback running on one of Kodi's own scan worker threads.
+# During a first-time scan of 100+ shows, Kodi runs many of these callbacks concurrently, so
+# this became self-inflicted contention on Kodi's own API from Kodi's own scan -- confirmed live
+# via a real household library: shows sat with only their most-recently-processed handful of
+# episodes ever committed (no exception anywhere, in either this addon's log or Kodi's own --
+# a scraper callback that simply doesn't return in time is indistinguishable from one Kodi never
+# scheduled, and Kodi silently moves on either way, unlike an error it would actually surface).
+# Same special://temp/ cross-process approach as episode_path_cache.py/rebuild_state.py -- every
+# scraper action is its own short-lived process, so there is no in-memory dict any of them could
+# share. Unlike episode_path_cache.py this is NOT one-shot: the whole point is serving the same
+# answer to every episode of a show without re-asking Kodi, so entries persist until they expire.
+# Only a successful VideoLibrary hit (folder AND tvshowid) is cached -- the source-browsing
+# fallback's folder-only result deliberately isn't, so a brand-new show still switches onto the
+# fast tvshowid-bearing path the moment Kodi actually commits it, instead of being stuck serving
+# a stale no-tvshowid answer for the rest of the TTL window.
+_LOCATION_CACHE_DIR = 'special://temp/chronicle_scraper/tvshow_location_cache/'
+_LOCATION_CACHE_TTL_SECONDS = 900
+_SAFE_KEY_RE = re.compile(r'[^A-Za-z0-9._-]+')
+
+
+def _location_cache_path(title, year):
+    key = '{0}_{1}'.format(normalize(title), year or 0)
+    return _LOCATION_CACHE_DIR + _SAFE_KEY_RE.sub('_', key) + '.json'
+
+
+def _load_cached_location(title, year):
+    """Returns (folder, tvshowid) from a live, unexpired cache entry, or None if there
+    isn't one -- callers treat None as "go do the real lookup", same as a cache miss."""
+    path = _location_cache_path(title, year)
+    if not xbmcvfs.exists(path):
+        return None
+    try:
+        f = xbmcvfs.File(path, 'r')
+        try:
+            raw = bytes(f.readBytes()).decode('utf-8')
+        finally:
+            f.close()
+        data = json.loads(raw)
+        if time.time() - data.get('cachedAt', 0) > _LOCATION_CACHE_TTL_SECONDS:
+            return None
+        return data.get('folder'), data.get('tvshowid')
+    except Exception as exc:
+        log.warning("Couldn't read cached location for {0!r} ({1}): {2}".format(title, year, exc))
+        return None
+
+
+def _save_cached_location(title, year, folder, tvshowid):
+    """Best-effort and silent on failure -- a failure here just means every episode of this
+    show goes back to resolving its own location the slow way, same as before this cache
+    existed, never a correctness problem."""
+    try:
+        if not xbmcvfs.exists(_LOCATION_CACHE_DIR):
+            xbmcvfs.mkdirs(_LOCATION_CACHE_DIR)
+        data = json.dumps({'folder': folder, 'tvshowid': tvshowid, 'cachedAt': time.time()})
+        f = xbmcvfs.File(_location_cache_path(title, year), 'w')
+        try:
+            f.write(bytearray(data.encode('utf-8')))
+        finally:
+            f.close()
+    except Exception as exc:
+        log.warning("Couldn't cache location for {0!r} ({1}): {2}".format(title, year, exc))
+
 
 def find_show_location(title, year):
     """Returns (folder, tvshowid) -- folder is the show's own root folder
@@ -49,9 +117,18 @@ def find_show_location(title, year):
     get_episode() below). (None, None) if the show can't be found by any
     means yet -- e.g. Kodi hasn't committed a brand-new show at the exact
     moment getdetails() runs, the same commit-timing race
-    movie_art_sync.py's own docstring documents for movies."""
+    movie_art_sync.py's own docstring documents for movies.
+
+    Checks the location cache first -- see its own doc, right above
+    _location_cache_path, for why this exists: every episode of a show asks
+    this exact same question."""
+    cached = _load_cached_location(title, year)
+    if cached is not None:
+        return cached
+
     tvshowid, folder = _lookup_via_video_library(title, year)
     if folder:
+        _save_cached_location(title, year, folder, tvshowid)
         return folder, tvshowid
 
     folder = _search_sources_for_show(title, year)
@@ -60,7 +137,9 @@ def find_show_location(title, year):
         # VideoLibrary (a brand-new show), so there's no tvshowid yet.
         # Callers needing episode files/streamdetails simply get nothing
         # this pass; the very next scan (once Kodi has indexed it) picks up
-        # the fast, id-based path above instead.
+        # the fast, id-based path above instead. Deliberately NOT cached --
+        # see the cache's own doc for why a no-tvshowid result must never
+        # be served stale once Kodi actually commits the show.
         return folder, None
 
     log.info('No folder found for {0!r} ({1}) via VideoLibrary or source browsing -- '
