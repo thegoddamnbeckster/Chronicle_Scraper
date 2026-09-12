@@ -240,6 +240,24 @@ class ChronicleClient:
         return self._get(url, 'resolve_show_by_external_id({0!r}, {1!r})'.format(source, external_id),
                           full_url=True, timeout=_SEARCH_TIMEOUT_SECONDS)
 
+    def resolve_episode_by_external_id(self, source: str, external_id: str):
+        """GET /api/v1/scraper/tv/resolve-episode-by-external-id?source=&externalId= --
+        the counterpart resolve_show_by_external_id provides for shows, used by
+        nfo_url()'s episode branch: an episode-level NfoUrl call carries no show
+        context at all (see tvshow_scraper._nfo_url_episode's own doc), so the
+        episode's own external id (from its NFO's <uniqueid>) is the only thing
+        available to resolve it by. Never creates anything, same as the show
+        version -- there's no title+year fallback available for a single episode
+        the way find_show()/search_show() has for a show."""
+        if not self._base_url or not self._api_key:
+            log.warning('Chronicle URL or API key not configured — resolve_episode_by_external_id skipped')
+            return None
+
+        url = '{0}/api/v1/scraper/tv/resolve-episode-by-external-id?source={1}&externalId={2}'.format(
+            self._base_url, urllib.parse.quote(source), urllib.parse.quote(external_id))
+        return self._get(url, 'resolve_episode_by_external_id({0!r}, {1!r})'.format(source, external_id),
+                          full_url=True, timeout=_SEARCH_TIMEOUT_SECONDS)
+
     def get_show_details(self, media_item_id: int):
         """GET /api/v1/scraper/tv/details?id= -- show-level details plus every
         season Chronicle already has for it."""

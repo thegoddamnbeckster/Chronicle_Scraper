@@ -4,13 +4,14 @@ Regression tests for tvshow_scraper.py's nfo_url() -- Kodi's "NfoUrl" action.
 
 Root-caused live (2026-09-12): this action was never implemented at all (a known,
 documented gap), so it always fell through to "unhandled or missing action" for every show a
-prior tool (e.g. tinyMediaManager) had already organized before Chronicle's own scraper was
-assigned to the source. Confirmed live (via a real, disposable Kodi library) that Kodi
-tolerates the failure and falls back to its own normal find()-based flow, so this was never a
-hard "zero episodes" blocker the way it first appeared -- but every one of those shows still
-paid for a wasted, always-failing round trip before that fallback got a chance to run, and lost
-the chance to identify the show precisely via whatever provider ids the existing NFO already
-carries, instead of a title+year guess.
+prior tool (e.g. tinyMediaManager) had already organized, or every show/episode Chronicle's own
+write_nfo feature had already written a sidecar for. A failed SHOW-level NfoUrl call is
+harmless (confirmed live: Kodi falls back to its own normal find()-based flow), but a failed
+EPISODE-level call is not: confirmed live against a real household show (stuck at exactly 5 of
+38 episodes no matter how many times it was rescanned) that Kodi abandons the REST of that
+show's episode scan entirely the moment the first episode's NfoUrl call comes back empty,
+rather than falling back to a normal getepisodelist/getepisodedetails pass. See nfo_url's own
+doc and _nfo_url_episode's own doc for the full story.
 """
 import os
 import sys
@@ -45,6 +46,13 @@ _EPISODE_NFO = '''<?xml version="1.0" encoding="utf-8" standalone="yes"?>
   <uniqueid type="tmdb">2552685</uniqueid>
 </episodedetails>'''
 
+_EPISODE_NFO_NO_IDS = '''<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<episodedetails>
+  <title>Some Legacy Episode</title>
+  <season>2</season>
+  <episode>3</episode>
+</episodedetails>'''
+
 
 class TestNfoUrl(unittest.TestCase):
 
@@ -59,14 +67,48 @@ class TestNfoUrl(unittest.TestCase):
         mock_client_cls.assert_not_called()
         tvshow_scraper.xbmcplugin.addDirectoryItem.assert_not_called()
 
-    def test_episode_level_nfo_is_deliberately_not_handled(self):
-        # See nfo_url's own doc for why: an episode-level NfoUrl call carries no show context
-        # at all, so there's nothing here that could resolve it correctly.
+    def test_episode_resolves_via_tmdb_id_when_present(self):
+        mock_client = MagicMock()
+        mock_client.resolve_episode_by_external_id.return_value = {'id': 473792, 'title': 'Part One'}
+        with patch('python.tvshow_scraper.ChronicleClient', return_value=mock_client):
+            result = tvshow_scraper.nfo_url(_EPISODE_NFO, handle=9)
+
+        self.assertTrue(result)
+        mock_client.resolve_episode_by_external_id.assert_called_once_with('tmdb', '2552685')
+
+        call = tvshow_scraper.xbmcplugin.addDirectoryItem.call_args
+        self.assertEqual(call.kwargs['handle'], 9)
+        self.assertEqual(call.kwargs['url'], tvshow_scraper.build_lookup_string(473792))
+        self.assertTrue(call.kwargs['isFolder'])
+
+    def test_episode_falls_back_to_imdb_then_tvdb_when_tmdb_lookup_fails(self):
+        mock_client = MagicMock()
+        mock_client.resolve_episode_by_external_id.return_value = None
+        with patch('python.tvshow_scraper.ChronicleClient', return_value=mock_client):
+            tvshow_scraper.nfo_url(_EPISODE_NFO, handle=1)
+
+        # Only tmdb is present on this NFO, so only tmdb should ever be tried -- proves the
+        # fallback loop doesn't call resolve_episode_by_external_id with a source the NFO
+        # never actually carried.
+        mock_client.resolve_episode_by_external_id.assert_called_once_with('tmdb', '2552685')
+
+    def test_episode_with_no_external_ids_returns_false_with_no_calls(self):
+        # Unlike a show, an episode has no title+year search fallback available -- see
+        # _nfo_url_episode's own doc for why.
         with patch('python.tvshow_scraper.ChronicleClient') as mock_client_cls:
-            result = tvshow_scraper.nfo_url(_EPISODE_NFO, handle=1)
+            result = tvshow_scraper.nfo_url(_EPISODE_NFO_NO_IDS, handle=1)
 
         self.assertFalse(result)
         mock_client_cls.assert_not_called()
+        tvshow_scraper.xbmcplugin.addDirectoryItem.assert_not_called()
+
+    def test_episode_resolve_failure_returns_false(self):
+        mock_client = MagicMock()
+        mock_client.resolve_episode_by_external_id.return_value = None
+        with patch('python.tvshow_scraper.ChronicleClient', return_value=mock_client):
+            result = tvshow_scraper.nfo_url(_EPISODE_NFO, handle=1)
+
+        self.assertFalse(result)
         tvshow_scraper.xbmcplugin.addDirectoryItem.assert_not_called()
 
     def test_unparseable_content_returns_false(self):

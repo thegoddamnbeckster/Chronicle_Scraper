@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.tv"
        name="Chronicle Scraper (TV)"
-       version="1.11.4"
+       version="1.11.5"
        provider-name="Michael Beck">
 
   <requires>
@@ -58,7 +58,23 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (TV)</summary>
     <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. "Rebuild local NFOs from Chronicle" and the corner status indicator live in the Movies addon and cover both movies and TV shows together; this addon doesn't duplicate them. It does have its own small background service that keeps Kodi's library in sync with newly-imported content, independent of the Movies addon -- see this version's changelog.</description>
-    <news>v1.11.4 - Implements the "NfoUrl" scraper action for shows (a documented gap until now):
+    <news>v1.11.5 - Fixes the actual cause of a real household show stuck at exactly 5 of 38
+episodes no matter how many times it was rescanned, restarted, or removed-and-rescanned: v1.11.4
+above said episode-level NfoUrl calls could safely stay unhandled because "Kodi's existing
+fallback already handles those correctly once the show itself is identified" -- confirmed live
+this was WRONG. A failed show-level NfoUrl call does fall back cleanly, but a failed
+EPISODE-level one does not: kodi.log showed Kodi abandoning the rest of that show's episode scan
+entirely the moment the very first episode's NfoUrl call came back empty, never falling back to
+a normal getepisodelist/getepisodedetails pass for that show at all. Once Chronicle's own
+write_nfo feature had written a sidecar .nfo next to every episode file, that first failure
+landed on episode 1 every time, silently capping the show at whatever had scanned in before its
+NFOs existed. Now resolves the episode directly via a new Chronicle endpoint
+(tv/resolve-episode-by-external-id) using whatever provider id the episode's own NFO carries
+(tmdb/imdb/tvdb) -- there is still no show-context fallback available for an episode the way
+there is for a show, but a real id on the NFO (the common case for anything write_nfo itself
+wrote) now resolves correctly instead of failing.
+
+v1.11.4 - Implements the "NfoUrl" scraper action for shows (a documented gap until now):
 Kodi calls this when a show's own tvshow.nfo already exists on disk (e.g. from a prior tool like
 tinyMediaManager) instead of calling find(), and this addon always just failed it silently.
 Confirmed live that Kodi tolerates the failure and falls back to a normal title+year search
