@@ -14,9 +14,15 @@ contract, which is a superset of the movies contract:
   action=getepisodelist   -> get_episode_list(): one addDirectoryItem per episode
                              Chronicle already has under this show.
   action=getepisodedetails-> get_episode_details(): full details for one episode.
+  action=getartwork       -> get_artwork(): every art candidate Chronicle has for
+                             the show, for Kodi's "Choose Art" picker and its own
+                             refresh-artwork step. Fired with the show's default
+                             uniqueid as 'id' (not this addon's own lookup string,
+                             see _resolve_lookup_id's own doc) -- silently returned
+                             nothing at all before 2026-09-12 as a result.
 
-Not implemented: NfoUrl and getartwork actions, same known-gap precedent as the
-movies scraper's own NfoUrl omission -- see README.
+Not implemented: NfoUrl action, same known-gap precedent as the movies scraper's
+own NfoUrl omission -- see README.
 
 Deliberately thin, same as python/scraper.py: this file only translates between
 Kodi's plugin-handle protocol and Chronicle's HTTP API. All resolve-or-create
@@ -459,13 +465,34 @@ def get_artwork(show_id, handle):
 
 
 def _resolve_lookup_id(params):
+    """Resolves whatever Kodi passed back as 'id'/'url' to a Chronicle internal
+    MediaItem id. Three shapes, tried in order:
+      1. A bare integer -- already a Chronicle internal id.
+      2. This addon's own lookup string, {"chronicleId": N} -- what find/
+         getdetails pass to each other via the url= find_show() originally
+         handed Kodi (see build_lookup_string()).
+      3. A bare external id, e.g. "tt27497393" -- what Kodi's own getartwork
+         action passes instead, using the show's default uniqueid (imdb,
+         since Chronicle's own NFOs always mark it default="true"). Neither
+         of the above two shapes; resolved via a live Chronicle lookup.
+
+    Root-caused live (2026-09-12): case 3 wasn't handled at all -- an imdb-
+    shaped string failed int() and then failed parse_lookup_string() too (not
+    JSON), so every getartwork call silently resolved to None and Kodi's
+    "Choose Art" picker showed zero options for every TV show, always."""
     raw = params.get('id') or params.get('url')
     if raw is None:
         return None
     try:
         return int(raw)
     except (TypeError, ValueError):
-        return parse_lookup_string(raw)
+        pass
+
+    if raw.startswith('tt'):
+        result = ChronicleClient().resolve_show_by_external_id('imdb', raw)
+        return result.get('id') if result else None
+
+    return parse_lookup_string(raw)
 
 
 def run():

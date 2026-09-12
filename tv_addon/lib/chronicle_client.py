@@ -222,6 +222,24 @@ class ChronicleClient:
         return self._get(url, 'search_show({0!r}, {1!r})'.format(title, year), full_url=True,
                           timeout=_SEARCH_TIMEOUT_SECONDS)
 
+    def resolve_show_by_external_id(self, source: str, external_id: str):
+        """GET /api/v1/scraper/tv/resolve-by-external-id?source=&externalId= --
+        the lookup getartwork() needs that find/getdetails never do, since Kodi
+        passes the show's own default uniqueid (imdb, since Chronicle's own
+        NFOs always mark it default="true") back as a bare string for that one
+        action instead of this addon's own opaque lookup-string format. Never
+        creates anything, unlike search_show() -- a getartwork call for a show
+        Chronicle doesn't already know has nothing to create it FROM (no
+        title, no year, just an id)."""
+        if not self._base_url or not self._api_key:
+            log.warning('Chronicle URL or API key not configured — resolve_show_by_external_id skipped')
+            return None
+
+        url = '{0}/api/v1/scraper/tv/resolve-by-external-id?source={1}&externalId={2}'.format(
+            self._base_url, urllib.parse.quote(source), urllib.parse.quote(external_id))
+        return self._get(url, 'resolve_show_by_external_id({0!r}, {1!r})'.format(source, external_id),
+                          full_url=True, timeout=_SEARCH_TIMEOUT_SECONDS)
+
     def get_show_details(self, media_item_id: int):
         """GET /api/v1/scraper/tv/details?id= -- show-level details plus every
         season Chronicle already has for it."""
