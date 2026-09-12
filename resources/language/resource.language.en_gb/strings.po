@@ -316,3 +316,31 @@ msgstr ""
 msgctxt "#32141"
 msgid "How often the periodic check runs, in 30-minute steps. Defaults to every 2 hours (120 minutes)."
 msgstr ""
+
+msgctxt "#32142"
+msgid "Collection Art"
+msgstr ""
+
+msgctxt "#32143"
+msgid "Syncing collection art…"
+msgstr ""
+
+msgctxt "#32144"
+msgid "Automatically sync collection art"
+msgstr ""
+
+msgctxt "#32145"
+msgid "Periodically refreshes every collection's poster/fanart/logo/etc. in Kodi's own \"Movie set information folder\" from Chronicle -- not just the collections that happen to get touched as a side effect of one of their member movies being rescraped. Replaces Chronicle_Scrobbler's own collection art sync, which pushed the same art a different way (directly via Kodi's API instead of into this dedicated folder) -- movie collections belong entirely to this addon now. On by default."
+msgstr ""
+
+msgctxt "#32146"
+msgid "Sync Collection Art Now"
+msgstr ""
+
+msgctxt "#32147"
+msgid "Synced {0} collection(s){1}"
+msgstr ""
+
+msgctxt "#32148"
+msgid "Runs one collection art sync pass immediately, regardless of the automatic settings above. Useful right after changing a collection's art in Chronicle you want reflected in Kodi without waiting for the next scheduled sync."
+msgstr ""

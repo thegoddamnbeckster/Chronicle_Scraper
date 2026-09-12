@@ -336,6 +336,19 @@ class ChronicleClient:
         except Exception as exc:
             log.warning('report_scan_active(): {0}'.format(exc))
 
+    def get_all_collections(self):
+        """GET /api/v1/scraper/movies/collections -- every real collection Chronicle knows
+        about, each as {id, name, overview, posterUrl, backdropUrl, logoUrl, bannerUrl,
+        clearartUrl, discUrl, thumbUrl, pinnedSlots} -- the same shape an individual movie's own
+        get_details() response embeds under "collection", but independent of any specific
+        member movie. Used by collection_art_sync.py's own periodic task (see that module's own
+        doc) so a collection whose every member is already fully scraped still gets its art
+        refreshed when it changes in Chronicle, not only as a side effect of some member movie
+        happening to get rescraped. Returns [] on any failure -- a fetch failure here just means
+        this pass finds nothing to sync, not an error worth surfacing further than the log."""
+        result = self._get('/api/v1/scraper/movies/collections', 'get_all_collections()')
+        return result if result else []
+
     def claim_rebuild_batch(self, batch_size=25, exclude_kinds=None):
         """POST /api/v1/scraper/nfo-rebuild-queue/claim -- claims up to batch_size pending
         items from Chronicle's cross-device NFO rebuild queue (see NfoRebuildQueueItem's own

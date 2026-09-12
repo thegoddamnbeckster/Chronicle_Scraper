@@ -19,6 +19,7 @@ import xbmcaddon
 from lib.logger import Logger
 from lib.chronicle_client import ChronicleClient, find_shared_chronicle_url
 from lib.device_auth import DeviceAuthManager
+from lib import collection_art_sync
 from lib import device_registration
 from lib import nfo_rebuild
 from lib import settings_mirror
@@ -143,6 +144,9 @@ def show_menu():
         return
     if args.get('action') == 'sync_watch_ratings':
         _sync_watch_ratings_now()
+        return
+    if args.get('action') == 'sync_collections':
+        _sync_collections_now()
         return
     if args.get('action') == 'test_connection':
         _test_connection()
@@ -411,6 +415,36 @@ def _sync_watch_ratings_now():
         ADDON.getLocalizedString(32136).format(result['errors']) if result['errors'] else '')
     xbmcgui.Dialog().notification(
         ADDON.getLocalizedString(32134),
+        message,
+        icon=xbmcgui.NOTIFICATION_INFO if not result['errors'] else xbmcgui.NOTIFICATION_WARNING,
+        time=8000,
+    )
+
+
+def _sync_collections_now():
+    """Manual "Sync Collection Art Now" action -- runs the same collection_art_sync.run() pass
+    the background service triggers automatically (on load, and on its own interval),
+    immediately and on demand. No confirmation dialog, same reasoning as
+    _sync_watch_ratings_now above: sync_collection_art() overwrites local art files inside
+    Kodi's own dedicated "Movie set information folder" (never a video/NFO file), the same
+    fill-or-refresh write an ordinary scrape already does for a collection's member movie."""
+    bg = xbmcgui.DialogProgressBG()
+    bg.create(ADDON.getLocalizedString(32143))
+
+    def on_progress(index, total, label):
+        percent = min(100, int(index * 100 / total)) if total else 0
+        bg.update(percent, message=label)
+
+    try:
+        result = collection_art_sync.run(progress_callback=on_progress)
+    finally:
+        bg.close()
+
+    message = ADDON.getLocalizedString(32147).format(
+        result['collections'],
+        ADDON.getLocalizedString(32136).format(result['errors']) if result['errors'] else '')
+    xbmcgui.Dialog().notification(
+        ADDON.getLocalizedString(32143),
         message,
         icon=xbmcgui.NOTIFICATION_INFO if not result['errors'] else xbmcgui.NOTIFICATION_WARNING,
         time=8000,

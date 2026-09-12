@@ -52,6 +52,16 @@
     </category>
 
     <!-- ============================================================================ -->
+    <!-- Collection Art -->
+    <!-- ============================================================================ -->
+    <category label="32142">
+        <setting id="sync_collections_enabled" type="bool" label="32144" default="true" help="32145"/>
+        <setting id="sync_collections_on_kodi_start" type="bool" label="32128" default="true" help="32129" enable="eq(-1,true)"/>
+        <setting id="sync_collections_interval_minutes" type="slider" label="32130" default="120" range="30,30,1440" option="int" help="32131" enable="eq(-2,true)"/>
+        <setting id="sync_collections_now" type="action" label="32146" action="RunScript(script.chronicle.scraper.movie,action=sync_collections)" help="32148"/>
+    </category>
+
+    <!-- ============================================================================ -->
     <!-- New Content Detection -->
     <!-- ============================================================================ -->
     <category label="32137">

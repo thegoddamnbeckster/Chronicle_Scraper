@@ -42,6 +42,7 @@ import xbmcgui
 
 from lib.logger import Logger
 from lib import activity_tracker
+from lib import collection_art_sync
 from lib import device_registration
 from lib import kodi_scan_signal
 from lib import nfo_rebuild
@@ -113,6 +114,30 @@ class ChronicleMonitor(xbmc.Monitor):
         # slow/hanging network call when the next poll interval comes due -- cheap insurance,
         # not a response to any observed failure.
         self._scan_signal_lock = threading.Lock()
+        # Guards against this service's own periodic timer and a manual "Sync Now" (or an
+        # on-load pass still running long) overlapping -- same reasoning as
+        # _watch_rating_lock, this task has no destructive per-item step either.
+        self._collection_art_lock = threading.Lock()
+
+    def _should_defer_for_active_scan(self, task_label):
+        """True if either Kodi's own library scan (Library.IsScanning) or EITHER addon's own
+        scraper activity tail (activity_tracker -- shared across both addon packages, see that
+        module's own doc) is recent enough to still be considered "in progress". Per-user
+        decision (2026-09-12): the movie and TV scrapers' own background maintenance tasks must
+        never run at the same time as an active scan/scrape, the same way Chronicle's own
+        server-side NfoGenerationService now pauses itself for the same reason (see
+        IKodiDeviceService.IsScanActiveAsync's server-side doc) -- both are contending for the
+        same limited local (SMB/CPU) or server capacity an active scan needs most. Logged and
+        returned as a simple bool (not raised) so callers can just `if deferred: return`, same
+        shape as the existing _rebuild_lock.locked() check these tasks already had.
+        """
+        kodi_scanning = xbmc.getCondVisibility('Library.IsScanning')
+        scraper_active = activity_tracker.is_recently_active(_ACTIVITY_IDLE_TIMEOUT_SECONDS)
+        if kodi_scanning or scraper_active:
+            log.info('service: {0} deferred -- {1} still in progress'.format(
+                     task_label, 'a Kodi library scan' if kodi_scanning else 'scraper activity'))
+            return True
+        return False
 
     def onScanFinished(self, library):
         # Kodi fires this for both 'video' and 'music' library scans --
@@ -251,6 +276,8 @@ class ChronicleMonitor(xbmc.Monitor):
             log.info('service: watch/rating sync ({0}) deferred -- an NFO rebuild is in '
                      'progress'.format(trigger_label))
             return
+        if self._should_defer_for_active_scan('watch/rating sync ({0})'.format(trigger_label)):
+            return
         if not self._watch_rating_lock.acquire(False):
             log.info('service: watch/rating sync ({0}) skipped -- another pass is already '
                      'running'.format(trigger_label))
@@ -294,6 +321,63 @@ class ChronicleMonitor(xbmc.Monitor):
                 self._watch_rating_lock.release()
 
         threading.Thread(target=_do, name='chronicle-watch-rating-sync', daemon=True).start()
+
+    def run_collection_art_sync(self, trigger_label):
+        """Runs one collection_art_sync.run() pass -- see that module's own doc for why this
+        exists as its own periodic task. Same locking/deferral shape as run_watch_rating_sync
+        above: deferred behind an in-progress NFO rebuild or active scan/scrape (see
+        _should_defer_for_active_scan), guarded by its own lock so this service's startup pass
+        and periodic timer (or a manual "Sync Now") can't overlap each other.
+        """
+        if self._rebuild_lock.locked():
+            log.info('service: collection art sync ({0}) deferred -- an NFO rebuild is in '
+                     'progress'.format(trigger_label))
+            return
+        if self._should_defer_for_active_scan('collection art sync ({0})'.format(trigger_label)):
+            return
+        if not self._collection_art_lock.acquire(False):
+            log.info('service: collection art sync ({0}) skipped -- another pass is already '
+                     'running'.format(trigger_label))
+            return
+
+        def _do():
+            bg = None
+            try:
+                log.info('service: starting collection art sync ({0})'.format(trigger_label))
+
+                def on_progress(index, total, label):
+                    nonlocal bg
+                    if bg is None:
+                        bg = xbmcgui.DialogProgressBG()
+                        bg.create(ADDON.getLocalizedString(32143))
+                    percent = min(100, int(index * 100 / total)) if total else 0
+                    bg.update(percent, message=label)
+
+                result = collection_art_sync.run(is_cancelled=self.abortRequested, progress_callback=on_progress)
+                log.info(
+                    'service: collection art sync ({0}) complete -- {1} collection(s) visited, '
+                    '{2} error(s){3}'.format(
+                        trigger_label, result['collections'], result['errors'],
+                        ' (cancelled)' if result['cancelled'] else ''))
+
+                if not result['cancelled']:
+                    message = ADDON.getLocalizedString(32147).format(
+                        result['collections'],
+                        ADDON.getLocalizedString(32136).format(result['errors']) if result['errors'] else '')
+                    xbmcgui.Dialog().notification(
+                        ADDON.getLocalizedString(32143),
+                        message,
+                        icon=xbmcgui.NOTIFICATION_INFO if not result['errors'] else xbmcgui.NOTIFICATION_WARNING,
+                        time=8000,
+                    )
+            except Exception as exc:
+                log.error('service: collection art sync ({0}) failed: {1}'.format(trigger_label, exc))
+            finally:
+                if bg is not None:
+                    bg.close()
+                self._collection_art_lock.release()
+
+        threading.Thread(target=_do, name='chronicle-collection-art-sync', daemon=True).start()
 
     def run_scan_signal_check(self):
         """Runs one kodi_scan_signal.check_and_scan() pass on a background thread -- see that
@@ -363,6 +447,15 @@ def run():
     last_watch_rating_check = 0.0  # forces the very first loop iteration to check
     watch_rating_was_enabled = ADDON.getSettingBool('sync_watch_ratings_enabled')
 
+    # Collection art sync timing state -- own anchor, same reasoning as watch/rating sync's own
+    # started_at/was_enabled pair above, kept fully independent since the two features have
+    # nothing to do with each other.
+    collection_art_started_at = time.time()
+    collection_art_startup_done = False
+    last_collection_art_sync = collection_art_started_at
+    last_collection_art_check = 0.0  # forces the very first loop iteration to check
+    collection_art_was_enabled = ADDON.getSettingBool('sync_collections_enabled')
+
     # Own anchor, deliberately not shared with service_started_at above -- that one gets reset
     # on a watch-rating off-to-on transition, which has nothing to do with this feature.
     scan_signal_service_started_at = time.time()
@@ -414,6 +507,33 @@ def run():
                 # so re-enabling it doesn't immediately fire a sync that "should have" run
                 # during however long it was off.
                 last_watch_rating_sync = now
+
+        # Same shape as the watch/rating sync block above, fully independent state -- see
+        # collection_art_started_at's own doc for why.
+        if now - last_collection_art_check >= _WATCH_RATING_CHECK_INTERVAL_SECONDS:
+            last_collection_art_check = now
+            collection_art_enabled = ADDON.getSettingBool('sync_collections_enabled')
+
+            if collection_art_enabled and not collection_art_was_enabled:
+                log.info('service: collection art sync re-enabled -- treating this as a fresh start')
+                collection_art_started_at = now
+                collection_art_startup_done = False
+            collection_art_was_enabled = collection_art_enabled
+
+            if collection_art_enabled:
+                if not collection_art_startup_done and \
+                        now - collection_art_started_at >= _WATCH_RATING_STARTUP_DELAY_SECONDS:
+                    collection_art_startup_done = True
+                    if ADDON.getSettingBool('sync_collections_on_kodi_start'):
+                        last_collection_art_sync = now
+                        monitor.run_collection_art_sync('startup')
+                if collection_art_startup_done:
+                    interval_seconds = max(30, ADDON.getSettingInt('sync_collections_interval_minutes')) * 60
+                    if now - last_collection_art_sync >= interval_seconds:
+                        last_collection_art_sync = now
+                        monitor.run_collection_art_sync('scheduled')
+            else:
+                last_collection_art_sync = now
 
         # Startup check: always runs exactly once, regardless of scan_signal_enabled -- see
         # this module's own top-of-file doc for why a recurring poll isn't the default.
