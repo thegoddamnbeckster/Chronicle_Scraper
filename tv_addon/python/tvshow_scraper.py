@@ -20,9 +20,15 @@ contract, which is a superset of the movies contract:
                              uniqueid as 'id' (not this addon's own lookup string,
                              see _resolve_lookup_id's own doc) -- silently returned
                              nothing at all before 2026-09-12 as a result.
+  action=NfoUrl           -> nfo_url(): show-level only (see its own doc for why
+                             episode-level NfoUrl calls are deliberately left
+                             unresolved) -- identifies an already-organized show
+                             (e.g. one a prior tool like tinyMediaManager already
+                             scraped) straight from its own existing tvshow.nfo,
+                             the same "url" lookup token find() would otherwise
+                             have to re-derive via a title+year search.
 
-Not implemented: NfoUrl action, same known-gap precedent as the movies scraper's
-own NfoUrl omission -- see README.
+Movies scraper's own NfoUrl omission is a separate, still-open gap -- see README.
 
 Deliberately thin, same as python/scraper.py: this file only translates between
 Kodi's plugin-handle protocol and Chronicle's HTTP API. All resolve-or-create
@@ -110,6 +116,78 @@ def find_show(title, year, handle):
         listitem=listitem,
         isFolder=True,
     )
+
+
+def nfo_url(nfo_xml, handle):
+    """Kodi's "NfoUrl" action: fired when a local NFO already exists next to a file (a show's
+    own tvshow.nfo here) -- Kodi hands us its raw content and expects the SAME kind of "url"
+    lookup token find_show() returns, which Kodi then feeds straight to getdetails() instead of
+    ever calling find() at all.
+
+    Root-caused live (2026-09-12): this action was never implemented (a known, documented gap --
+    see this file's own module doc), so it always fell through to "unhandled or missing action"
+    for every show a prior tool (e.g. tinyMediaManager, confirmed live against several real
+    libraries -- .actors/ thumbnails, per-episode NFOs, theme.mp3, all classic TMM output) had
+    already organized before Chronicle's own scraper was ever assigned to the source. Confirmed
+    live that Kodi tolerates the failure by falling back to its own normal find()-based flow
+    for the show itself -- so this was never a hard "zero episodes" blocker for every affected
+    show the way it first appeared to be -- but every one of those shows still paid for a wasted
+    round trip (this call, always failing, always logged) before that fallback ever got a
+    chance to run, on top of an identification pass this can do PRECISELY (using whatever
+    provider ids are actually embedded in the existing NFO) that title+year matching alone
+    cannot. Worth closing on both counts, especially on weaker/slower devices where every extra
+    round trip during a large first-time scan adds up.
+
+    Tries a <tvshow> root only -- an episode's own per-file NFO (an <episodedetails> root) is
+    deliberately NOT handled here: unlike a show, an episode-level NfoUrl call carries no show
+    context whatsoever (no folder path, no show title, nothing beyond the episode's own fields --
+    confirmed live), so resolving it correctly needs more than this addon can determine from the
+    call alone. Kodi's own fallback already handles those episodes fine once the show itself is
+    identified (confirmed live: NfoUrl failing for every one of Ahsoka's 9 episodes still ended
+    with 9/9 correctly added) -- so leaving this unresolved for episodes costs a wasted round
+    trip per episode, not a missing one.
+    """
+    if not nfo_xml:
+        return False
+
+    tvshow_data = legacy_nfo.parse_legacy_tvshow_nfo(nfo_xml.encode('utf-8'))
+    if not tvshow_data:
+        return False
+
+    title = tvshow_data.get('title')
+    year = tvshow_data.get('year')
+    log.info('NfoUrl: tvshow -- title={0!r} year={1!r} externalIds={2!r}'.format(
+             title, year, tvshow_data.get('externalIds')))
+
+    show_id = None
+    external_ids = tvshow_data.get('externalIds') or {}
+    for source in ('imdb', 'tmdb', 'tvdb'):
+        ext_id = external_ids.get(source)
+        if not ext_id:
+            continue
+        result = ChronicleClient().resolve_show_by_external_id(source, ext_id)
+        if result:
+            show_id = result.get('id')
+            break
+
+    if show_id is None:
+        if not title:
+            return False
+        result = ChronicleClient().search_show(title, year)
+        show_id = result.get('id') if result else None
+
+    if show_id is None:
+        return False
+
+    activity_tracker.mark_active(title or str(show_id))
+    listitem = xbmcgui.ListItem(title or '', offscreen=True)
+    xbmcplugin.addDirectoryItem(
+        handle=handle,
+        url=build_lookup_string(show_id),
+        listitem=listitem,
+        isFolder=True,
+    )
+    return True
 
 
 def _merge_legacy_gaps(details, legacy_data, keys):
@@ -506,6 +584,8 @@ def run():
 
     if action == 'find' and 'title' in params:
         find_show(params['title'], params.get('year'), params['handle'])
+    elif action == 'NfoUrl' and 'nfo' in params:
+        nfo_url(params['nfo'], params['handle'])
     elif action == 'getdetails' and 'url' in params:
         get_details(parse_lookup_string(params['url']), params['handle'])
     elif action == 'getepisodelist' and 'url' in params:
