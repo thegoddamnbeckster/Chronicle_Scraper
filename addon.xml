@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.15.2"
+       version="3.15.3"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,17 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.15.2 - lib/tvshow_location.py's find_show_location() now caches a show's resolved
+    <news>v3.15.3 - Root-caused live (2026-09-12): during an active library scan, Chronicle's own
+scheduled NFO-generation sweep and this addon's live per-item pushes were independently
+rebuilding and writing the same freshly-scanned item's NFO within seconds of each other -- pure
+waste that competed with the scan itself for the same server/IO capacity, slowing the whole scan
+down (confirmed live: 6 episodes of a single show taking far longer than they should have).
+service.py now sends Chronicle a short heartbeat (via the existing corner-status idle loop,
+already polling Kodi's own scan state and this addon's scraper-activity tail every ~3s) while a
+scan is active, so the server-side sweep pauses itself for the duration instead of contending
+with it. No settings change needed -- this is on for everyone automatically.
+
+v3.15.2 - lib/tvshow_location.py's find_show_location() now caches a show's resolved
 (folder, tvshowid) for 15 minutes instead of re-resolving it via Kodi's own API on every single
 call -- fixes a real household TV library that never fully scanned in on the sibling TV addon
 (same root cause, same fix, this addon's own copy of the file per its own "fix it in both

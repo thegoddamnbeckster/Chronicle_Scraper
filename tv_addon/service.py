@@ -27,11 +27,20 @@ import time
 import xbmc
 import xbmcaddon
 
+from lib import activity_tracker
 from lib import kodi_scan_signal
+from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
 
 ADDON = xbmcaddon.Addon()
 log = Logger('service')
+
+# Same idle-timeout/heartbeat shape as the sibling Movies addon's own service.py -- see that
+# module's own doc for report_scan_active()'s full reasoning. Duplicated (not shared) because
+# this addon must keep working standalone with no Movies addon installed at all -- see this
+# file's own top-of-module doc for why the two services can't share code across addon packages.
+_ACTIVITY_IDLE_TIMEOUT_SECONDS = 30
+_SCAN_ACTIVE_HEARTBEAT_SECONDS = 60
 
 # Chronicle's "new content available" flag (lib/kodi_scan_signal.py) is always checked once
 # after Kodi starts, regardless of the scan_signal_enabled setting -- most imports land via
@@ -84,6 +93,7 @@ def run():
     service_started_at = time.time()
     startup_done = False
     last_scan_signal_check = 0.0  # only consulted once scan_signal_enabled is on
+    last_scan_active_heartbeat = 0.0  # forces an immediate first heartbeat once scanning starts
 
     # Standard Kodi service idle loop: sleep in short increments so abortRequested() (set on
     # Kodi shutdown) is noticed promptly instead of blocking in one long sleep.
@@ -101,6 +111,24 @@ def run():
             if now - last_scan_signal_check >= interval_seconds:
                 last_scan_signal_check = now
                 monitor.run_scan_signal_check()
+
+        # Covers this addon's own scraper-activity tail (per-episode find/NfoUrl/
+        # getepisodedetails calls, each its own short-lived process -- see
+        # lib/activity_tracker.py) as well as Kodi's own directory-walk phase, since
+        # NfoGenerationService's scheduled sweep used to contend with an active scan for the
+        # same server/IO capacity for the whole duration of either -- see
+        # ChronicleClient.report_scan_active's own doc.
+        kodi_scanning = xbmc.getCondVisibility('Library.IsScanning')
+        activity = activity_tracker.read_activity()
+        scraper_active = activity is not None and \
+            (time.time() - activity.get('timestamp', 0)) < _ACTIVITY_IDLE_TIMEOUT_SECONDS
+        if (kodi_scanning or scraper_active) and \
+                now - last_scan_active_heartbeat >= _SCAN_ACTIVE_HEARTBEAT_SECONDS:
+            last_scan_active_heartbeat = now
+            threading.Thread(
+                target=ChronicleClient().report_scan_active,
+                name='chronicle-tv-scan-active-heartbeat', daemon=True,
+            ).start()
 
         if monitor.waitForAbort(_POLL_INTERVAL_SECONDS):
             break

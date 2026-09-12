@@ -345,6 +345,33 @@ class ChronicleClient:
             log.warning('report_kodi_id({0}, {1!r}, {2}): unexpected error: {3}'.format(
                         media_item_id, kind, kodi_id, exc))
 
+    def report_scan_active(self):
+        """POST /api/v1/scraper/scan-active -- heartbeat telling Chronicle "a Kodi device is
+        actively scanning right now," so NfoGenerationService's own 2-minute scheduled sweep
+        pauses itself for the duration instead of contending with the scan for the same server/
+        IO capacity. Root-caused live (2026-09-12): the sweep and an active scan's own live,
+        per-item NFO pushes routinely landed on the same freshly-discovered item within seconds
+        of each other, each independently rebuilding and writing the identical NFO. Called from
+        service.py's own idle loop while Kodi's library scan OR this addon's own scraper-activity
+        tail is still running -- the tail matters just as much as Kodi's own directory-walk
+        phase, since that's where the actual per-item contention happens. No explicit "finished"
+        call by design: the server-side flag simply expires a couple of minutes after the last
+        heartbeat. Best-effort, same as report_kodi_id(): a failure here must never interrupt
+        whatever scan/scrape is actually in progress."""
+        if not self._base_url or not self._api_key:
+            return
+        url = '{0}/api/v1/scraper/scan-active'.format(self._base_url)
+        req = self._build_request(url, data=b'{}', method='POST')
+
+        def _do():
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status
+
+        try:
+            call_with_timeout(_do, 10)
+        except Exception as exc:
+            log.warning('report_scan_active(): {0}'.format(exc))
+
     def contribute_metadata(self, media_item_id: int, source: str, metadata: dict):
         """POST /api/v1/media/{id}/metadata/{source} -- contributes fields
         harvested from a local source (e.g. a pre-existing NFO another tool

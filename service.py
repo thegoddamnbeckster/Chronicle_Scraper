@@ -47,6 +47,7 @@ from lib import kodi_scan_signal
 from lib import nfo_rebuild
 from lib import settings_upgrade
 from lib import watch_rating_sync
+from lib.chronicle_client import ChronicleClient
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('service')
@@ -84,6 +85,13 @@ _WATCH_RATING_CHECK_INTERVAL_SECONDS = 60
 # live: Chronicle_Scrobbler's VideoLibrary.Clean, SIMKL's own full sync pass), so this defaults
 # to conservative rather than "as fast as possible."
 _SCAN_SIGNAL_STARTUP_DELAY_SECONDS = 60
+
+# How often to renew the server-side "a Kodi device is actively scanning" flag (see
+# lib/chronicle_client.py's report_scan_active()) while Kodi's own library scan OR this addon's
+# own scraper-activity tail is still running. Comfortably shorter than that flag's own 3-minute
+# server-side TTL so a renewal is never late enough for the flag to lapse mid-scan, but far
+# longer than the 3s idle-loop tick so this isn't a Chronicle POST on every single tick.
+_SCAN_ACTIVE_HEARTBEAT_SECONDS = 60
 
 
 class ChronicleMonitor(xbmc.Monitor):
@@ -361,6 +369,8 @@ def run():
     scan_signal_startup_done = False
     last_scan_signal_check = 0.0  # only consulted once scan_signal_enabled is on
 
+    last_scan_active_heartbeat = 0.0  # forces an immediate first heartbeat once scanning starts
+
     # Standard Kodi service idle loop: sleep in short increments so
     # abortRequested() (set on Kodi shutdown) is noticed promptly instead of
     # blocking in one long sleep.
@@ -431,6 +441,20 @@ def run():
         # goes away, this one picks straight back up showing whatever total
         # already accumulated during the walk, not starting over from zero.
         kodi_scanning = xbmc.getCondVisibility('Library.IsScanning')
+
+        # Covers BOTH content types, even for a user with only this addon installed: the tail
+        # this addon's own scraper actions leave behind after Kodi's own directory-walk phase
+        # ends (is_active, computed above from the shared activity_tracker signal file) is
+        # exactly where NfoGenerationService's own scheduled sweep used to contend with an
+        # active scan for the same server/IO capacity -- see report_scan_active()'s own doc.
+        if (kodi_scanning or is_active) and \
+                time.time() - last_scan_active_heartbeat >= _SCAN_ACTIVE_HEARTBEAT_SECONDS:
+            last_scan_active_heartbeat = time.time()
+            threading.Thread(
+                target=ChronicleClient().report_scan_active,
+                name='chronicle-scan-active-heartbeat', daemon=True,
+            ).start()
+
         show_now = is_active and not kodi_scanning
 
         if show_now:
