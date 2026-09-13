@@ -349,76 +349,10 @@ class ChronicleClient:
         result = self._get('/api/v1/scraper/movies/collections', 'get_all_collections()')
         return result if result else []
 
-    def claim_rebuild_batch(self, batch_size=25, exclude_kinds=None):
-        """POST /api/v1/scraper/nfo-rebuild-queue/claim -- claims up to batch_size pending
-        items from Chronicle's cross-device NFO rebuild queue (see NfoRebuildQueueItem's own
-        doc server-side) for THIS device specifically -- Chronicle resolves which device from
-        the API key alone, same as report_kodi_id(). Returns {'items': [...], 'totalPending': N}
-        -- each item dict carries queueItemId/mediaItemId/kind/name/year/showName/showYear/
-        season/episode/knownFileName (movies only -- already a bare basename with extension,
-        no directory to strip; see NfoRebuildQueueClaimDto's own server-side doc) -- what
-        nfo_rebuild.py needs to resolve it in this device's own local VideoLibrary; totalPending
-        is the queue's overall remaining depth AFTER this
-        claim, for a progress bar that reflects the real backlog instead of resetting to "X of
-        {batch_size}" every single batch. Returns {'items': [], 'totalPending': 0} on any
-        failure -- a claim failure just means this pass finds nothing to do right now, not an
-        error worth surfacing further than the log. Logged at info level (not just on failure)
-        since this is the one call that tells you whether the rebuild is actually making
-        progress or has run dry.
-
-        exclude_kinds, if given (a list of "movie"/"tvshow"/"episode" strings), asks Chronicle
-        to skip handing back any item of those kinds -- see nfo_rebuild.py's
-        _KIND_FAILURE_STREAK_THRESHOLD for why: this device already proved this run it can't
-        resolve that kind locally, so there's no point being handed more of it. Omitted from the
-        request body entirely when empty/None, not sent as an empty list -- keeps this an
-        additive, backward-compatible request shape."""
-        empty = {'items': [], 'totalPending': 0}
-        if not self._base_url or not self._api_key:
-            log.warning('claim_rebuild_batch: Chronicle URL or API key not configured -- skipped')
-            return empty
-        body = {'batchSize': batch_size}
-        if exclude_kinds:
-            body['excludeKinds'] = list(exclude_kinds)
-        result = self._post('nfo-rebuild-queue/claim', body,
-                             'claim_rebuild_batch({0})'.format(batch_size))
-        if not result:
-            return empty
-        items = result.get('items') or []
-        total_pending = result.get('totalPending') or 0
-        log.info('claim_rebuild_batch({0}, exclude_kinds={1}): claimed {2} item(s), {3} still '
-                 'pending overall'.format(batch_size, exclude_kinds or [], len(items), total_pending))
-        return {'items': items, 'totalPending': total_pending}
-
-    def complete_rebuild_item(self, queue_item_id: int):
-        """POST /api/v1/scraper/nfo-rebuild-queue/complete -- tells Chronicle this device
-        confirmed the item's NFO, so no other device (of this user's several -- upstairs,
-        downstairs, storage, vision, office) needs to redo it. Best-effort: a failure here just
-        means the item stays claimed until its lease lapses and becomes reclaimable again --
-        not silent data loss, just a wasted retry."""
-        if not self._base_url or not self._api_key:
-            return
-        result = self._post('nfo-rebuild-queue/complete', {'queueItemId': queue_item_id},
-                             'complete_rebuild_item({0})'.format(queue_item_id))
-        log.info('complete_rebuild_item({0}): {1}'.format(
-                 queue_item_id, 'confirmed' if result and result.get('completed') else 'failed'))
-
-    def release_rebuild_item(self, queue_item_id: int):
-        """POST /api/v1/scraper/nfo-rebuild-queue/release -- gives up a claim immediately (this
-        device determined it can't process the item, e.g. it doesn't have this file at all) so
-        another device doesn't have to wait out the full lease before it becomes claimable
-        again. Best-effort, same as complete_rebuild_item()."""
-        if not self._base_url or not self._api_key:
-            return
-        result = self._post('nfo-rebuild-queue/release', {'queueItemId': queue_item_id},
-                             'release_rebuild_item({0})'.format(queue_item_id))
-        log.info('release_rebuild_item({0}): {1}'.format(
-                 queue_item_id, 'released' if result and result.get('released') else 'failed'))
-
     def is_scan_needed(self):
         """GET /api/v1/scraper/kodi-scan-signal -- true if Chronicle imported new movie/TV
-        content since this device last acknowledged (see acknowledge_scan_needed()). Unlike
-        nfo_rebuild.py's rebuild queue (which only refreshes an item Kodi ALREADY has a library
-        entry for), this is how a brand-new file gets discovered at all: VideoLibrary.Refresh*
+        content since this device last acknowledged (see acknowledge_scan_needed()). This is how
+        a brand-new file gets discovered at all: VideoLibrary.Refresh*
         cannot do that, only VideoLibrary.Scan can, and Chronicle's server never calls a device's
         JSON-RPC directly for this -- this device polls and runs the scan on itself via its own
         LOCAL xbmc.executeJSONRPC, so nothing here needs "Allow remote control via HTTP" turned
@@ -510,17 +444,6 @@ class ChronicleClient:
         except Exception as exc:
             log.warning('register_device({0!r}, {1}:{2}): unexpected error: {3}'.format(
                         name, host, port, exc))
-
-    def fetch_movie_sidecar(self, media_item_id: int):
-        """GET /api/v1/scraper/movies/sidecar?id= -- raw Kodi-native NFO XML bytes built
-        server-side by whichever ISidecarFormatPlugin is installed (Chronicle.Plugin.Kodi.NFO),
-        from exactly the same resolved data get_movie_details() already returns as JSON. Used
-        only by lib/nfo_writer.py's sync_movie_nfo(), itself only ever called during an explicit
-        NFO-rebuild pass (see lib/rebuild_state.py) -- ordinary scans never call this. Returns
-        raw bytes, or None on any failure (not configured, network error, no sidecar-format
-        plugin installed server-side, item not found)."""
-        return self._get_bytes('/api/v1/scraper/movies/sidecar?id={0}'.format(media_item_id),
-                                'fetch_movie_sidecar({0})'.format(media_item_id))
 
     def push_watched(self, media_item_id: int, timestamp_iso):
         """POST /api/v1/scrobble -- imports Kodi's own local watched status into Chronicle
@@ -696,35 +619,6 @@ class ChronicleClient:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 parsed = json.loads(resp.read().decode('utf-8'))
                 return parsed.get('data')
-
-        try:
-            return _call_with_retries(_do, timeout, log_label)
-        except urllib.error.HTTPError as exc:
-            log.error('{0}: Chronicle returned HTTP {1} ({2})'.format(log_label, exc.code, exc.reason))
-            return None
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            log.error('{0}: Chronicle not reachable at {1} after retrying ({2})'.format(
-                      log_label, self._base_url, exc))
-            return None
-        except Exception as exc:
-            log.error('{0}: unexpected error: {1}'.format(log_label, exc))
-            return None
-
-    def _get_bytes(self, path_or_url: str, log_label: str, full_url: bool = False, timeout: int = 20):
-        """Same as _get() above, but for an endpoint that returns a raw body (e.g.
-        application/octet-stream) instead of Chronicle's usual {success, data} JSON envelope --
-        currently only the sidecar-building endpoints. Returns the raw response bytes, or None
-        on any failure, same failure-handling shape as _get()."""
-        if not self._base_url or not self._api_key:
-            log.warning('Chronicle URL or API key not configured — {0} skipped'.format(log_label))
-            return None
-
-        url = path_or_url if full_url else '{0}{1}'.format(self._base_url, path_or_url)
-        req = self._build_request(url)
-
-        def _do():
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()
 
         try:
             return _call_with_retries(_do, timeout, log_label)

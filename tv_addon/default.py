@@ -9,14 +9,13 @@ Kodi's library scanner -- this file only handles connecting the addon to a
 Chronicle account, same UX as Chronicle Scraper (Movies) and
 Chronicle_Scrobbler.
 
-Deliberately does NOT duplicate "Rebuild local NFOs from Chronicle" or the
-corner status indicator -- those live in the Movies addon's own default.py/
-service.py and already cover both movies and TV shows together (see
-lib/nfo_rebuild.py and lib/activity_tracker.py there, both keyed by
-cross-process signal files under special://temp/chronicle_scraper/, not by
-addon id, so either addon's rebuild pass reaches both). Adding a second copy
-of that menu entry here would just be two buttons that do the exact same
-thing.
+Deliberately does NOT duplicate the corner status indicator -- that lives in
+the Movies addon's own default.py/service.py (see lib/activity_tracker.py
+there, keyed by a cross-process signal file under
+special://temp/chronicle_scraper/, not by addon id, so it already covers
+both addons). Local NFO writing/rebuilding was a separate feature that
+existed in both addons and has since been removed entirely (2026-09-13) --
+see git history if you need the old rationale.
 
 ## Chronicle URL: one entry point, not two
 
@@ -44,6 +43,7 @@ key after confirmation, then falls through to this same entry point.
 """
 
 import sys
+import time
 import traceback
 
 import xbmcgui
@@ -52,16 +52,10 @@ import xbmcaddon
 from lib.logger import Logger
 from lib.chronicle_client import ChronicleClient, find_shared_chronicle_url
 from lib.device_auth import DeviceAuthManager
-from lib import settings_mirror
-from lib import settings_upgrade
+from lib import library_repair
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('default')
-
-# The sibling package's addon id -- see lib/settings_mirror.py's own
-# docstring for why write_nfo/write_streamdetails are worth offering to
-# mirror there.
-_SIBLING_ADDON_ID = 'script.chronicle.scraper.movie'
 
 
 def _get_args():
@@ -171,11 +165,21 @@ def show_menu():
     if args.get('action') == 'test_connection':
         _test_connection()
         return
+    if args.get('action') == 'library_repair_explain':
+        _library_repair_explain()
+        return
+    if args.get('action') == 'library_repair_preview':
+        _library_repair_preview()
+        return
+    if args.get('action') == 'library_repair':
+        _library_repair()
+        return
+    if args.get('action') == 'library_repair_undo':
+        _library_repair_undo()
+        return
 
     _refresh_auth_status()
-    before = settings_mirror.snapshot(ADDON)
     ADDON.openSettings()
-    settings_mirror.offer_mirror(ADDON, before, _SIBLING_ADDON_ID)
 
 
 def _test_connection():
@@ -285,6 +289,174 @@ def _change_chronicle_url():
     _connect_to_chronicle()
 
 
+def _library_repair_group_lines(groups, limit=8):
+    """Formats detect_orphans()'s `groups` list into the "N episode(s) -- e.g. path" lines shown
+    in every Preview/Repair dialog -- see lib/library_repair.detect_orphans()'s own doc for why
+    a show TITLE can never be shown here: once the owning tvshow row is gone (that's the whole
+    problem being fixed), there is no title left to look up."""
+    lines = []
+    for group in groups[:limit]:
+        example = group['example_paths'][0] if group['example_paths'] else '?'
+        lines.append(ADDON.getLocalizedString(32161).format(group['episode_count'], example))
+    if len(groups) > limit:
+        lines.append(ADDON.getLocalizedString(32162).format(len(groups) - limit))
+    return '\n'.join(lines)
+
+
+def _library_repair_explain():
+    """"What Is This?" -- shows the full plain-language explanation of Library Repair as an
+    actual dialog. Confirmed live (2026-09-13): whatever renders a setting's own help= text
+    isn't visible at all on at least one real device/skin this addon runs on, so the
+    explanation cannot depend on a user ever seeing that panel -- this is the guaranteed path
+    to it instead. Read-only, no lock, no database access of any kind."""
+    xbmcgui.Dialog().ok(ADDON.getLocalizedString(32150), ADDON.getLocalizedString(32172))
+
+
+def _library_repair_preview():
+    """Read-only "Repair Stuck Episodes -- Preview" action -- runs detection only and shows
+    what was found. Changes nothing, ever; see lib/library_repair.py's own module docstring."""
+    heading = ADDON.getLocalizedString(32151)
+    try:
+        report = library_repair.preview()
+    except library_repair.LibraryRepairError as exc:
+        log.warning('_library_repair_preview: aborted -- {0} ({1})'.format(exc.reason_code, exc.user_message))
+        xbmcgui.Dialog().ok(heading, exc.user_message)
+        return
+    except Exception:
+        log.error('_library_repair_preview: unexpected error:\n{0}'.format(traceback.format_exc()))
+        xbmcgui.Dialog().ok(heading, 'Preview failed unexpectedly -- see kodi.log for details.')
+        return
+
+    stale_shows = report['stale_shows']
+    if report['total_episodes'] == 0 and not stale_shows:
+        message = ADDON.getLocalizedString(32163)  # nothing wrong at all
+    elif report['total_episodes'] == 0:
+        message = ADDON.getLocalizedString(32176)  # neutral -- a stale-show note follows below
+    else:
+        message = ADDON.getLocalizedString(32171).format(
+            report['total_episodes'], len(report['groups']), _library_repair_group_lines(report['groups']))
+    if stale_shows:
+        message += ADDON.getLocalizedString(32174).format(len(stale_shows))
+    xbmcgui.Dialog().ok(heading, message)
+    ADDON.setSetting('library_repair_last_result', message)
+
+
+def _library_repair():
+    """"Repair Stuck Episodes" -- the real, destructive action. Detects fresh (never reuses a
+    result from a separate earlier Preview invocation), shows exactly what it found, and only on
+    explicit confirmation runs the actual backup-then-delete pass. See
+    lib/library_repair.py's own module docstring for the full safety design."""
+    heading = ADDON.getLocalizedString(32153)
+    try:
+        db_path, report = library_repair.prepare_repair()
+    except library_repair.LibraryRepairError as exc:
+        log.warning('_library_repair: aborted before detection -- {0} ({1})'.format(exc.reason_code, exc.user_message))
+        xbmcgui.Dialog().ok(heading, exc.user_message)
+        return
+    except Exception:
+        log.error('_library_repair: unexpected error during detection:\n{0}'.format(traceback.format_exc()))
+        xbmcgui.Dialog().ok(heading, 'Repair failed unexpectedly -- see kodi.log for details.')
+        return
+
+    stale_shows = report['stale_shows']
+    if report['total_episodes'] == 0 and not stale_shows:
+        library_repair.finish_repair(db_path, report, execute=False)
+        message = ADDON.getLocalizedString(32163)
+        xbmcgui.Dialog().ok(heading, message)
+        ADDON.setSetting('library_repair_last_result', message)
+        return
+
+    if report['total_episodes'] == 0:
+        confirm_message = ADDON.getLocalizedString(32176)  # neutral -- a stale-show note follows below
+    else:
+        confirm_message = ADDON.getLocalizedString(32160).format(
+            report['total_episodes'], len(report['groups']), _library_repair_group_lines(report['groups']))
+    if stale_shows:
+        confirm_message += ADDON.getLocalizedString(32174).format(len(stale_shows))
+
+    confirmed = xbmcgui.Dialog().yesno(
+        heading, confirm_message,
+        yeslabel=ADDON.getLocalizedString(32159),
+        nolabel=ADDON.getLocalizedString(32158),
+    )
+
+    if not confirmed:
+        library_repair.finish_repair(db_path, report, execute=False)
+        log.info('_library_repair: user declined -- no changes made')
+        return
+
+    bg = xbmcgui.DialogProgressBG()
+    bg.create(heading)
+    try:
+        result = library_repair.finish_repair(db_path, report, execute=True)
+    finally:
+        bg.close()
+
+    if result['aborted']:
+        if result['backup_path']:
+            message = ADDON.getLocalizedString(32167).format(result['abort_reason'], result['backup_path'])
+        else:
+            message = '{0} ({1})'.format(ADDON.getLocalizedString(32166), result['abort_reason'])
+        log.warning('_library_repair: aborted mid-run -- {0}'.format(result['abort_reason']))
+        xbmcgui.Dialog().ok(heading, message)
+        ADDON.setSetting('library_repair_last_result', message)
+        return
+
+    if result['deleted_episodes'] > 0:
+        message = ADDON.getLocalizedString(32164).format(
+            result['deleted_episodes'], len(report['groups']), result['backup_path'])
+    else:
+        message = ADDON.getLocalizedString(32176)  # no orphan backup was made -- only stale shows were fixed
+    if result['repaired_stale_shows']:
+        message += ADDON.getLocalizedString(32175).format(len(result['repaired_stale_shows']))
+    xbmcgui.Dialog().ok(heading, message)
+    ADDON.setSetting('library_repair_last_result', message)
+
+    directories = library_repair.own_source_directories(db_path)
+    if directories and xbmcgui.Dialog().yesno(heading, ADDON.getLocalizedString(32165)):
+        library_repair.trigger_scan(directories)
+
+
+def _library_repair_undo():
+    """"Undo Last Repair" -- reverses exactly the single most recent "Repair Stuck Episodes"
+    run on this device, from the backup it made at the time. See lib/library_repair.py's own
+    undo_last_repair() docstring for why this is a scoped re-insert, never a whole-file
+    restore."""
+    heading = ADDON.getLocalizedString(32155)
+    manifest = library_repair.peek_last_manifest()
+    if not manifest:
+        xbmcgui.Dialog().ok(heading, 'No repair has been run on this device yet -- there is nothing to undo.')
+        return
+
+    when = time.strftime('%Y-%m-%d %H:%M', time.localtime(manifest.get('created_at', 0)))
+    confirmed = xbmcgui.Dialog().yesno(
+        heading,
+        ADDON.getLocalizedString(32168).format(len(manifest['episode_ids']), when),
+        yeslabel=ADDON.getLocalizedString(32159),
+        nolabel=ADDON.getLocalizedString(32158),
+    )
+    if not confirmed:
+        return
+
+    try:
+        result = library_repair.run_undo()
+    except library_repair.LibraryRepairError as exc:
+        log.warning('_library_repair_undo: aborted -- {0} ({1})'.format(exc.reason_code, exc.user_message))
+        xbmcgui.Dialog().ok(heading, exc.user_message)
+        return
+    except Exception:
+        log.error('_library_repair_undo: unexpected error:\n{0}'.format(traceback.format_exc()))
+        xbmcgui.Dialog().ok(heading, 'Undo failed unexpectedly -- see kodi.log for details.')
+        return
+
+    if result['aborted']:
+        message = ADDON.getLocalizedString(32170).format(result['abort_reason'])
+        log.warning('_library_repair_undo: aborted mid-run -- {0}'.format(result['abort_reason']))
+    else:
+        message = ADDON.getLocalizedString(32169).format(result['restored_episodes'])
+    xbmcgui.Dialog().ok(heading, message)
+    ADDON.setSetting('library_repair_last_result', message)
+
+
 if __name__ == '__main__':
-    settings_upgrade.ensure_defaults_migrated()
     show_menu()

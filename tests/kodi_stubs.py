@@ -64,6 +64,31 @@ def _fake_delete(path):
     return True
 
 
+class _FakeListItem:
+    """Stands in for xbmcgui.ListItem for tests that exercise get_details()/get_artwork() end
+    to end -- a bare `MagicMock` alias (this module's original stub) breaks the instant real
+    addon code calls it, since MagicMock's own __init__ treats the FIRST positional arg as
+    `spec`: `ListItem(label, offscreen=True)` silently became `MagicMock(spec=label,
+    offscreen=True)`, spec'd to whatever `str` has -- so getVideoInfoTag()/setArt() raised
+    AttributeError instead of returning/doing anything, undetected until 2026-09-13 because no
+    existing test called a function that reaches either (same bug already found and fixed in
+    the TV addon's own kodi_stubs.py -- ported here). getVideoInfoTag() returns a fresh,
+    unconstrained MagicMock -- tests that care what got set on it should capture and assert
+    against that return value, not construct their own."""
+
+    def __init__(self, label='', offscreen=False):
+        self.label = label
+        self.offscreen = offscreen
+        self._video_info_tag = MagicMock()
+        self._art = {}
+
+    def getVideoInfoTag(self):
+        return self._video_info_tag
+
+    def setArt(self, art):
+        self._art.update(art)
+
+
 def _install():
     xbmc = types.ModuleType('xbmc')
     xbmc.LOGDEBUG = 0
@@ -84,7 +109,7 @@ def _install():
     xbmcaddon.Addon = MagicMock(return_value=_addon)
 
     xbmcgui = types.ModuleType('xbmcgui')
-    xbmcgui.ListItem = MagicMock
+    xbmcgui.ListItem = _FakeListItem
     xbmcgui.Dialog = MagicMock
     xbmcgui.NOTIFICATION_INFO = 0
     xbmcgui.NOTIFICATION_WARNING = 1

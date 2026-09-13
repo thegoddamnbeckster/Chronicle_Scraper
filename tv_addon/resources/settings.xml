@@ -26,29 +26,39 @@
     </category>
 
     <!-- ============================================================================ -->
-    <!-- Local Files -->
-    <!-- ============================================================================ -->
-    <category label="32090">
-        <setting id="write_nfo" type="bool" label="32091" default="true" help="32092"/>
-        <!-- write_streamdetails removed (2026-09-12): its only effect was on the now-removed
-             per-episode NFO write (a show's own tvshow.nfo has no per-file streamdetails to
-             carry in the first place). Left as a stored-but-unused value for anyone upgrading
-             rather than migrated away -- see lib/settings_upgrade.py if this ever needs a
-             real one-time cleanup. -->
-        <!-- Set automatically by lib/settings_upgrade.py the first time this addon runs after
-             v1.10.0: a settings.xml default="..." only ever applies to a value Kodi has never
-             persisted, so this one-time code migration is what actually gets an
-             already-installed copy onto the new write_nfo default. Not meant to be touched by
-             hand. -->
-        <setting id="migrated_write_nfo_default_v1_10_0" type="bool" visible="false" default="false"/>
-    </category>
-
-    <!-- ============================================================================ -->
     <!-- New Content Detection -->
     <!-- ============================================================================ -->
     <category label="32137">
         <setting id="scan_signal_enabled" type="bool" label="32138" default="false" help="32139"/>
         <setting id="scan_signal_interval_minutes" type="slider" label="32140" default="120" range="30,30,1440" option="int" help="32141" enable="eq(-1,true)"/>
+    </category>
+
+    <!-- ============================================================================ -->
+    <!-- Library Repair -->
+    <!-- ============================================================================ -->
+    <!-- See lib/library_repair.py's own module docstring for the full design/safety
+         reasoning. Four items, deliberately: "What Is This?" shows the full plain-language
+         explanation as an actual dialog rather than relying on this settings screen's own
+         help= panel; confirmed live (2026-09-13) that whatever renders help= text isn't
+         visible at all on at least one real device/skin combination this addon runs on, so
+         the explanation cannot depend on it being seen. Preview is entirely read-only (safe
+         to run any time, with nothing to confirm), Repair is the real, destructive action
+         (its own confirmation happens in default.py after Preview's same detection pass runs
+         again fresh), and Undo Last Repair only ever reverses the single most recent Repair
+         run, from the backup it made at the time. help= is still set on each; it costs
+         nothing and may render on some skins; but "What Is This?" is now the guaranteed
+         path to the explanation, not a supplement to it. -->
+    <category label="32150">
+        <setting id="library_repair_explain" type="action" label="32173"
+                 action="RunScript(script.chronicle.scraper.tv,action=library_repair_explain)"/>
+        <setting id="library_repair_preview" type="action" label="32151"
+                 action="RunScript(script.chronicle.scraper.tv,action=library_repair_preview)" help="32152"/>
+        <setting id="library_repair" type="action" label="32153"
+                 action="RunScript(script.chronicle.scraper.tv,action=library_repair)" help="32154"/>
+        <setting id="library_repair_undo" type="action" label="32155"
+                 action="RunScript(script.chronicle.scraper.tv,action=library_repair_undo)" help="32156"/>
+        <!-- Set automatically after each Preview/Repair/Undo run; not meant to be typed by hand. -->
+        <setting id="library_repair_last_result" type="text" label="32157" enable="false" default=""/>
     </category>
 
 </settings>

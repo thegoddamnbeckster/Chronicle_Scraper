@@ -411,20 +411,9 @@ class ChronicleClient:
             log.warning('contribute_metadata({0}, {1!r}): unexpected error: {2}'.format(
                         media_item_id, source, exc))
 
-    def fetch_show_sidecar(self, media_item_id: int):
-        """GET /api/v1/scraper/tv/sidecar?id= -- raw Kodi-native tvshow.nfo XML bytes built
-        server-side by whichever ISidecarFormatPlugin is installed (Chronicle.Plugin.Kodi.NFO),
-        from exactly the same resolved data get_show_details() already returns as JSON. Used
-        only by lib/tv_nfo_writer.py's sync_show_nfo(), itself only ever called during an
-        explicit NFO-rebuild pass (see lib/rebuild_state.py). Returns raw bytes, or None on any
-        failure (not configured, network error, no sidecar-format plugin installed server-side,
-        item not found)."""
-        return self._get_bytes('/api/v1/scraper/tv/sidecar?id={0}'.format(media_item_id),
-                                'fetch_show_sidecar({0})'.format(media_item_id))
-
-    # fetch_episode_sidecar() removed (2026-09-12) along with its only caller,
-    # lib/tv_nfo_writer.py's sync_episode_nfo() -- Chronicle no longer writes per-episode NFOs
-    # at all. The server endpoint it called (GET tv/episode-sidecar) was removed the same day.
+    # fetch_show_sidecar()/fetch_episode_sidecar() removed (2026-09-13/2026-09-12) along with
+    # their only callers -- Chronicle no longer writes any local NFO for this addon at all. The
+    # server endpoints they called (GET tv/sidecar, GET tv/episode-sidecar) were removed too.
 
     def push_watched(self, media_item_id: int, timestamp_iso):
         """POST /api/v1/scrobble -- imports Kodi's own local watched status into Chronicle
@@ -613,35 +602,6 @@ class ChronicleClient:
             # unrelated request being canceled server-side, 401 from a stale API
             # key). Distinct from "not reachable at all" below -- worth telling
             # those apart when reading the log later.
-            log.error('{0}: Chronicle returned HTTP {1} ({2})'.format(log_label, exc.code, exc.reason))
-            return None
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            log.error('{0}: Chronicle not reachable at {1} after retrying ({2})'.format(
-                      log_label, self._base_url, exc))
-            return None
-        except Exception as exc:
-            log.error('{0}: unexpected error: {1}'.format(log_label, exc))
-            return None
-
-    def _get_bytes(self, path_or_url: str, log_label: str, full_url: bool = False, timeout: int = 20):
-        """Same as _get() above, but for an endpoint that returns a raw body (e.g.
-        application/octet-stream) instead of Chronicle's usual {success, data} JSON envelope --
-        currently only the sidecar-building endpoints. Returns the raw response bytes, or None
-        on any failure, same failure-handling shape as _get()."""
-        if not self._base_url or not self._api_key:
-            log.warning('Chronicle URL or API key not configured — {0} skipped'.format(log_label))
-            return None
-
-        url = path_or_url if full_url else '{0}{1}'.format(self._base_url, path_or_url)
-        req = self._build_request(url)
-
-        def _do():
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()
-
-        try:
-            return _call_with_retries(_do, timeout, log_label)
-        except urllib.error.HTTPError as exc:
             log.error('{0}: Chronicle returned HTTP {1} ({2})'.format(log_label, exc.code, exc.reason))
             return None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:

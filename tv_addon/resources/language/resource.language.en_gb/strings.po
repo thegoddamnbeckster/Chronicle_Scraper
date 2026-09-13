@@ -111,18 +111,6 @@ msgctxt "#32085"
 msgid "Chronicle URL is not set — enter it above, then try Connect again."
 msgstr ""
 
-msgctxt "#32090"
-msgid "Local Files"
-msgstr ""
-
-msgctxt "#32091"
-msgid "Recreate local NFO file from Chronicle's data"
-msgstr ""
-
-msgctxt "#32092"
-msgid "Kodi always prefers a TV show's own local tvshow.nfo file over asking this scraper, even during an automatic library scan -- so anything already tagged by another tool (e.g. tinyMediaManager) may never actually reach Chronicle at all. Enabling this lets Chronicle write that local NFO from its own data -- but only as part of an explicit rebuild pass (\"Rebuild local NFOs from Chronicle\" or \"Automatically rebuild NFOs after every library scan\", both in Chronicle Scraper (Movies)'s own settings, covering movies and TV shows together), never during an ordinary scan, so getting new files into Kodi's library is never slowed down by a local-file write. On by default -- this addon's own copy of this setting must ALSO be on for a rebuild pass (triggered from Chronicle Scraper (Movies)) to actually write a show's tvshow.nfo; the two are separate settings on separate addons, and both need to agree. Safe to leave on across every Kodi instance sharing the same library: Chronicle's own rebuild queue coordinates which single device actually does the delete-and-rewrite for any given item, so multiple instances no longer race each other rewriting the same shared NFO. Turn it off on a specific device only if you'd rather it never participate in show-NFO rebuilds at all. Show-level only, as of v1.11.7 -- this addon no longer writes a per-episode NFO under any circumstance; see this version's changelog for why."
-msgstr ""
-
 msgctxt "#32110"
 msgid "Chronicle approved this device, but the connection key wasn't received -- it may have already been used up by an earlier attempt. Please try Connect again."
 msgstr ""
@@ -139,36 +127,8 @@ msgctxt "#32113"
 msgid "Chronicle returned an unexpected response. Please try again, or check the server."
 msgstr ""
 
-msgctxt "#32114"
-msgid "{0} is also installed, with its own separate copy of these Local Files settings. Apply the same change there too?\n\n{1}"
-msgstr ""
-
-msgctxt "#32115"
-msgid "Apply to {0} Too"
-msgstr ""
-
-msgctxt "#32116"
-msgid "Just This One"
-msgstr ""
-
-msgctxt "#32117"
-msgid "Applied to {0}."
-msgstr ""
-
-msgctxt "#32118"
-msgid "On"
-msgstr ""
-
-msgctxt "#32119"
-msgid "Off"
-msgstr ""
-
 msgctxt "#32120"
 msgid "Connected as {0}"
-msgstr ""
-
-msgctxt "#32124"
-msgid "Updated: \"Recreate local NFO\" is now ON by default -- combined with the same setting on Chronicle Scraper (Movies), this is what lets episode, rating, and progress changes actually reach Kodi. Change this in Settings if you'd rather not."
 msgstr ""
 
 msgctxt "#32137"
@@ -189,4 +149,112 @@ msgstr ""
 
 msgctxt "#32141"
 msgid "How often the periodic check runs, in 30-minute steps. Defaults to every 2 hours (120 minutes)."
+msgstr ""
+
+msgctxt "#32150"
+msgid "Library Repair"
+msgstr ""
+
+msgctxt "#32151"
+msgid "Repair Stuck Episodes -- Preview"
+msgstr ""
+
+msgctxt "#32152"
+msgid "Occasionally, removing a TV show from Kodi's library doesn't fully clean up after itself: specific episode files can end up permanently stuck, where Kodi will never ask this scraper about them again no matter how many times you remove the show and rescan. This isn't a Chronicle problem or a scraper failure -- it's Kodi's own library database still believing that exact file was already scanned in, for a show that no longer exists. If a show has ever stayed stuck missing certain episodes through repeated full rescans, this is almost always why. This checks this device's own Kodi library for that specific kind of stuck (\"orphaned\") entry and shows you exactly what it found -- nothing is changed. Use \"Repair Stuck Episodes\" below to actually fix what this finds."
+msgstr ""
+
+msgctxt "#32153"
+msgid "Repair Stuck Episodes"
+msgstr ""
+
+msgctxt "#32154"
+msgid "Checks this device's own Kodi library for episodes permanently stuck the way \"Preview\" above describes, shows you exactly what it found before touching anything, and -- only if you confirm -- removes just those broken entries so Kodi will properly re-examine the real files on your next scan. A safety backup of your Kodi library database is always made first, and nothing else in your library is touched."
+msgstr ""
+
+msgctxt "#32155"
+msgid "Undo Last Repair"
+msgstr ""
+
+msgctxt "#32156"
+msgid "Reverses exactly the most recent \"Repair Stuck Episodes\" run on this device, and nothing else -- restores only the specific entries that run removed, from the safety backup it made at the time. Does not undo anything older than the single most recent repair. Safe to use even if you've since rescanned or watched something: anything added to your library since the repair is left completely alone."
+msgstr ""
+
+msgctxt "#32157"
+msgid "Last Result"
+msgstr ""
+
+msgctxt "#32158"
+msgid "Cancel"
+msgstr ""
+
+msgctxt "#32159"
+msgid "Remove and Fix"
+msgstr ""
+
+msgctxt "#32160"
+msgid "Found {0} stuck episode(s) across {1} show(s):\n\n{2}\n\nA backup of your Kodi library will be saved first. Remove these {0} stuck entries now?"
+msgstr ""
+
+msgctxt "#32161"
+msgid "{0} episode(s) -- e.g. {1}"
+msgstr ""
+
+msgctxt "#32162"
+msgid "...and {0} more group(s)"
+msgstr ""
+
+msgctxt "#32163"
+msgid "No stuck episodes found. Your library doesn't currently have this problem."
+msgstr ""
+
+msgctxt "#32164"
+msgid "Removed {0} stuck entries across {1} show(s). A backup of your library was saved to:\n{2}\n\nYour next library scan should now pick up any files that were affected."
+msgstr ""
+
+msgctxt "#32165"
+msgid "Start a library scan now?"
+msgstr ""
+
+msgctxt "#32166"
+msgid "No changes were made."
+msgstr ""
+
+msgctxt "#32167"
+msgid "The repair started but did not finish ({0}). No changes were made -- your backup is saved at:\n{1}"
+msgstr ""
+
+msgctxt "#32168"
+msgid "Undo the last repair? This will restore {0} episode(s) removed on {1}, from its saved backup."
+msgstr ""
+
+msgctxt "#32169"
+msgid "Restored {0} episode(s) from the last repair's backup."
+msgstr ""
+
+msgctxt "#32170"
+msgid "The undo started but did not finish ({0}). No changes were made."
+msgstr ""
+
+msgctxt "#32171"
+msgid "Found {0} stuck episode(s) across {1} show(s):\n\n{2}"
+msgstr ""
+
+msgctxt "#32172"
+msgid "Fixes two things that can leave a show stuck missing episodes no matter how many times you rescan: stuck episode entries left behind after removing a show, and shows whose season folder Kodi can no longer find (e.g. it was renamed on disk).\n\nPreview checks for both and shows you what it found -- nothing is changed. Repair Stuck Episodes fixes what Preview finds, but only after you confirm, and only after a safety backup of your Kodi library is made. Undo Last Repair reverses the single most recent repair, from that backup, if anything looks wrong afterward."
+msgstr ""
+
+msgctxt "#32173"
+msgid "What Is This?"
+msgstr ""
+
+msgctxt "#32174"
+msgid "\n\n{0} show(s) also have a season folder Kodi can't find anymore and will be re-added (this resets their watched status; Chronicle will resync it)."
+msgstr ""
+
+msgctxt "#32175"
+msgid "\n\nRe-added {0} show(s) with a missing season folder."
+msgstr ""
+
+msgctxt "#32176"
+msgid "No stuck episode entries were found."
 msgstr ""

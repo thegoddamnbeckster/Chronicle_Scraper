@@ -26,22 +26,6 @@
     </category>
 
     <!-- ============================================================================ -->
-    <!-- Local Files -->
-    <!-- ============================================================================ -->
-    <category label="32090">
-        <setting id="write_nfo" type="bool" label="32091" default="true" help="32092"/>
-        <setting id="write_streamdetails" type="bool" label="32105" default="false" help="32106" enable="eq(-1,true)"/>
-        <setting id="rebuild_nfos" type="action" label="32093" action="RunScript(script.chronicle.scraper.movie,action=rebuild_nfos)" help="32094"/>
-        <setting id="auto_rebuild_on_scan" type="bool" label="32098" default="true" help="32099"/>
-        <!-- Set automatically by lib/settings_upgrade.py the first time this addon runs after
-             v3.11.0: a settings.xml default="..." only ever applies to a value Kodi has never
-             persisted, so this one-time code migration is what actually gets an
-             already-installed copy onto the new write_nfo/auto_rebuild_on_scan defaults. Not
-             meant to be touched by hand. -->
-        <setting id="migrated_write_nfo_default_v3_11_0" type="bool" visible="false" default="false"/>
-    </category>
-
-    <!-- ============================================================================ -->
     <!-- Watch History and Ratings -->
     <!-- ============================================================================ -->
     <category label="32125">

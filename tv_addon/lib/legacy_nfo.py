@@ -1,66 +1,29 @@
 # -*- coding: utf-8 -*-
-"""Harvests whatever a pre-existing local movie/show/episode NFO already
-contains, and stashes it in the addon's own per-Kodi-instance profile
-directory so it can be recovered by the NEXT scrape of the same item --
-specifically for nfo_rebuild.py's "delete local NFO, force a re-scrape"
-action, which would otherwise silently throw away anything a different
-tool (e.g. tinyMediaManager) had already written that Chronicle itself
-doesn't have.
+"""Parses whatever a pre-existing local show/episode NFO already contains (e.g. one written by
+tinyMediaManager, or any other Kodi-schema-compliant tool) into Chronicle's own canonical field
+names -- used by python/tvshow_scraper.py's nfo_url() to identify an already-organized show or
+episode straight from its own existing NFO, without Chronicle ever having to guess a folder/
+filename match. Nothing here depends on Chronicle Scraper's own (now-removed) local NFO writing
+-- an NFO's origin doesn't matter, only its Kodi-schema shape does.
 
-Why a stash file instead of holding this in memory: nfo_rebuild.py's delete
-step and the later scrape that actually rewrites the NFO are two completely
-separate invocations of this addon's Python interpreter -- Kodi's own C++
-core launches a fresh script process per scraper action (find/getdetails),
-sometime after a refresh is issued, with no channel back to whatever issued
-it. Nothing survives in memory across that gap; only disk does.
+This module used to also stash a local NFO's contents before Chronicle Scraper's own now-removed
+"delete local NFO, force a re-scrape" rebuild action deleted it, so the data could be folded back
+in on the next scrape. That whole flow (save_stash/load_and_clear_stash, and the movie-schema
+parse_legacy_nfo() parser this TV addon never actually used) was removed 2026-09-13 along with
+the rebuild feature itself -- see git history if you need the old rationale.
 
-Stashed under special://temp/chronicle_scraper/, NOT special://profile/
-addon_data/{addon_id}/ -- that path is scoped per addon id, but Chronicle
-Scraper is split into two separate addon packages (script.chronicle.
-scraper.movie, script.chronicle.scraper.tv). nfo_rebuild.py's delete step
-always runs from the movie addon's process, but the later re-scrape that
-consumes the stash can run from EITHER addon's process depending on item
-type -- a TV show's stash written under the movie addon's addon_data
-folder would never be found by the TV addon's own process reading from
-its own, different addon_data folder. special://temp/ is the one location
-both addon ids can read and write without depending on each other's
-addon_data folder existing or being named a specific thing (same fix
-already applied to rebuild_state.py and activity_tracker.py for the
-identical reason -- confirmed 2026-08-24 this file was copied into
-tv_addon/lib/ without it, silently breaking TV legacy-NFO harvesting).
-xbmcvfs still resolves special://temp/ to THIS Kodi instance's own temp
-directory, so the stash never needs to be portable BETWEEN Kodi instances
--- only within the one that deleted the NFO and will shortly re-scrape
-the same item.
-
-One-shot by design: load_and_clear_stash() deletes the stash entry the
-moment it's consumed, so a legacy NFO's data is folded into Chronicle (and
-the freshly-written NFO) exactly once, not re-applied forever as a
-permanent shadow source that could keep overriding real Chronicle data
-after the user fixes it there.
-
-Three parsers, one per NFO root Kodi recognises for video content this
-addon writes -- <movie>, <tvshow>, <episodedetails> -- sharing the actor/
-director-writer/uniqueid/ratings block parsers below, since those four
-blocks are identical across all three schemas; only the top-level field
-list differs per type.
+Two parsers, one per NFO root this addon's nfo_url() can receive -- <tvshow>, <episodedetails> --
+sharing the actor/director-writer/uniqueid/ratings block parsers below, since those blocks are
+identical across both schemas; only the top-level field list differs per type.
 """
 
-import json
-import re
 import xml.etree.ElementTree as ET
-
-import xbmcvfs
 
 from lib.logger import Logger
 
 log = Logger('legacy_nfo')
 
-_STASH_DIR = 'special://temp/chronicle_scraper/legacy_nfo_stash/'
-
 _UNIQUEID_TYPES = ('imdb', 'tmdb', 'tvdb', 'trakt')
-
-_SAFE_KEY_RE = re.compile(r'[^A-Za-z0-9._-]+')
 
 
 def _text_of(root, tag):
@@ -139,75 +102,11 @@ def _parse_root(xml_bytes):
         return None
 
 
-def parse_legacy_nfo(xml_bytes):
-    """Parses a Kodi-native movie NFO (as written by this addon,
-    tinyMediaManager, or any other Kodi-schema-compliant tool) into a dict
-    using Chronicle's own canonical field names (the same ones
-    ScraperController's /movies/details returns), ready to merge into a
-    `details` dict and/or contribute back to Chronicle.
-
-    Returns None if the bytes aren't parseable XML at all, or {} if
-    parseable but not a <movie> root (Kodi's other valid NFO form is a bare
-    URL string, which this addon never writes and has nothing to extract),
-    or if parsing succeeded but nothing recognised was found."""
-    root = _parse_root(xml_bytes)
-    if root is None:
-        return None
-    if root.tag != 'movie':
-        return {}
-
-    data = {}
-    _parse_text_fields(root, (
-        ('title', 'title'), ('plot', 'overview'), ('tagline', 'tagline'),
-        ('mpaa', 'mpaa'), ('premiered', 'premiered'), ('country', 'country'),
-        ('studio', 'studio'), ('trailer', 'trailerUrl'),
-    ), data)
-
-    year = _text_of(root, 'year')
-    if year and year.isdigit():
-        data['year'] = int(year)
-    runtime = _text_of(root, 'runtime')
-    if runtime and runtime.isdigit():
-        data['runtimeMinutes'] = int(runtime)
-
-    genres = [g.text.strip() for g in root.findall('genre') if g.text and g.text.strip()]
-    if genres:
-        data['genres'] = genres
-    tags = [t.text.strip() for t in root.findall('tag') if t.text and t.text.strip()]
-    if tags:
-        data['tags'] = tags
-
-    cast = _parse_cast(root)
-    if cast:
-        data['cast'] = cast
-    crew = _parse_crew(root)
-    if crew:
-        data['crew'] = crew
-    external_ids = _parse_external_ids(root)
-    if external_ids:
-        data['externalIds'] = external_ids
-    ratings = _parse_ratings(root)
-    if ratings:
-        data['ratings'] = ratings
-
-    collection_el = root.find('set')
-    if collection_el is not None:
-        name = collection_el.findtext('name')
-        if name and name.strip():
-            overview = collection_el.findtext('overview')
-            data['collection'] = {
-                'name': name.strip(),
-                'overview': overview.strip() if overview and overview.strip() else None,
-            }
-
-    return data
-
-
 def parse_legacy_tvshow_nfo(xml_bytes):
     """Parses a Kodi-native tvshow.nfo into a dict using Chronicle's own
     canonical field names (the same ones ScraperController's /tv/details
-    returns). Same return conventions as parse_legacy_nfo() above, but for
-    a <tvshow> root."""
+    returns). Returns None if the bytes aren't parseable XML at all, or {} if parseable but not
+    a <tvshow> root, or if parsing succeeded but nothing recognised was found."""
     root = _parse_root(xml_bytes)
     if root is None:
         return None
@@ -252,7 +151,7 @@ def parse_legacy_episode_nfo(xml_bytes):
     """Parses a Kodi-native episode NFO into a dict using Chronicle's own
     canonical field names (the same ones ScraperController's
     /tv/episode-details returns). Same return conventions as
-    parse_legacy_nfo() above, but for an <episodedetails> root."""
+    parse_legacy_tvshow_nfo() above, but for an <episodedetails> root."""
     root = _parse_root(xml_bytes)
     if root is None:
         return None
@@ -288,55 +187,3 @@ def parse_legacy_episode_nfo(xml_bytes):
         data['ratings'] = ratings
 
     return data
-
-
-def _stash_path(stash_key):
-    safe = _SAFE_KEY_RE.sub('_', stash_key or 'unknown')
-    return _STASH_DIR + safe + '.json'
-
-
-def save_stash(stash_key, data):
-    """Best-effort -- a failure here just means the next scrape won't find
-    anything to harvest, same as if there had been nothing worth keeping."""
-    if not stash_key or not data:
-        return
-    try:
-        if not xbmcvfs.exists(_STASH_DIR):
-            xbmcvfs.mkdirs(_STASH_DIR)
-        f = xbmcvfs.File(_stash_path(stash_key), 'w')
-        try:
-            f.write(bytearray(json.dumps(data).encode('utf-8')))
-        finally:
-            f.close()
-        log.info('legacy_nfo: stashed {0} field(s) for {1!r} before deleting its NFO'.format(
-                 len(data), stash_key))
-    except Exception as exc:
-        log.warning("Couldn't stash legacy NFO data for {0!r}: {1}".format(stash_key, exc))
-
-
-def load_and_clear_stash(stash_key):
-    """Returns the stashed dict for stash_key and deletes it (one-shot -- see
-    module docstring), or None if there's nothing stashed for it."""
-    if not stash_key:
-        return None
-    path = _stash_path(stash_key)
-    if not xbmcvfs.exists(path):
-        return None
-
-    data = None
-    try:
-        f = xbmcvfs.File(path, 'r')
-        try:
-            raw = bytes(f.readBytes())
-        finally:
-            f.close()
-        data = json.loads(raw.decode('utf-8'))
-    except Exception as exc:
-        log.warning("Couldn't read stashed legacy NFO data for {0!r}: {1}".format(stash_key, exc))
-
-    try:
-        xbmcvfs.delete(path)
-    except Exception as exc:
-        log.warning("Couldn't delete consumed stash file {0}: {1}".format(path, exc))
-
-    return data or None

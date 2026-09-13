@@ -50,17 +50,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.logger import Logger
 from lib import activity_tracker
-from lib import legacy_nfo
-from lib import rebuild_state
 from lib.chronicle_client import ChronicleClient
 from lib.kodi_video_info import (
     apply_common_video_info, apply_ratings, apply_artwork, youtube_trailer_uri,
 )
 from lib.collection_sync import sync_collection_art
-from lib.movie_art_sync import sync_movie_art, find_movie_location, get_streamdetails
-from lib.nfo_writer import sync_movie_nfo
+from lib.movie_art_sync import sync_movie_art, find_movie_location
 from lib import progress_sync
-from lib import settings_upgrade
 
 log = Logger('scraper')
 ADDON = xbmcaddon.Addon()
@@ -177,26 +173,6 @@ def _log_details_summary(action, media_item_id, details):
                     action, media_item_id, details.get('title')))
 
 
-def _merge_legacy_nfo_gaps(details, legacy_data):
-    """Fills in any field Chronicle's own `details` has nothing for using
-    whatever a previous local NFO (about to be/already overwritten)
-    contained -- see lib/legacy_nfo.py. Chronicle's own data always wins
-    where it has any; this only plugs genuine gaps, mutating `details` in
-    place so every downstream consumer (the Kodi ListItem built below, and
-    the NFO sync_movie_nfo() writes) benefits, not just the NFO."""
-    for key in ('title', 'overview', 'tagline', 'year', 'runtimeMinutes', 'mpaa',
-                'premiered', 'country', 'studio', 'trailerUrl'):
-        if not details.get(key) and legacy_data.get(key):
-            details[key] = legacy_data[key]
-    for list_key in ('genres', 'tags', 'cast', 'crew'):
-        if not details.get(list_key) and legacy_data.get(list_key):
-            details[list_key] = legacy_data[list_key]
-    if not details.get('ratings') and legacy_data.get('ratings'):
-        details['ratings'] = legacy_data['ratings']
-    if not (details.get('collection') or {}).get('name') and legacy_data.get('collection'):
-        details['collection'] = legacy_data['collection']
-
-
 def get_details(media_item_id, handle):
     if media_item_id is None:
         log.warning('getdetails: called with no resolvable media_item_id -- lookup string could not be parsed')
@@ -208,13 +184,9 @@ def get_details(media_item_id, handle):
         return False
     activity_tracker.mark_active(details.get('title') or str(media_item_id))
 
-    # Resolved once, here, and reused by everything below -- both because
-    # sync_movie_art/sync_movie_nfo would otherwise each independently
-    # browse Kodi's video sources for the same folder, and because the
-    # legacy-NFO merge just below needs video_basename BEFORE the Kodi
-    # ListItem is built from `details`, not after -- mutating `details` in
-    # place only helps fields that haven't already been read out of it yet.
-    # knownFileName (when Chronicle has it) short-circuits straight to the
+    # Resolved once, here, and reused by everything below, so sync_movie_art
+    # doesn't have to independently browse Kodi's video sources for the same
+    # folder. knownFileName (when Chronicle has it) short-circuits straight to the
     # real file instead of re-deriving the folder from title/year -- see
     # find_movie_location()'s own docstring. When it had to fall back to
     # title/year matching anyway, report the discovered filename back so the
@@ -226,24 +198,9 @@ def get_details(media_item_id, handle):
         ChronicleClient().report_resolved_file(media_item_id, full_filename)
     if kodi_movie_id is not None:
         # Lets Chronicle push a future NFO update straight to this device (see
-        # lib/chronicle_client.py's report_kodi_id() and Chronicle's own NfoPushService) instead
-        # of waiting for a manual/scheduled rebuild pass or this device's own next scan.
-        # Fired on every ordinary scan, not just during a rebuild, so the mapping stays fresh.
+        # lib/chronicle_client.py's report_kodi_id() and Chronicle's own NfoPushService).
+        # Fired on every ordinary scan, so the mapping stays fresh.
         ChronicleClient().report_kodi_id(media_item_id, 'movie', kodi_movie_id)
-
-    # If nfo_rebuild.py's "delete local NFO, force a re-scrape" action ran
-    # against this movie, whatever its previous local NFO contained (e.g.
-    # from tinyMediaManager) was harvested and stashed before deletion --
-    # see lib/legacy_nfo.py. Pick it up now (one-shot: this also clears the
-    # stash), use it to fill any gap Chronicle's own data has, and feed it
-    # back into Chronicle itself so it isn't lost. Done before the ListItem
-    # below is built so every downstream consumer of `details` -- Kodi's own
-    # display, the artwork sync, the NFO -- sees the gap-filled version, not
-    # just the NFO.
-    legacy_data = legacy_nfo.load_and_clear_stash(video_basename) if video_basename else None
-    if legacy_data:
-        _merge_legacy_nfo_gaps(details, legacy_data)
-        ChronicleClient().contribute_metadata(media_item_id, 'chronicle_scraper.legacy_nfo', legacy_data)
 
     listitem = xbmcgui.ListItem(details.get('title') or '', offscreen=True)
     vtag = listitem.getVideoInfoTag()
@@ -314,29 +271,6 @@ def get_details(media_item_id, handle):
             media_item_id, progress_sync.kodi_lastplayed_to_iso(watched_value))
 
     sync_movie_art(details.get('title'), details.get('year'), details.get('artwork'), location=location)
-
-    # NFO writing only ever happens as part of an explicit rebuild pass
-    # (manual "Rebuild local NFOs" action, or the opt-in "Automatically
-    # rebuild NFOs after every library scan" service) -- never inline during
-    # an ordinary scan. See lib/rebuild_state.py: getting a new item into
-    # Kodi's library (already done via setResolvedUrl below) doesn't need
-    # the local NFO file to exist, so paying for that write here would only
-    # slow down the scan for no benefit to what actually shows up in Kodi.
-    if ADDON.getSettingBool('write_nfo') and rebuild_state.is_active():
-        # Kodi's own per-file technical info (codec/resolution/HDR/audio
-        # tracks/subtitle languages) -- Chronicle has no way to know this,
-        # only Kodi does, from actually having opened the file. A genuine
-        # extra JSON-RPC round-trip on top of the normal scrape, so it's
-        # opt-in (write_streamdetails, off by default) -- on a shared
-        # library with several Kodi instances, only whichever one maintains
-        # the shared NFOs needs this; the others just read what it already
-        # wrote. Only computed here, inside the rebuild-only branch, since
-        # it exists solely to feed the NFO write below.
-        streamdetails = None
-        if folder and full_filename and ADDON.getSettingBool('write_streamdetails'):
-            streamdetails = get_streamdetails(folder + full_filename)
-        sync_movie_nfo(media_item_id, details.get('title'), details.get('year'), location=location,
-                        streamdetails=streamdetails)
 
     if details.get('cast'):
         vtag.setCast([
@@ -414,8 +348,6 @@ def _parse_year(raw):
 
 
 def run():
-    settings_upgrade.ensure_defaults_migrated()
-
     params = get_params(sys.argv[1:])
     enddir = True
 

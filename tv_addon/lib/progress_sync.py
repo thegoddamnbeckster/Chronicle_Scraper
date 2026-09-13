@@ -31,6 +31,18 @@ from lib.logger import Logger
 
 log = Logger('progress_sync')
 
+# NOTE (2026-09-13): a rare live failure ("TypeError: 'NoneType' object is not callable" from
+# datetime.strptime(), during a burst of concurrent getepisodedetails calls, inside
+# _kodi_lastplayed_is_newer() below) looked like the well-known CPython "two threads racing
+# datetime.strptime()'s lazy _strptime import" hazard. A same-day attempted fix -- priming
+# strptime() once here at module load -- was REVERTED the same day: on the movie addon's
+# identical copy of this module, that exact priming call failed EVERY time, at import time,
+# taking the whole service.py down on every Kodi startup (no watch/rating sync, no collection
+# art sync, no scan signal at all) -- a far worse regression than the rare original bug.
+# Whatever is actually happening with datetime.strptime() on this specific embedded-Python
+# environment isn't the ordinary CPython race after all; don't re-attempt a fix here without
+# reproducing the real cause on-device first.
+
 # Matches Chronicle's own ScrobbleService.WatchedThreshold and Chronicle_Scrobbler's
 # former _RESUME_SKIP_THRESHOLD_PERCENT -- a resume point this close to the end reads
 # as "finished", not "in progress"; pushing it to Kodi would just leave a stray

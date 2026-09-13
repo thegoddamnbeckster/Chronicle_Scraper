@@ -226,47 +226,6 @@ def _lookup_by_known_filename(filename):
     return None, None
 
 
-def get_streamdetails(file_path):
-    """Returns Kodi's own streamdetails dict ({'video': [...], 'audio': [...],
-    'subtitle': [...]}) for the movie whose real file matches file_path
-    exactly, or None if Kodi's VideoLibrary doesn't have this file yet (a
-    brand-new addition being scraped for the first time -- Kodi does not
-    guarantee streamdetails has finished probing by getdetails() time) or
-    doesn't have it at all. Kodi's own scan is the only source for this:
-    Chronicle's server has no way to know a file's own codec, resolution,
-    HDR type, or audio/subtitle tracks -- only the player that actually
-    opened the file does.
-
-    Matched by exact file path (the same VideoLibrary.GetMovies call
-    already used elsewhere in this module for "is this filename known"
-    lookups) rather than by movieid, since the scraper's find/getdetails
-    contract never hands this script a Kodi movieid on any channel -- see
-    the module docstring."""
-    if not file_path:
-        return None
-    request = {
-        'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetMovies',
-        'params': {'properties': ['file', 'streamdetails']},
-    }
-    try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
-    except Exception as exc:
-        log.warning("Couldn't query VideoLibrary for streamdetails of {0}: {1}".format(file_path, exc))
-        return None
-    if 'error' in response:
-        return None
-
-    for movie in response.get('result', {}).get('movies') or []:
-        if movie.get('file') != file_path:
-            continue
-        details = movie.get('streamdetails') or {}
-        if details.get('video') or details.get('audio') or details.get('subtitle'):
-            return details
-        return None
-
-    return None
-
-
 def strip_video_ext(filename):
     if not filename:
         return None

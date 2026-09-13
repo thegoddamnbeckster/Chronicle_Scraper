@@ -10,7 +10,6 @@ connecting the addon to a Chronicle account, same UX as Chronicle_Scrobbler.
 
 import sys
 import threading
-import time
 import traceback
 
 import xbmcgui
@@ -21,18 +20,10 @@ from lib.chronicle_client import ChronicleClient, find_shared_chronicle_url
 from lib.device_auth import DeviceAuthManager
 from lib import collection_art_sync
 from lib import device_registration
-from lib import nfo_rebuild
-from lib import settings_mirror
-from lib import settings_upgrade
 from lib import watch_rating_sync
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('default')
-
-# The sibling package's addon id -- see lib/settings_mirror.py's own
-# docstring for why write_nfo/write_streamdetails are worth offering to
-# mirror there.
-_SIBLING_ADDON_ID = 'script.chronicle.scraper.tv'
 
 
 def _get_args():
@@ -139,9 +130,6 @@ def show_menu():
     if args.get('action') == 'change_url':
         _change_chronicle_url()
         return
-    if args.get('action') == 'rebuild_nfos':
-        _rebuild_nfos()
-        return
     if args.get('action') == 'sync_watch_ratings':
         _sync_watch_ratings_now()
         return
@@ -153,9 +141,7 @@ def show_menu():
         return
 
     _refresh_auth_status()
-    before = settings_mirror.snapshot(ADDON)
     ADDON.openSettings()
-    settings_mirror.offer_mirror(ADDON, before, _SIBLING_ADDON_ID)
 
 
 def _test_connection():
@@ -278,120 +264,6 @@ def _change_chronicle_url():
     _connect_to_chronicle()
 
 
-def _rebuild_nfos():
-    """Warns the user clearly, then -- only on explicit confirmation -- runs
-    nfo_rebuild.run(): deletes every local .nfo/tvshow.nfo and movieset-*
-    file across the whole movie and TV library (preserving whatever data
-    they held first -- see lib/legacy_nfo.py and
-    collection_sync.preserve_local_movieset_file), and refreshes each item
-    so Chronicle repopulates them. See nfo_rebuild.py's module docstring for
-    why this has to be a deliberate, explicit action rather than automatic."""
-    if not ADDON.getSettingBool('write_nfo'):
-        # Offer to turn it on right here instead of a hard refusal-and-bail -- this
-        # action button lives in the same Settings screen as the write_nfo checkbox
-        # (Local Files category), so the same GUI-commit-timing risk the Connect flow
-        # had applies here too: a box the user just ticked isn't guaranteed to be
-        # flushed to settings.xml before this brand-new RunScript process starts and
-        # reads it, so a stale False could be read even though the checkbox is
-        # visibly ticked. Writing True explicitly here, right before proceeding,
-        # makes the value actually used unambiguous regardless of what got read.
-        turn_on = xbmcgui.Dialog().yesno(
-            ADDON.getLocalizedString(32000),      # "Chronicle Scraper"
-            ADDON.getLocalizedString(32108),      # explanation + "Turn it on and continue?"
-            yeslabel=ADDON.getLocalizedString(32109),  # "Turn On and Continue"
-            nolabel=ADDON.getLocalizedString(32096),   # "Cancel"
-        )
-        if not turn_on:
-            return
-        before = settings_mirror.snapshot(ADDON)
-        ADDON.setSettingBool('write_nfo', True)
-        log.info('write_nfo enabled via Rebuild flow')
-        # This is exactly the mismatch that caused the live 2026-08-28 bug
-        # (see settings_mirror.py) -- turning write_nfo on here only helps
-        # movies get NFOs during the pass about to run; offer to close the
-        # same gap on the TV side too, since this rebuild covers TV as well.
-        settings_mirror.offer_mirror(ADDON, before, _SIBLING_ADDON_ID)
-
-    dialog = xbmcgui.Dialog()
-    confirmed = dialog.yesno(
-        ADDON.getLocalizedString(32000),      # "Chronicle Scraper"
-        ADDON.getLocalizedString(32094),      # warning text
-        nolabel=ADDON.getLocalizedString(32096),
-        yeslabel=ADDON.getLocalizedString(32095),
-    )
-    if not confirmed:
-        return
-
-    # Per-user correction (2026-08-29): rebuild now processes one item fully
-    # (delete, refresh, wait for ITS OWN NFO to reappear) before moving to
-    # the next -- see nfo_rebuild.py's module docstring for why. There's no
-    # longer a distinct "issuing" phase worth blocking Kodi's UI for and a
-    # separate "draining" phase to hand off to -- it's one continuous pass
-    # from the first item to the last, which for a real library can still
-    # take a long time. A single background (non-blocking) indicator for the
-    # whole thing keeps Kodi fully usable -- including playback -- the same
-    # way the tail of the old two-phase flow already did; the tradeoff is no
-    # Cancel button once this starts (DialogProgressBG has none), same as
-    # that old tail already had for most of a run's duration.
-    xbmcgui.Dialog().ok(
-        ADDON.getLocalizedString(32093),
-        ADDON.getLocalizedString(32100),
-    )
-    bg = xbmcgui.DialogProgressBG()
-    bg.create(ADDON.getLocalizedString(32093))
-    start_time = time.time()
-
-    def on_progress(index, total, label):
-        # Clamped defensively, not because the current total-estimate math can go negative
-        # (nfo_rebuild.py's own total_estimate = processed + totalPending can't fall below
-        # processed by construction) -- but DialogProgressBG.update() is undocumented for
-        # out-of-range input, and total is an evolving cross-device estimate now rather than a
-        # fixed value, so a future change to that estimate shouldn't be able to hand this a
-        # value Kodi might reject.
-        percent = min(100, int(index * 100 / total)) if total else 0
-        message = ADDON.getLocalizedString(32103).format(index + 1, total, label)
-        # Estimated time remaining from this run's OWN observed pace so far
-        # (elapsed / items done so far * items left) -- grounded in what's
-        # actually happening this run, not a formula that assumed a
-        # different (batch) execution model.
-        if index > 0 and total:
-            avg_per_item = (time.time() - start_time) / index
-            message += ADDON.getLocalizedString(32121).format(
-                nfo_rebuild.format_duration(avg_per_item * (total - index)))
-        bg.update(percent, message=message)
-
-    try:
-        result = nfo_rebuild.run(progress_callback=on_progress)
-    finally:
-        bg.close()
-
-    # Two genuinely different outcomes get genuinely different messages,
-    # rather than one line trying to carry every number at once (deleted
-    # counts, confirmed counts, errors) with no explanation of how they
-    # relate -- that was the actual problem with the old single summary.
-    # No cancelled-run branch -- per-user decision (2026-08-29): this runs
-    # fully in the background with no Cancel control once started (see the
-    # comment above), so nfo_rebuild.run()'s cancelled result is never True
-    # from this caller.
-    problem_count = result['unconfirmed_count'] + result['refresh_errors']
-    if problem_count == 0:
-        message = ADDON.getLocalizedString(32097).format(result['total'])
-    else:
-        message = ADDON.getLocalizedString(32101).format(
-            result['nfo_confirmed'], result['pending_total'], problem_count)
-
-    # A notification, not a modal dialog.ok() -- by the time this fires the
-    # user was told to go do something else, quite possibly playback, and a
-    # blocking dialog here would rudely interrupt whatever that turned out
-    # to be. Kodi's own notification popup is enough to confirm it's done.
-    xbmcgui.Dialog().notification(
-        ADDON.getLocalizedString(32093),
-        message,
-        icon=xbmcgui.NOTIFICATION_INFO,
-        time=10000,
-    )
-
-
 def _sync_watch_ratings_now():
     """Manual "Sync Watch History and Ratings Now" action -- runs the same
     watch_rating_sync.run() pass the background service triggers automatically (on load, and on
@@ -452,5 +324,4 @@ def _sync_collections_now():
 
 
 if __name__ == '__main__':
-    settings_upgrade.ensure_defaults_migrated()
     show_menu()

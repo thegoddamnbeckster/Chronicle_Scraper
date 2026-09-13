@@ -183,62 +183,6 @@ def sync_collection_art(collection):
             _set_movie_set_art(setid, refreshed)
 
 
-def preserve_local_movieset_file(set_name, source_path, filename):
-    """Copies a movie-folder-embedded "movieset-<type>" local art file (e.g.
-    "movieset-poster.jpg", written by tinyMediaManager or another tool
-    directly alongside a movie -- a separate, independent local-art
-    convention from this module's own dedicated Movie Set Information
-    folder) into that dedicated folder, before nfo_rebuild.py's bulk
-    rebuild permanently deletes the original. Without this, that data was
-    simply gone with no way back -- the same class of loss the movie NFO
-    preservation (lib/legacy_nfo.py) fixes for .nfo files, applied to this
-    other spot nfo_rebuild.py's own delete step also touches.
-
-    Fill-only, same rule as sync_collection_art itself: only writes when
-    the dedicated folder doesn't already have a file for this same slot,
-    so a real (or user-pinned) image already there is never clobbered by
-    an older file salvaged from one particular movie's own folder. Returns
-    True if it copied something, False otherwise (nothing to salvage,
-    the slot's already covered, or the dedicated folder isn't configured/
-    writable)."""
-    if not set_name or not filename.lower().startswith('movieset-'):
-        return False
-
-    base = get_setting_value('videolibrary.moviesetsfolder')
-    if not base:
-        return False
-
-    dest_filename = filename[len('movieset-'):]
-    folder = base.rstrip('/') + '/' + set_name + '/'
-    dest = folder + dest_filename
-
-    if xbmcvfs.exists(dest):
-        return False
-
-    if not xbmcvfs.exists(folder) and not xbmcvfs.mkdirs(folder):
-        log.warning("Couldn't create set folder {0} to salvage {1}".format(folder, filename))
-        return False
-
-    try:
-        f_in = xbmcvfs.File(source_path, 'r')
-        try:
-            data = f_in.readBytes()
-        finally:
-            f_in.close()
-        f_out = xbmcvfs.File(dest, 'w')
-        try:
-            f_out.write(data)
-        finally:
-            f_out.close()
-    except Exception as exc:
-        log.warning("Couldn't salvage {0} to {1}: {2}".format(source_path, dest, exc))
-        return False
-
-    log.info('nfo_rebuild: salvaged local "{0}" for set "{1}" into the dedicated set folder '
-             'before deleting the movie-folder copy'.format(filename, set_name))
-    return True
-
-
 def _repair_stale_set_art(name, folder):
     """Confirmed directly (2026-07-30): Kodi registers a movie set's art once,
     whenever it's first discovered, and never automatically re-checks it --
@@ -276,7 +220,14 @@ def _repair_stale_set_art(name, folder):
                 replacement = candidate
                 break
 
-        updates[art_type] = replacement or ''  # '' clears a dead reference
+        # None, not '' -- confirmed live (2026-09-13): Kodi's VideoLibrary.SetMovieSetDetails
+        # schema rejects an empty string for any art slot outright ("Received value does not
+        # match any of the union type definitions", the whole call fails, not just that one
+        # slot), but accepts null to clear a slot. This one bad value therefore silently
+        # dropped every OTHER art update batched in the same call too, for any set that had
+        # even one dead reference to clear -- root-caused after that exact warning showed up
+        # for dozens of different setids in one collection-art-sync pass.
+        updates[art_type] = replacement or None
 
     if not updates:
         return

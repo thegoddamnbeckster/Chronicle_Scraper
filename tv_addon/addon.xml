@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.tv"
        name="Chronicle Scraper (TV)"
-       version="1.11.7"
+       version="1.13.2"
        provider-name="Michael Beck">
 
   <requires>
@@ -42,9 +42,9 @@
        device's own local VideoLibrary.Scan when due (lib/kodi_scan_signal.py); see service.py's
        own module docstring for why this addon needs its own service rather than relying on the
        Movies addon's. Deliberately minimal: unlike that addon's service.py, nothing else lives
-       here (no corner status, no NFO-rebuild-on-scan, no watch/rating sync); those still only
-       run via the Movies addon today, and this extension exists solely so the scan-signal
-       feature itself doesn't require it to be installed. -->
+       here (no corner status, no watch/rating sync); those still only run via the Movies addon
+       today, and this extension exists solely so the scan-signal feature itself doesn't require
+       it to be installed. -->
   <extension point="xbmc.service"
              library="service.py"
              start="startup"/>
@@ -57,8 +57,60 @@
       <icon>icon.png</icon>
     </assets>
     <summary lang="en_GB">Chronicle Scraper (TV)</summary>
-    <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. "Rebuild local NFOs from Chronicle" and the corner status indicator live in the Movies addon and cover both movies and TV shows together; this addon doesn't duplicate them. It does have its own small background service that keeps Kodi's library in sync with newly-imported content, independent of the Movies addon -- see this version's changelog.</description>
-    <news>v1.11.7 - Per-user direction (2026-09-12): this addon no longer writes a per-episode
+    <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. The corner status indicator lives in the Movies addon and covers both movies and TV shows together; this addon doesn't duplicate it. Neither addon writes a local NFO file of any kind -- Chronicle's own API is the source of truth both scrapers read from directly. It does have its own small background service that keeps Kodi's library in sync with newly-imported content, independent of the Movies addon -- see this version's changelog.</description>
+    <news>v1.13.2 - REVERTED v1.13.1's datetime.strptime() priming fix: on the movie addon's
+identical copy of this module, it failed EVERY time at module-import time instead of fixing
+the rare original race, taking the ENTIRE background service down on every single Kodi
+startup. The original bug (one rare, tolerable failure during a huge concurrent burst) is far
+preferable to that. See lib/progress_sync.py's own note -- needs a real on-device repro before
+trying again.
+
+v1.13.1 - Fixed a pre-existing, unrelated bug found live during a heavy rescan
+session (2026-09-13): lib/progress_sync.py's datetime.strptime() call could occasionally fail
+("'NoneType' object is not callable") when Kodi's worker-thread pool raced its very first call
+in the process -- a well-known CPython lazy-import hazard, fixed by priming it once at module
+load. Also removed a few more pieces of now-dead code left over from the NFO removal below
+(unused chronicle_client._get_bytes(), unused legacy_nfo.py stash functions).
+
+v1.13.0 - Removed local NFO writing entirely (write_nfo, tvshow.nfo via
+lib/tv_nfo_writer.py) -- per-user direction (2026-09-13) after it was suspected of interfering
+with TV show scanning reliability during a heavy rescan session. Chronicle's own API is the
+source of truth this scraper reads from directly; no local NFO was ever required for it to
+work. Paired with the same removal in the Movies addon (v3.16.0).
+
+v1.12.3 - Repair Stuck Episodes now also fixes shows whose season folder Kodi can no
+longer find (renamed on disk) -- second step of the same repair, no new button. Resets
+watched status for those shows only; Chronicle resyncs it.
+
+v1.12.2 - Adds a "What Is This?" button to Library Repair, shown as a real dialog
+(reported live 2026-09-13: the settings screen's own help text for these buttons wasn't
+visible at all on that device/skin, leaving zero explanation on screen of what a "stuck
+episode" even means). The full explanation no longer depends on that help panel ever
+rendering.
+
+v1.12.1 - Fixes the entire Settings screen crashing on open (confirmed live
+2026-09-13): lib/settings_mirror.py still referenced the write_streamdetails setting after
+v1.11.7 removed it from this addon's own settings.xml entirely, so opening Settings normally
+(not via a specific action button) raised "Invalid setting type" every time. Unrelated to the
+new v1.12.0 Library Repair feature itself -- a leftover from the per-episode NFO removal the
+day before -- but it blocked reaching Library Repair's own settings at all, since opening
+Settings is how every action in this addon (including the new one) gets reached in the first
+place.
+
+v1.12.0 - New "Library Repair" settings action (three buttons: Preview, Repair Stuck
+Episodes, and Undo Last Repair). Root-caused live (2026-09-12): removing a TV show from Kodi's
+library -- even via a full "reset content type and rescan" -- never actually deletes that show's
+underlying episode/file database rows, only unlinks them. Those leftover ("orphaned") rows
+permanently block Kodi's own scanner from ever re-examining the exact same files again, no matter
+how many times the show is removed and rescanned -- confirmed live on a real device, one show
+permanently capped at 2 of 30 real episodes, another at 52 of 91, for months, regardless of any
+number of rescans. This is the fix: a settings action that finds and removes exactly those
+orphaned entries on THIS device's own Kodi library, with a mandatory verified backup made first,
+a clear before-you-commit summary of what it found, and an Undo action that reverses precisely
+the most recent repair from its own backup if anything looks wrong afterward. See
+lib/library_repair.py's own module docstring for the full safety design.
+
+v1.11.7 - Per-user direction (2026-09-12): this addon no longer writes a per-episode
 NFO file, ever. Root cause: Kodi's NfoUrl action for an episode carries no show context
 whatsoever (not even a folder path), and unlike a failed show-level NfoUrl call (harmless --
 Kodi falls back to its own normal find/getepisodelist flow), a failed episode-level one aborts

@@ -22,9 +22,8 @@ contract, which is a superset of the movies contract:
                              nothing at all before 2026-09-12 as a result.
   action=NfoUrl           -> nfo_url(): identifies an already-organized show or
                              episode (e.g. one a prior tool like tinyMediaManager
-                             already scraped, or one Chronicle's own write_nfo
-                             feature already wrote a sidecar for) straight from
-                             its own existing .nfo, the same "url" lookup token
+                             already scraped) straight from its own existing
+                             .nfo, the same "url" lookup token
                              find()/getepisodelist() would otherwise have to
                              re-derive. See nfo_url's own doc for why the episode
                              branch matters just as much as the show branch --
@@ -40,7 +39,6 @@ and cross-provider aggregation logic lives in Chronicle's own ScraperController.
 
 import json
 import os
-import posixpath
 import sys
 import urllib.parse
 from urllib.parse import parse_qsl
@@ -58,13 +56,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.logger import Logger
 from lib import activity_tracker
 from lib import legacy_nfo
-from lib import rebuild_state
 from lib.chronicle_client import ChronicleClient
 from lib.kodi_video_info import apply_common_video_info, apply_ratings, apply_artwork
-from lib.tv_nfo_writer import sync_show_nfo
 from lib.tvshow_location import find_show_location
 from lib import progress_sync
-from lib import settings_upgrade
 
 log = Logger('tvshow_scraper')
 ADDON = xbmcaddon.Addon()
@@ -269,45 +264,6 @@ def get_details(show_id, handle):
         return False
     activity_tracker.mark_active(details.get('title') or str(show_id))
 
-    # find_show_location()/the legacy-NFO harvest below only ever feed the
-    # NFO write further down (no local art sync consumes them at the show
-    # level, unlike movies) -- both stay skipped entirely outside a rebuild
-    # pass, same gate as the NFO write itself, so an ordinary scan doesn't
-    # pay for find_show_location()'s own VideoLibrary lookup (and retry) for
-    # a result nothing this pass would use. See lib/rebuild_state.py.
-    location = (None, None)
-    if rebuild_state.is_active():
-        # Resolved once, here, before the ListItem below is built, so a
-        # legacy-NFO merge (just below) benefits everything downstream --
-        # Kodi's own display included, not just the NFO. Same ordering fix
-        # as python/scraper.py's get_details() -- see that function's own
-        # comment for why this has to happen before apply_common_video_info()
-        # runs.
-        folder, tvshowid = find_show_location(details.get('title'), details.get('year'))
-        location = (folder, tvshowid)
-        if tvshowid is not None:
-            # Lets Chronicle push a future NFO update straight to this device (see
-            # lib/chronicle_client.py's report_kodi_id() and Chronicle's own NfoPushService).
-            # Only reported when a rebuild pass already resolved tvshowid anyway (same gate
-            # as everything else in this block) -- an ordinary scan doesn't otherwise pay for
-            # this VideoLibrary lookup at the show level, unlike the episode level below.
-            ChronicleClient().report_kodi_id(show_id, 'tvshow', tvshowid)
-
-        # If nfo_rebuild.py's rebuild action ran against this show, whatever
-        # its previous tvshow.nfo contained (e.g. from tinyMediaManager) was
-        # harvested and stashed before deletion -- see lib/legacy_nfo.py.
-        # Pick it up now (one-shot), fill any gap Chronicle's own data has,
-        # and feed it back into Chronicle itself so it isn't lost.
-        stash_key = posixpath.basename(folder.rstrip('/')) if folder else None
-        legacy_data = legacy_nfo.load_and_clear_stash(stash_key) if stash_key else None
-        if legacy_data:
-            _merge_legacy_gaps(details, legacy_data, (
-                'title', 'overview', 'year', 'premiered', 'mpaa', 'country',
-                'studio', 'status', 'runtimeMinutes', 'genres', 'tags', 'cast',
-                'ratings',
-            ))
-            ChronicleClient().contribute_metadata(show_id, 'chronicle_scraper.legacy_nfo', legacy_data)
-
     listitem = xbmcgui.ListItem(details.get('title') or '', offscreen=True)
     vtag = listitem.getVideoInfoTag()
     vtag.setMediaType('tvshow')
@@ -348,11 +304,6 @@ def get_details(show_id, handle):
             xbmc.Actor(name=actor.get('name') or '', role=actor.get('role') or '', order=i)
             for i, actor in enumerate(details['cast'])
         ])
-
-    # NFO writing only ever happens as part of an explicit rebuild pass -- see
-    # lib/rebuild_state.py and python/scraper.py's own identical gate.
-    if ADDON.getSettingBool('write_nfo') and rebuild_state.is_active():
-        sync_show_nfo(show_id, details.get('title'), details.get('year'), location=location)
 
     # Kodi echoes this back verbatim as the "url" param to getepisodelist.
     vtag.setEpisodeGuide(build_lookup_string(show_id))
@@ -506,8 +457,8 @@ def get_episode_details(encoded_ids, handle):
     # episode nfo would have (plot/cast/art/ratings/ids, all set on vtag above), and
     # watch_rating_sync.py already keeps rating/resume/watched status current on anything
     # already in a device's library directly via VideoLibrary.Set*Details, independent of any
-    # local file. Show-level (tvshow.nfo) writing is unaffected -- see sync_show_nfo in
-    # get_details() above, which Kodi tolerates failing gracefully.
+    # local file. Show-level (tvshow.nfo) writing was a separate feature, removed entirely
+    # 2026-09-13 -- see git history if you need the old rationale.
 
     xbmcplugin.setResolvedUrl(handle=handle, succeeded=True, listitem=listitem)
     log.info('get_episode_details: episode_id={0} S{1}E{2} title={3!r} -- setResolvedUrl sent to Kodi'.format(
@@ -573,8 +524,6 @@ def _resolve_lookup_id(params):
 
 
 def run():
-    settings_upgrade.ensure_defaults_migrated()
-
     params = get_params(sys.argv[1:])
 
     action = params.get('action')
