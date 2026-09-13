@@ -50,10 +50,6 @@ _SHOW_LOCAL_ART_SUFFIXES = (
     ('characterart', 'characterart'),
 )
 
-_EPISODE_ART_TAGS = (('thumb', 'thumb'),)
-_EPISODE_LOCAL_ART_SUFFIXES = (('thumb', 'thumb'),)
-
-
 def sync_show_nfo(media_item_id, title, year, location=None):
     """Writes tvshow.nfo for this show, fetching the pre-built document from Chronicle (GET
     .../tv/sidecar -- see ChronicleClient.fetch_show_sidecar and
@@ -102,62 +98,15 @@ def sync_show_nfo(media_item_id, title, year, location=None):
 
     log.info('Wrote show NFO for "{0}" ({1}) from Chronicle to {2}'.format(title, year, dest))
 
-
-def sync_episode_nfo(media_item_id, details, folder, video_basename, streamdetails=None):
-    """Writes this episode's own NFO, fetching the pre-built document from Chronicle (GET
-    .../tv/episode-sidecar -- see ChronicleClient.fetch_episode_sidecar and
-    docs/plans/2026-09-02-kodi-nfo-plugin-design.md) rather than assembling it here, then
-    splicing in the two things that endpoint structurally cannot supply: streamdetails (Kodi's
-    own per-file technical probe, see lib/tvshow_location.py's get_episode()) and local-art-file
-    fallback (see nfo_common.splice_local_art_fallback's own doc). `details` (the same dict
-    ScraperController's /tv/episode-details returns) is used only for the log lines below, not
-    to build the document itself.
-
-    folder+video_basename are the episode's OWN file's folder/basename -- unlike movies/shows,
-    an episode NFO always sits right next to its own video file, named to match it exactly
-    (Kodi's episode-NFO convention has no bare fallback name the way movie.nfo/tvshow.nfo
-    have)."""
-    if not folder or not video_basename:
-        # Logged (not a silent no-op) so a rebuild pass that never writes
-        # this episode's NFO has a visible cause in kodi.log instead of
-        # looking like a stall -- see tvshow_scraper.py's own
-        # get_episode_details() logging for why folder/video_basename can
-        # still be empty here (VideoLibrary lookup AND the pre-refresh path
-        # cache both came up empty for this episode).
-        log.warning('sync_episode_nfo: S{0}E{1} "{2}" -- no folder/video_basename resolved, '
-                    'skipping NFO write'.format(
-                    details.get('season'), details.get('episode'), details.get('title')))
-        return
-
-    dest = folder + video_basename + '.nfo'
-
-    xml_bytes_in = ChronicleClient().fetch_episode_sidecar(media_item_id)
-    if not xml_bytes_in:
-        log.warning('sync_episode_nfo: Chronicle returned no sidecar for media_item_id={0} -- '
-                    'NFO not written this pass'.format(media_item_id))
-        return
-    try:
-        root = ET.fromstring(xml_bytes_in)
-    except ET.ParseError as exc:
-        log.warning('sync_episode_nfo: sidecar from Chronicle for media_item_id={0} was not '
-                    'parseable XML: {1}'.format(media_item_id, exc))
-        return
-
-    nfo_common.add_streamdetails(root, streamdetails)
-    local_art = nfo_common.list_local_art_prefixed(folder, [video_basename], _EPISODE_LOCAL_ART_SUFFIXES)
-    nfo_common.splice_local_art_fallback(root, local_art, _EPISODE_ART_TAGS)
-
-    xml_bytes = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + ET.tostring(root, encoding='utf-8')
-
-    try:
-        f = xbmcvfs.File(dest, 'w')
-        try:
-            f.write(bytearray(xml_bytes))
-        finally:
-            f.close()
-    except Exception as exc:
-        log.warning("Couldn't write episode NFO {0}: {1}".format(dest, exc))
-        return
-
-    log.info('Wrote episode NFO for S{0}E{1} "{2}" from Chronicle to {3}'.format(
-             details.get('season'), details.get('episode'), details.get('title'), dest))
+# sync_episode_nfo() removed entirely (2026-09-12, per-user direction): Chronicle no longer
+# writes per-episode NFOs. Kodi's NfoUrl action for an episode carries no show context
+# whatsoever, and unlike a failed show-level NfoUrl call (tolerated, falls back to Kodi's
+# normal find/getepisodelist flow), a failed episode-level one aborts the rest of that show's
+# scan entirely with no fallback of its own -- a structural Kodi limitation, not something
+# either side of this pipeline can route around. The normal find/getepisodelist/
+# getepisodedetails path (python/tvshow_scraper.py's get_episode_details()) already delivers
+# every field an episode nfo would have, and lib/watch_rating_sync.py (movie addon repo)
+# already keeps rating/resume/watched status current on anything already in a device's
+# library directly via VideoLibrary.Set*Details, independent of any local file. See
+# ScraperController.ResolveEpisodeByExternalId's own doc (Chronicle server repo) and
+# NfoRebuildQueueService.EnsureSeededAsync's own doc for the rest of this removal.

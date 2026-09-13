@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Shared XML-building blocks for Kodi-native NFOs -- used by nfo_writer.py
-(movies) and tv_nfo_writer.py (TV shows/episodes).
+"""Shared XML-building blocks for Kodi-native NFOs -- used by tv_nfo_writer.py's sync_show_nfo()
+(episode NFO writing, and this file's own add_streamdetails() it used, were removed 2026-09-12;
+see tv_nfo_writer.py's own doc). The movie addon repo has its own separate copy of this file,
+still used by both nfo_writer.py (movies) and its own add_streamdetails().
 
 Chronicle's own data (actors, directors/writers, uniqueid, ratings, and
 Chronicle's own remote artwork candidates) is no longer built here -- as of
 docs/plans/2026-09-02-kodi-nfo-plugin-design.md, that logic moved server-side
-into Chronicle.Plugin.Kodi.NFO's KodiNfoBuilder, which both writers now fetch
-pre-built XML from (see ChronicleClient.fetch_movie_sidecar/fetch_show_sidecar/
-fetch_episode_sidecar) instead of assembling it in Python. What's left here is
-strictly Kodi-local data neither Chronicle's server nor that plugin can ever
-have: Kodi's own per-file technical probe (add_streamdetails) and local art
-files already sitting on disk (list_local_art_prefixed/list_local_art_plain,
-spliced in via splice_local_art_fallback) -- see that design doc's "Not
-solved here" section for why local-art discovery specifically stays
-client-side.
+into Chronicle.Plugin.Kodi.NFO's KodiNfoBuilder, which sync_show_nfo() now fetches
+pre-built XML from (see ChronicleClient.fetch_show_sidecar) instead of assembling it in
+Python. What's left here is strictly Kodi-local data neither Chronicle's server nor that
+plugin can ever have: local art files already sitting on disk
+(list_local_art_prefixed/list_local_art_plain, spliced in via splice_local_art_fallback) --
+see that design doc's "Not solved here" section for why local-art discovery specifically
+stays client-side.
 """
 
 import re
@@ -33,46 +33,12 @@ def add_text(parent, tag, text):
     return el
 
 
-def add_streamdetails(root, streamdetails):
-    """Adds Kodi's own <fileinfo><streamdetails> block (video/audio/subtitle
-    codec, resolution, HDR type, channel counts, track languages) -- data
-    only Kodi itself has, from actually having opened and probed the real
-    file. streamdetails is the dict lib/movie_art_sync.py's
-    get_streamdetails() (or lib/tvshow_location.py's get_episode())
-    returns, or None/empty when Kodi hasn't probed this file yet -- in which
-    case this simply adds nothing, exactly as if the caller had never
-    asked."""
-    if not streamdetails:
-        return
-    video = streamdetails.get('video') or []
-    audio = streamdetails.get('audio') or []
-    subtitle = streamdetails.get('subtitle') or []
-    if not (video or audio or subtitle):
-        return
-
-    fileinfo_el = ET.SubElement(root, 'fileinfo')
-    sd_el = ET.SubElement(fileinfo_el, 'streamdetails')
-
-    for v in video:
-        v_el = ET.SubElement(sd_el, 'video')
-        add_text(v_el, 'codec', v.get('codec'))
-        add_text(v_el, 'aspect', v.get('aspect'))
-        add_text(v_el, 'width', v.get('width'))
-        add_text(v_el, 'height', v.get('height'))
-        if v.get('duration'):
-            add_text(v_el, 'durationinseconds', v['duration'])
-        add_text(v_el, 'stereomode', v.get('stereomode'))
-        add_text(v_el, 'hdrtype', v.get('hdrtype'))
-
-    for a in audio:
-        a_el = ET.SubElement(sd_el, 'audio')
-        add_text(a_el, 'codec', a.get('codec'))
-        add_text(a_el, 'language', a.get('language'))
-        add_text(a_el, 'channels', a.get('channels'))
-
-    for s in subtitle:
-        s_el = ET.SubElement(sd_el, 'subtitle')
-        add_text(s_el, 'language', s.get('language'))
+# add_streamdetails() removed (2026-09-12) -- this addon's own copy had exactly one caller,
+# tv_nfo_writer.py's now-removed sync_episode_nfo() (shows/movies have no per-file
+# streamdetails to add in the first place). Chronicle no longer writes per-episode NFOs at
+# all -- see ScraperController.ResolveEpisodeByExternalId's own doc (Chronicle server repo).
+# The movie addon repo's OWN separate copy of this file is untouched -- movie NFOs still get
+# streamdetails.
 
 
 def splice_local_art_fallback(root, local_art, art_tags):

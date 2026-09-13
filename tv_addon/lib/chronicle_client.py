@@ -422,11 +422,9 @@ class ChronicleClient:
         return self._get_bytes('/api/v1/scraper/tv/sidecar?id={0}'.format(media_item_id),
                                 'fetch_show_sidecar({0})'.format(media_item_id))
 
-    def fetch_episode_sidecar(self, media_item_id: int):
-        """GET /api/v1/scraper/tv/episode-sidecar?id= -- same as fetch_show_sidecar() above,
-        for a single episode's own NFO, used by lib/tv_nfo_writer.py's sync_episode_nfo()."""
-        return self._get_bytes('/api/v1/scraper/tv/episode-sidecar?id={0}'.format(media_item_id),
-                                'fetch_episode_sidecar({0})'.format(media_item_id))
+    # fetch_episode_sidecar() removed (2026-09-12) along with its only caller,
+    # lib/tv_nfo_writer.py's sync_episode_nfo() -- Chronicle no longer writes per-episode NFOs
+    # at all. The server endpoint it called (GET tv/episode-sidecar) was removed the same day.
 
     def push_watched(self, media_item_id: int, timestamp_iso):
         """POST /api/v1/scrobble -- imports Kodi's own local watched status into Chronicle

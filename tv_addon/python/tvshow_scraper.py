@@ -57,14 +57,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lib.logger import Logger
 from lib import activity_tracker
-from lib import episode_path_cache
 from lib import legacy_nfo
 from lib import rebuild_state
 from lib.chronicle_client import ChronicleClient
 from lib.kodi_video_info import apply_common_video_info, apply_ratings, apply_artwork
-from lib.movie_art_sync import strip_video_ext
-from lib.tv_nfo_writer import sync_show_nfo, sync_episode_nfo
-from lib.tvshow_location import find_show_location, get_episode
+from lib.tv_nfo_writer import sync_show_nfo
+from lib.tvshow_location import find_show_location
 from lib import progress_sync
 from lib import settings_upgrade
 
@@ -403,14 +401,6 @@ def get_episode_details(encoded_ids, handle):
         if details.get('showTitle') else (details.get('title') or str(episode_id))
     activity_tracker.mark_active(episode_label)
 
-    # find_show_location()/get_episode()/the legacy-NFO harvest below only
-    # ever feed the NFO write further down -- nothing else here consumes
-    # them -- so all of it stays skipped entirely outside a rebuild pass,
-    # same gate as the write itself. See lib/rebuild_state.py. This also
-    # means an ordinary scan never pays for find_show_location()'s and
-    # get_episode()'s own VideoLibrary lookups for a result nothing this
-    # pass would use.
-    folder = video_basename = streamdetails = None
     # Resolved unconditionally (not just during a rebuild pass) so rating +
     # resume reconciliation below always has tvshowid available -- per-user
     # request (2026-08-30): "this needs to happen with the scraper
@@ -418,80 +408,21 @@ def get_episode_details(encoded_ids, handle):
     # rebuild. showTitle/showYear (the PARENT show's, not this episode's) is
     # what Chronicle's /tv/episode-details response carries for exactly this
     # purpose -- see ScraperController.GetEpisodeDetails server-side.
+    #
+    # This used to also gate a rebuild-only block: locating the episode's own
+    # file (for the now-removed per-episode NFO write), reporting its Kodi
+    # library id back to Chronicle (purely so NfoPushService could push a
+    # future NFO update -- moot with no NFO to push), and harvesting a
+    # stashed legacy NFO nfo_rebuild.py's episode rebuild pass would have
+    # saved before deleting the old file. All three purposes disappeared
+    # together (2026-09-12) when per-episode NFO writing was removed
+    # entirely: nfo_rebuild.py's episode-kind claims can never be issued any
+    # more (see NfoRebuildQueueService.EnsureSeededAsync's own doc), so
+    # nothing ever stashes a legacy episode NFO to harvest either.
     show_title = details.get('showTitle')
     tvshowid = None
     if show_title:
         _show_folder, tvshowid = find_show_location(show_title, details.get('showYear'))
-
-    if rebuild_state.is_active():
-        # Locate the episode's own file, the same way python/scraper.py
-        # locates a movie's -- Kodi's find/getepisodedetails contract never
-        # hands this script a file path any more than the movies one does.
-        if tvshowid is not None:
-            # Kodi's VideoLibrary.GetEpisodes returns file path and
-            # streamdetails together in one call -- there's no cheaper
-            # way to get just the file path, so this always fetches
-            # both, but streamdetails is only ever kept (and written
-            # into the NFO) when write_streamdetails is on. See
-            # python/scraper.py's own comment for why that's opt-in.
-            file_path, episode_streamdetails, kodi_episode_id = get_episode(
-                tvshowid, details.get('season'), details.get('episode'))
-            if kodi_episode_id is not None:
-                # Lets Chronicle push a future NFO update straight to this device (see
-                # lib/chronicle_client.py's report_kodi_id() and Chronicle's own
-                # NfoPushService). Same rebuild-pass gate as this whole lookup -- an
-                # ordinary scan doesn't otherwise pay for this VideoLibrary call.
-                ChronicleClient().report_kodi_id(episode_id, 'episode', kodi_episode_id)
-            # This is purely a rebuild-pass NFO/legacy-harvest lookup --
-            # it does NOT gate whether the episode itself loads into
-            # Kodi's library (setResolvedUrl() below runs regardless of
-            # file_path). Logged so it's visible whether VideoLibrary
-            # already has this episode's file at rebuild time, distinct
-            # from whether the episode gets committed at all (that's the
-            # endOfDirectory log lines in run()).
-            log.info('get_episode_details: tvshowid={0} S{1}E{2} -- VideoLibrary lookup found file_path={3!r}'.format(
-                     tvshowid, details.get('season'), details.get('episode'), file_path))
-            if not file_path:
-                # Confirmed live via kodi.log (2026-08-28): during a
-                # rebuild pass, the VideoLibrary lookup just above comes
-                # back empty for essentially every episode -- not
-                # because the file is missing, but because this exact
-                # episode's own RefreshEpisode() is what's currently
-                # running this very callback, and its library row isn't
-                # recommitted until this callback returns (see
-                # episode_path_cache.py's module docstring). Fall back to
-                # nfo_rebuild.py's own pre-refresh known-good path for
-                # this episode, stashed there for exactly this gap.
-                file_path = episode_path_cache.load_and_clear(
-                    tvshowid, details.get('season'), details.get('episode'))
-                if file_path:
-                    log.info('get_episode_details: tvshowid={0} S{1}E{2} -- using nfo_rebuild.py\'s '
-                             'cached pre-refresh path instead: {3!r}'.format(
-                             tvshowid, details.get('season'), details.get('episode'), file_path))
-                else:
-                    log.warning('get_episode_details: tvshowid={0} S{1}E{2} -- VideoLibrary lookup '
-                                'found no file AND no cached pre-refresh path is available -- this '
-                                'episode\'s NFO will NOT be written this pass'.format(
-                                tvshowid, details.get('season'), details.get('episode')))
-            if file_path:
-                folder = posixpath.dirname(file_path) + '/'
-                video_basename = strip_video_ext(posixpath.basename(file_path))
-            if ADDON.getSettingBool('write_streamdetails'):
-                streamdetails = episode_streamdetails
-
-        # If nfo_rebuild.py's rebuild action ran against this episode,
-        # whatever its previous NFO contained (e.g. from tinyMediaManager)
-        # was harvested and stashed before deletion -- see lib/legacy_nfo.py.
-        # Pick it up now (one-shot), fill any gap Chronicle's own data has,
-        # and feed it back into Chronicle. Done before the ListItem below is
-        # built, same ordering fix as python/scraper.py's get_details() (and
-        # this function's own show-level sibling above) -- see those for why.
-        legacy_data = legacy_nfo.load_and_clear_stash(video_basename) if video_basename else None
-        if legacy_data:
-            _merge_legacy_gaps(details, legacy_data, (
-                'title', 'overview', 'aired', 'runtimeMinutes', 'cast', 'crew', 'ratings',
-            ))
-            ChronicleClient().contribute_metadata(episode_id, 'chronicle_scraper.legacy_nfo', legacy_data)
 
     listitem = xbmcgui.ListItem(details.get('title') or '', offscreen=True)
     vtag = listitem.getVideoInfoTag()
@@ -565,10 +496,18 @@ def get_episode_details(encoded_ids, handle):
         listitem.setArt({'thumb': details['thumbUrl']})
         vtag.addAvailableArtwork(details['thumbUrl'], 'thumb')
 
-    # NFO writing only ever happens as part of an explicit rebuild pass -- see
-    # lib/rebuild_state.py and python/scraper.py's own identical gate.
-    if ADDON.getSettingBool('write_nfo') and rebuild_state.is_active():
-        sync_episode_nfo(episode_id, details, folder, video_basename, streamdetails=streamdetails)
+    # Per-episode NFO writing removed entirely (2026-09-12, per-user direction) -- Kodi's NfoUrl
+    # action for an episode carries no show context whatsoever (confirmed live the same day; see
+    # ScraperController.ResolveEpisodeByExternalId's own doc), and unlike a failed SHOW-level
+    # NfoUrl call (which Kodi tolerates, falling back to its normal find/getepisodelist flow), a
+    # failed EPISODE-level one aborts the rest of that show's scan entirely with no fallback of
+    # its own -- a structural Kodi limitation neither side of this pipeline can route around.
+    # Nothing is lost by never writing one: this same call already delivers every field an
+    # episode nfo would have (plot/cast/art/ratings/ids, all set on vtag above), and
+    # watch_rating_sync.py already keeps rating/resume/watched status current on anything
+    # already in a device's library directly via VideoLibrary.Set*Details, independent of any
+    # local file. Show-level (tvshow.nfo) writing is unaffected -- see sync_show_nfo in
+    # get_details() above, which Kodi tolerates failing gracefully.
 
     xbmcplugin.setResolvedUrl(handle=handle, succeeded=True, listitem=listitem)
     log.info('get_episode_details: episode_id={0} S{1}E{2} title={3!r} -- setResolvedUrl sent to Kodi'.format(

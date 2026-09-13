@@ -30,7 +30,11 @@
     <!-- ============================================================================ -->
     <category label="32090">
         <setting id="write_nfo" type="bool" label="32091" default="true" help="32092"/>
-        <setting id="write_streamdetails" type="bool" label="32105" default="false" help="32106" enable="eq(-1,true)"/>
+        <!-- write_streamdetails removed (2026-09-12): its only effect was on the now-removed
+             per-episode NFO write (a show's own tvshow.nfo has no per-file streamdetails to
+             carry in the first place). Left as a stored-but-unused value for anyone upgrading
+             rather than migrated away -- see lib/settings_upgrade.py if this ever needs a
+             real one-time cleanup. -->
         <!-- Set automatically by lib/settings_upgrade.py the first time this addon runs after
              v1.10.0: a settings.xml default="..." only ever applies to a value Kodi has never
              persisted, so this one-time code migration is what actually gets an

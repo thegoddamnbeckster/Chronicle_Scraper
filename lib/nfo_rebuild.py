@@ -42,6 +42,19 @@ combined result dict, so default.py's summary stays exactly as simple as it
 was when this only handled movies; the counts just now mean "across
 everything", not "movies only".
 
+The "episode" kind's own branch below (_process_episode_claim and everything downstream of it)
+is PROVABLY UNREACHABLE as of 2026-09-12, left in place deliberately rather than surgically
+removed: Chronicle no longer writes per-episode NFOs at all (an episode-level NfoUrl call
+carries no show context whatsoever, and unlike a failed show-level one, which Kodi tolerates,
+a failed episode-level one aborts the rest of that show's scan entirely with no fallback --
+see ScraperController.ResolveEpisodeByExternalId's own doc, Chronicle server repo), and
+NfoRebuildQueueService.EnsureSeededAsync now never seeds -- and actively prunes -- "episode"
+kind rows, so this module can never be handed episode work to claim again. Removing "episode"
+from this shared, concurrent, heavily-hardened three-kind pipeline was judged higher-risk than
+leaving it structurally unreachable: the movie/tvshow branches share enough of this file's
+pacing/threading/failure-streak machinery that surgery here risked regressing those for zero
+behavioral gain, since the server-side gate alone already guarantees the outcome.
+
 Root-caused 2026-09-06: this used to source its work list directly from
 THIS device's own VideoLibrary.GetMovies/GetTVShows/GetEpisodes (no explicit
 sort, so every single invocation walked the exact same stable order

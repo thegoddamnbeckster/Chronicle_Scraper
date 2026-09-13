@@ -243,77 +243,8 @@ def _search_sources_for_show(title, year):
     return None
 
 
-def get_episode(tvshowid, season, episode):
-    """Returns (file_path, streamdetails) for this exact (season, episode)
-    under tvshowid, or (None, None) if tvshowid is unknown (see
-    find_show_location), the VideoLibrary.GetEpisodes call itself fails, or
-    this (season, episode) isn't in Kodi's list yet -- e.g. a brand-new file
-    not yet committed (getepisodedetails() for a just-added episode runs
-    DURING the very scan that's adding it, so this is common, not rare; see
-    module docstring). One VideoLibrary.GetEpisodes call gives both the file
-    path and Kodi's own streamdetails together -- unlike movies, there's no
-    separate lookup needed for streamdetails, since an episode is identified
-    precisely by season+episode rather than a fuzzy title/year guess.
-    Matched in Python rather than via a JSON-RPC filter on season+episode --
-    simpler to get right than trusting a two-field filter combination, and a
-    single show's episode list is never large enough for that to matter.
-
-    A SECOND, distinct way this comes back empty, confirmed live via
-    kodi.log (2026-08-28): during an nfo_rebuild.py rebuild pass, this
-    episode's OWN VideoLibrary.RefreshEpisode() call is what's currently
-    running the very getepisodedetails() callback that calls this function
-    -- Kodi tears the episode's library row down for the duration of that
-    refresh and only recommits it once the callback returns (setResolvedUrl
-    + endOfDirectory), so asking VideoLibrary about this exact episode from
-    inside its own in-flight refresh legitimately finds nothing, no matter
-    how "already committed" the item was a moment before the refresh was
-    issued. This is NOT the brand-new-file race above (that's about an item
-    Kodi hasn't indexed yet at all; this is about an item Kodi is
-    momentarily un-indexing on purpose) and no retry fixes it -- the row
-    will not exist until this same call chain finishes. See
-    lib/episode_path_cache.py, which nfo_rebuild.py populates with each
-    episode's already-known file path before issuing the refresh, and which
-    tvshow_scraper.py's get_episode_details() falls back to whenever this
-    function comes back empty during a rebuild.
-
-    Deliberately single-attempt, no retry: this is called synchronously from
-    Kodi's own live library scan (getepisodedetails()), and its result only
-    feeds the local NFO write / legacy-NFO harvest, not the episode's actual
-    resolution into Kodi's library (that already happened via
-    setResolvedUrl() before this runs) -- so blocking the scan with a sleep
-    here to chase the brand-new-file race buys nothing for how fast files
-    actually show up in Kodi, only for how fast the local NFO catches up
-    (and does nothing at all for the in-flight-refresh race above, which no
-    amount of waiting resolves). A missed NFO outside a rebuild pass is
-    caught on the episode's next ordinary scan, or on the next explicit
-    rebuild. Also returns Kodi's own internal episodeid (None if not found) -- see
-    lib/chronicle_client.py's report_kodi_id(), which callers use to let Chronicle push a
-    future NFO update straight to this device via VideoLibrary.RefreshEpisode."""
-    if tvshowid is None:
-        return None, None, None
-
-    request = {
-        'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetEpisodes',
-        'params': {
-            'tvshowid': tvshowid,
-            'properties': ['file', 'streamdetails', 'season', 'episode'],
-        },
-    }
-    try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
-    except Exception as exc:
-        log.warning("Couldn't query VideoLibrary.GetEpisodes for tvshowid={0}: {1}".format(tvshowid, exc))
-        return None, None, None
-    if 'error' in response:
-        log.warning('VideoLibrary.GetEpisodes rejected tvshowid={0}: {1}'.format(tvshowid, response['error']))
-        return None, None, None
-
-    for ep in response.get('result', {}).get('episodes') or []:
-        if ep.get('season') != season or ep.get('episode') != episode:
-            continue
-        file_path = ep.get('file')
-        raw = ep.get('streamdetails') or {}
-        streamdetails = raw if (raw.get('video') or raw.get('audio') or raw.get('subtitle')) else None
-        return file_path, streamdetails, ep.get('episodeid')
-
-    return None, None, None
+# get_episode() removed (2026-09-12) along with its only caller, tvshow_scraper.py's
+# get_episode_details() rebuild-only block -- Chronicle no longer writes per-episode NFOs, so
+# the file-path lookup this fed (purely for the local NFO write + streamdetails splice) no
+# longer serves any purpose. See ScraperController.ResolveEpisodeByExternalId's own doc
+# (Chronicle server repo) for the full reasoning.
