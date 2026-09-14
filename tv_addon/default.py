@@ -289,18 +289,27 @@ def _change_chronicle_url():
     _connect_to_chronicle()
 
 
-def _library_repair_group_lines(groups, limit=8):
-    """Formats detect_orphans()'s `groups` list into the "N episode(s) -- e.g. path" lines shown
-    in every Preview/Repair dialog -- see lib/library_repair.detect_orphans()'s own doc for why
-    a show TITLE can never be shown here: once the owning tvshow row is gone (that's the whole
-    problem being fixed), there is no title left to look up."""
-    lines = []
-    for group in groups[:limit]:
-        example = group['example_paths'][0] if group['example_paths'] else '?'
-        lines.append(ADDON.getLocalizedString(32161).format(group['episode_count'], example))
-    if len(groups) > limit:
-        lines.append(ADDON.getLocalizedString(32162).format(len(groups) - limit))
-    return '\n'.join(lines)
+def _progress_bg(heading):
+    """Creates an xbmcgui.DialogProgressBG and shows it IMMEDIATELY, before the caller does any
+    detection/repair work -- confirmed live (2026-09-14): with nothing shown until that work
+    returned, a scan or repair taking even a few seconds on a real library looked exactly like
+    the remote click hadn't registered at all. Returns (bg, update) -- `update(message)` is a
+    plain function suitable as library_repair's progress_callback (no xbmcgui reference crosses
+    into that module; see its own docstring on why), advancing a rough, monotonically increasing
+    percent alongside each new status line. The percent is deliberately approximate, not a real
+    fraction-of-work-done: the underlying steps (a fast precondition check vs. a multi-second
+    library backup) take wildly different real time, and a fake precise percentage across them
+    would be more misleading than a steadily-advancing-but-inexact one. Capped short of 100 --
+    the caller closes `bg` once its own work is actually done, not this."""
+    bg = xbmcgui.DialogProgressBG()
+    bg.create(heading, ADDON.getLocalizedString(32177))  # "Starting..." -- visible the instant this returns
+    state = {'percent': 10}
+
+    def update(message):
+        state['percent'] = min(state['percent'] + 20, 90)
+        bg.update(state['percent'], heading, message)
+
+    return bg, update
 
 
 def _library_repair_explain():
@@ -314,18 +323,28 @@ def _library_repair_explain():
 
 def _library_repair_preview():
     """Read-only "Repair Stuck Episodes -- Preview" action -- runs detection only and shows
-    what was found. Changes nothing, ever; see lib/library_repair.py's own module docstring."""
+    what was found. Changes nothing, ever; see lib/library_repair.py's own module docstring.
+
+    Shows a background progress indicator (_progress_bg) from the very first line, and the
+    result is just the two numbers that actually matter -- total stuck episodes and how many
+    shows they're spread across -- not a per-show breakdown of example file paths. Per-user
+    request (2026-09-14): immediate feedback that the click registered, and a result that says
+    how much needs fixing without making the user read through which shows are affected."""
     heading = ADDON.getLocalizedString(32151)
+    bg, update = _progress_bg(heading)
     try:
-        report = library_repair.preview()
+        report = library_repair.preview(progress_callback=update)
     except library_repair.LibraryRepairError as exc:
+        bg.close()
         log.warning('_library_repair_preview: aborted -- {0} ({1})'.format(exc.reason_code, exc.user_message))
         xbmcgui.Dialog().ok(heading, exc.user_message)
         return
     except Exception:
+        bg.close()
         log.error('_library_repair_preview: unexpected error:\n{0}'.format(traceback.format_exc()))
         xbmcgui.Dialog().ok(heading, 'Preview failed unexpectedly -- see kodi.log for details.')
         return
+    bg.close()
 
     stale_shows = report['stale_shows']
     if report['total_episodes'] == 0 and not stale_shows:
@@ -333,8 +352,7 @@ def _library_repair_preview():
     elif report['total_episodes'] == 0:
         message = ADDON.getLocalizedString(32176)  # neutral -- a stale-show note follows below
     else:
-        message = ADDON.getLocalizedString(32171).format(
-            report['total_episodes'], len(report['groups']), _library_repair_group_lines(report['groups']))
+        message = ADDON.getLocalizedString(32171).format(report['total_episodes'], len(report['groups']))
     if stale_shows:
         message += ADDON.getLocalizedString(32174).format(len(stale_shows))
     xbmcgui.Dialog().ok(heading, message)
@@ -345,18 +363,28 @@ def _library_repair():
     """"Repair Stuck Episodes" -- the real, destructive action. Detects fresh (never reuses a
     result from a separate earlier Preview invocation), shows exactly what it found, and only on
     explicit confirmation runs the actual backup-then-delete pass. See
-    lib/library_repair.py's own module docstring for the full safety design."""
+    lib/library_repair.py's own module docstring for the full safety design.
+
+    Two separate _progress_bg indicators, back to back: one for detection (same "show something
+    the instant the remote click lands" reasoning as Preview), and a second one, started fresh,
+    for the actual backup-then-delete run after the user confirms -- that phase is the long one
+    and per-user request (2026-09-14) needs its own ongoing "this is still running" feedback, not
+    just a static heading with no status text."""
     heading = ADDON.getLocalizedString(32153)
+    bg, update = _progress_bg(heading)
     try:
-        db_path, report = library_repair.prepare_repair()
+        db_path, report = library_repair.prepare_repair(progress_callback=update)
     except library_repair.LibraryRepairError as exc:
+        bg.close()
         log.warning('_library_repair: aborted before detection -- {0} ({1})'.format(exc.reason_code, exc.user_message))
         xbmcgui.Dialog().ok(heading, exc.user_message)
         return
     except Exception:
+        bg.close()
         log.error('_library_repair: unexpected error during detection:\n{0}'.format(traceback.format_exc()))
         xbmcgui.Dialog().ok(heading, 'Repair failed unexpectedly -- see kodi.log for details.')
         return
+    bg.close()
 
     stale_shows = report['stale_shows']
     if report['total_episodes'] == 0 and not stale_shows:
@@ -369,8 +397,7 @@ def _library_repair():
     if report['total_episodes'] == 0:
         confirm_message = ADDON.getLocalizedString(32176)  # neutral -- a stale-show note follows below
     else:
-        confirm_message = ADDON.getLocalizedString(32160).format(
-            report['total_episodes'], len(report['groups']), _library_repair_group_lines(report['groups']))
+        confirm_message = ADDON.getLocalizedString(32160).format(report['total_episodes'], len(report['groups']))
     if stale_shows:
         confirm_message += ADDON.getLocalizedString(32174).format(len(stale_shows))
 
@@ -385,12 +412,11 @@ def _library_repair():
         log.info('_library_repair: user declined -- no changes made')
         return
 
-    bg = xbmcgui.DialogProgressBG()
-    bg.create(heading)
+    bg2, update2 = _progress_bg(heading)
     try:
-        result = library_repair.finish_repair(db_path, report, execute=True)
+        result = library_repair.finish_repair(db_path, report, execute=True, progress_callback=update2)
     finally:
-        bg.close()
+        bg2.close()
 
     if result['aborted']:
         if result['backup_path']:

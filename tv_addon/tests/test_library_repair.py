@@ -432,6 +432,44 @@ class TestRepairFlow(LibraryRepairTestBase):
         self.assertEqual(_row_counts(self.db_path), before)
         self.assertFalse(os.path.isdir(self.backup_dir) and os.listdir(self.backup_dir))
 
+    def test_preview_reports_progress_before_returning(self):
+        # Per-user request (2026-09-14): a remote click needs SOMETHING to show immediately,
+        # not just a result several seconds later. preview()/prepare_repair()/finish_repair()
+        # all accept an optional progress_callback for exactly this -- called with a short
+        # status string at each real step, never raising even if this test's own probe did.
+        self.build_fixture(orphan_count=4)
+        messages = []
+        library_repair.preview(progress_callback=messages.append)
+        self.assertTrue(len(messages) >= 2, 'expected multiple progress updates, got {0}'.format(messages))
+        self.assertTrue(all(isinstance(m, str) for m in messages))
+
+    def test_prepare_and_finish_repair_report_progress_through_the_whole_run(self):
+        self.build_fixture(orphan_count=4)
+        detect_messages = []
+        db_path, report = library_repair.prepare_repair(progress_callback=detect_messages.append)
+        self.assertTrue(len(detect_messages) >= 2)
+
+        repair_messages = []
+        result = library_repair.finish_repair(db_path, report, execute=True, progress_callback=repair_messages.append)
+        self.assertFalse(result['aborted'])
+        # Must cover both the backup and the delete phase, not just one -- the two real slow
+        # steps in run_repair(), and the whole point of this feedback existing at all.
+        self.assertTrue(any('backing up' in m.lower() for m in repair_messages), repair_messages)
+        self.assertTrue(any('removing' in m.lower() for m in repair_messages), repair_messages)
+
+    def test_progress_callback_exception_never_aborts_a_real_repair(self):
+        # A UI-side callback failure (e.g. a closed/torn-down dialog) must never take down the
+        # actual repair logic underneath it -- _report() swallows whatever the callback raises.
+        self.build_fixture(orphan_count=4)
+
+        def broken_callback(_message):
+            raise RuntimeError('dialog already closed')
+
+        db_path, report = library_repair.prepare_repair(progress_callback=broken_callback)
+        result = library_repair.finish_repair(db_path, report, execute=True, progress_callback=broken_callback)
+        self.assertFalse(result['aborted'])
+        self.assertEqual(result['deleted_episodes'], 4)
+
     def test_backup_created_and_verified_before_delete_runs(self):
         self.build_fixture(orphan_count=4)
         db_path, report = library_repair.prepare_repair()

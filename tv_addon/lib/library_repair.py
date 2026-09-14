@@ -96,6 +96,20 @@ _SQLITE_MAX_VARS = 900
 
 _BACKUP_SUFFIX_RE = re.compile(r'\.repair_backup_\d{8}_\d{6}$')
 
+
+def _report(progress_callback, message):
+    """Calls progress_callback(message) if one was given, swallowing anything it raises -- a
+    UI-side callback failure must never abort a real repair in progress. Every high-level entry
+    point below accepts an optional progress_callback for exactly this: a plain function taking
+    one string, with no xbmcgui dependency here (see this module's own docstring on why --
+    default.py owns 100% of the UI, this just tells it what's happening right now)."""
+    if progress_callback is None:
+        return
+    try:
+        progress_callback(message)
+    except Exception as exc:
+        log.warning('_report: progress_callback raised ({0}) -- ignoring'.format(exc))
+
 # Tables this repair unconditionally requires to exist, with the exact columns it touches on
 # each -- verified via PRAGMA table_info before anything is trusted, never assumed. Missing any
 # of these aborts the whole operation; see _verify_schema().
@@ -559,13 +573,14 @@ def _find_shared_file_ids(conn, file_ids):
     return shared
 
 
-def run_repair(db_path, orphan_report, backup_dir):
+def run_repair(db_path, orphan_report, backup_dir, progress_callback=None):
     """The actual repair: mandatory verified backup, then a single transaction deleting exactly
     the rows named in orphan_report (plus their dependents), then a manifest for Undo Last
     Repair. Returns a RepairResult dict; never raises for a locked-database or scan-collision
     abort (those are reported via result['aborted']/['abort_reason']) -- only for something that
     happened before any write was attempted (backup failure) does this raise LibraryRepairError,
-    since nothing has changed yet in that case either way."""
+    since nothing has changed yet in that case either way. progress_callback: see _report()'s own
+    doc -- called before the two slowest steps here (the backup, then the delete transaction)."""
     episode_ids = orphan_report['episode_ids']
     file_ids = orphan_report['file_ids']
 
@@ -577,10 +592,12 @@ def run_repair(db_path, orphan_report, backup_dir):
     if not episode_ids:
         return result
 
+    _report(progress_callback, 'Backing up your library...')
     backup_path = create_backup(db_path, backup_dir)
     prune_old_backups(backup_dir)
     result['backup_path'] = backup_path
 
+    _report(progress_callback, 'Removing stuck episode entries...')
     conn = None
     for attempt in range(1, 4):
         try:
@@ -873,37 +890,47 @@ def _release_lock():
 
 # ── High-level entry points for default.py (each acquires/releases the lock itself) ────────────
 
-def preview():
+def preview(progress_callback=None):
     """Read-only: locate the db, run every precondition check, detect orphans AND stale season
     folders (two unrelated bugs, same symptom -- see this module's own docs for each). Raises
     LibraryRepairError on any abort condition; otherwise returns an OrphanReport with an added
-    'stale_shows' key."""
+    'stale_shows' key. progress_callback, if given, is called with a short status string at each
+    step -- see _report()'s own doc; this can genuinely take a few seconds on a large library, and
+    the caller needs something to show for that time besides an unresponsive remote click."""
     _acquire_lock()
     try:
+        _report(progress_callback, 'Locating your Kodi library database...')
         db_path = find_video_db_path()
         if not db_path:
             raise LibraryRepairError('no_db_found', "Couldn't locate the Kodi library database file.")
+        _report(progress_callback, 'Checking library health...')
         check_preconditions(db_path)
+        _report(progress_callback, 'Scanning for stuck episodes...')
         report = detect_orphans(db_path)
+        _report(progress_callback, 'Checking for missing season folders...')
         report['stale_shows'] = detect_stale_shows(db_path)
         return report
     finally:
         _release_lock()
 
 
-def prepare_repair():
+def prepare_repair(progress_callback=None):
     """First half of the Repair action: locate the db, check preconditions, detect orphans and
     stale season folders -- everything needed to show the user a confirmation dialog. Raises
     LibraryRepairError on any abort condition. On success, the CALLER is responsible for calling
     finish_repair() exactly once afterward (whether the user confirms or declines) to release the
-    lock this acquires."""
+    lock this acquires. progress_callback: see preview()'s own doc -- identical detection steps."""
     _acquire_lock()
     try:
+        _report(progress_callback, 'Locating your Kodi library database...')
         db_path = find_video_db_path()
         if not db_path:
             raise LibraryRepairError('no_db_found', "Couldn't locate the Kodi library database file.")
+        _report(progress_callback, 'Checking library health...')
         check_preconditions(db_path)
+        _report(progress_callback, 'Scanning for stuck episodes...')
         report = detect_orphans(db_path)
+        _report(progress_callback, 'Checking for missing season folders...')
         report['stale_shows'] = detect_stale_shows(db_path)
     except Exception:
         _release_lock()
@@ -911,17 +938,22 @@ def prepare_repair():
     return db_path, report
 
 
-def finish_repair(db_path, report, execute):
+def finish_repair(db_path, report, execute, progress_callback=None):
     """Second half of the Repair action -- always releases the lock prepare_repair() acquired.
     execute=False (user declined) makes no changes and returns None. execute=True runs the
     orphaned-row repair, THEN removes+rescans any stale-season-folder shows as a second step, and
-    returns a combined RepairResult (adds 'repaired_stale_shows': [name, ...])."""
+    returns a combined RepairResult (adds 'repaired_stale_shows': [name, ...]). progress_callback:
+    see preview()'s own doc -- this is the long-running half (backup + delete transaction), where
+    ongoing feedback matters even more than during detection."""
     try:
         if not execute:
             return None
-        result = run_repair(db_path, report, _backup_dir())
+        result = run_repair(db_path, report, _backup_dir(), progress_callback=progress_callback)
+        stale_shows = report.get('stale_shows') or []
+        if not result['aborted'] and stale_shows:
+            _report(progress_callback, 'Fixing shows with missing season folders...')
         result['repaired_stale_shows'] = (
-            [] if result['aborted'] else repair_stale_shows(report.get('stale_shows') or []))
+            [] if result['aborted'] else repair_stale_shows(stale_shows))
         return result
     finally:
         _release_lock()

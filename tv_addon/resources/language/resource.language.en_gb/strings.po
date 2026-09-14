@@ -192,15 +192,7 @@ msgid "Remove and Fix"
 msgstr ""
 
 msgctxt "#32160"
-msgid "Found {0} stuck episode(s) across {1} show(s):\n\n{2}\n\nA backup of your Kodi library will be saved first. Remove these {0} stuck entries now?"
-msgstr ""
-
-msgctxt "#32161"
-msgid "{0} episode(s) -- e.g. {1}"
-msgstr ""
-
-msgctxt "#32162"
-msgid "...and {0} more group(s)"
+msgid "Found {0} stuck episode(s) across {1} show(s).\n\nA backup of your Kodi library will be saved first. Remove these {0} stuck entries now?"
 msgstr ""
 
 msgctxt "#32163"
@@ -236,7 +228,7 @@ msgid "The undo started but did not finish ({0}). No changes were made."
 msgstr ""
 
 msgctxt "#32171"
-msgid "Found {0} stuck episode(s) across {1} show(s):\n\n{2}"
+msgid "Found {0} stuck episode(s) across {1} show(s)."
 msgstr ""
 
 msgctxt "#32172"
@@ -257,4 +249,8 @@ msgstr ""
 
 msgctxt "#32176"
 msgid "No stuck episode entries were found."
+msgstr ""
+
+msgctxt "#32177"
+msgid "Starting..."
 msgstr ""
