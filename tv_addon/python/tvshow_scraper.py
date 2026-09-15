@@ -386,6 +386,21 @@ def get_episode_details(encoded_ids, handle):
         vtag.setPlotOutline(details['overview'])
     if details.get('year'):
         vtag.setYear(details['year'])
+    if details.get('aired'):
+        # Per-user request (2026-09-14): the episode's air date wasn't being set at all --
+        # Chronicle's /tv/episode-details response already carries it (Aired), this just never
+        # read it. Same [:10] date-only slicing kodi_video_info.apply_common_video_info() uses
+        # for movies/shows' own setPremiered() call -- Kodi's InfoTagVideo has one single
+        # premiered-date setter shared across movies/shows/episodes, there's no separate
+        # "aired" method despite the field's different name at this level.
+        vtag.setPremiered(details['aired'][:10])
+    if details.get('runtimeMinutes'):
+        # Previously only reached InfoTagVideo via setResumePoint()'s own totaltime argument
+        # below (progress_sync.apply_resume_push), which only runs when there's an actual
+        # resume position to push -- an episode never played on this device got NO duration at
+        # all. setDuration() is the general runtime Kodi shows regardless of watch/resume
+        # state, same call the show- and movie-level scrapes already make unconditionally.
+        vtag.setDuration(details['runtimeMinutes'] * 60)
     crew = [m for m in (details.get('crew') or []) if isinstance(m, dict)]
     directors = [m.get('name') for m in crew if (m.get('job') or '').lower() == 'director']
     writers = [m.get('name') for m in crew
