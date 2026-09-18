@@ -54,6 +54,12 @@ _SCAN_ACTIVE_HEARTBEAT_SECONDS = 60
 _SCAN_SIGNAL_STARTUP_DELAY_SECONDS = 60
 _POLL_INTERVAL_SECONDS = 3
 
+# Short delay before the startup-scan followup check (lib/kodi_scan_signal.py's
+# run_startup_scan_followup) -- just enough that Kodi's own JSON-RPC server is definitely up;
+# the check itself is a single cheap local settings read, and the followup scan it may launch
+# already does its own bounded wait for the network/share to actually be reachable.
+_STARTUP_SCAN_FOLLOWUP_DELAY_SECONDS = 10
+
 
 class ChronicleTVMonitor(xbmc.Monitor):
     def __init__(self):
@@ -85,6 +91,18 @@ class ChronicleTVMonitor(xbmc.Monitor):
         finally:
             self._scan_signal_lock.release()
 
+    def run_startup_scan_followup(self, service_started_at):
+        threading.Thread(
+            target=self._run_startup_scan_followup, args=(service_started_at,),
+            name='chronicle-tv-startup-scan-followup', daemon=True,
+        ).start()
+
+    def _run_startup_scan_followup(self, service_started_at):
+        try:
+            kodi_scan_signal.run_startup_scan_followup(service_started_at, is_aborted=self.abortRequested)
+        except Exception as exc:
+            log.error('service: startup-scan followup failed: {0}'.format(exc))
+
 
 def run():
     monitor = ChronicleTVMonitor()
@@ -92,6 +110,7 @@ def run():
 
     service_started_at = time.time()
     startup_done = False
+    startup_followup_done = False
     last_scan_signal_check = 0.0  # only consulted once scan_signal_enabled is on
     last_scan_active_heartbeat = 0.0  # forces an immediate first heartbeat once scanning starts
 
@@ -105,6 +124,14 @@ def run():
         if not startup_done and now - service_started_at >= _SCAN_SIGNAL_STARTUP_DELAY_SECONDS:
             startup_done = True
             monitor.run_scan_signal_check()
+
+        # Independent of scan_signal_enabled above -- see lib/kodi_scan_signal.py's own doc
+        # (Startup-scan followup). Always runs exactly once; the function itself is a no-op if
+        # Kodi's native "Update library on startup" setting turns out to be off.
+        if not startup_followup_done and \
+                now - service_started_at >= _STARTUP_SCAN_FOLLOWUP_DELAY_SECONDS:
+            startup_followup_done = True
+            monitor.run_startup_scan_followup(service_started_at)
 
         if ADDON.getSettingBool('scan_signal_enabled'):
             interval_seconds = max(30, ADDON.getSettingInt('scan_signal_interval_minutes')) * 60
