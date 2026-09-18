@@ -297,12 +297,20 @@ class TestStaleShows(LibraryRepairTestBase):
         self.assertEqual(len(stale), 1)
         self.assertEqual(stale[0]['tvshowid'], 5)
 
-    def test_repair_stale_shows_removes_show_and_triggers_one_full_scan(self):
+    def test_repair_stale_shows_removes_show_and_triggers_a_scoped_scan_not_a_blind_one(self):
+        # Root-caused live (2026-09-18): this used to fire ONE unscoped VideoLibrary.Scan
+        # (params={}), which scans every configured video source regardless of content type and
+        # cascades into every other addon's own onScanFinished handler. It must now go through
+        # own_source_directories()/trigger_scan() instead -- the same scoped mechanism the
+        # post-repair scan prompt in default.py already uses -- firing one scoped scan per
+        # source folder this addon actually owns (see the fixture's own path rows).
+        self.build_fixture()
         removed_ids = []
         xbmc.executeJSONRPC = MagicMock(side_effect=_json_rpc_stub(
             self.live_show_count, removed_show_ids=removed_ids))
 
-        removed_names = library_repair.repair_stale_shows([{'tvshowid': 5, 'name': 'Stuck Show'}])
+        removed_names = library_repair.repair_stale_shows(
+            [{'tvshowid': 5, 'name': 'Stuck Show'}], self.db_path)
 
         self.assertEqual(removed_names, ['Stuck Show'])
         self.assertEqual(removed_ids, [5])
@@ -310,12 +318,17 @@ class TestStaleShows(LibraryRepairTestBase):
             json.loads(c.args[0]) for c in xbmc.executeJSONRPC.call_args_list
             if json.loads(c.args[0])['method'] == 'VideoLibrary.Scan'
         ]
-        self.assertEqual(len(scan_calls), 1, 'exactly one full-library scan, not a per-show directory scan')
-        self.assertNotIn('directory', scan_calls[0]['params'])
+        self.assertTrue(scan_calls, 'expected at least one scoped scan call')
+        for call in scan_calls:
+            self.assertIn('directory', call['params'],
+                           'every VideoLibrary.Scan call must be scoped to a specific directory, '
+                           'never a blind whole-library scan')
 
     def test_repair_stale_shows_skips_scan_when_nothing_removed(self):
-        # If RemoveTVShow fails for every candidate, triggering a full scan afterward would be
+        # If RemoveTVShow fails for every candidate, triggering a scan afterward would be
         # pointless work on a real device's library.
+        self.build_fixture()
+
         def _handler(request_json):
             request = json.loads(request_json)
             if request['method'] == 'VideoLibrary.RemoveTVShow':
@@ -323,7 +336,8 @@ class TestStaleShows(LibraryRepairTestBase):
             return json.dumps({'result': {}})
         xbmc.executeJSONRPC = MagicMock(side_effect=_handler)
 
-        removed_names = library_repair.repair_stale_shows([{'tvshowid': 5, 'name': 'Stuck Show'}])
+        removed_names = library_repair.repair_stale_shows(
+            [{'tvshowid': 5, 'name': 'Stuck Show'}], self.db_path)
 
         self.assertEqual(removed_names, [])
         scan_calls = [
@@ -333,6 +347,8 @@ class TestStaleShows(LibraryRepairTestBase):
         self.assertEqual(scan_calls, [])
 
     def test_repair_stale_shows_one_failure_does_not_abort_the_rest_of_the_batch(self):
+        self.build_fixture()
+
         def _handler(request_json):
             request = json.loads(request_json)
             if request['method'] == 'VideoLibrary.RemoveTVShow':
@@ -345,22 +361,24 @@ class TestStaleShows(LibraryRepairTestBase):
         removed_names = library_repair.repair_stale_shows([
             {'tvshowid': 5, 'name': 'Fails To Remove'},
             {'tvshowid': 6, 'name': 'Removes Fine'},
-        ])
+        ], self.db_path)
 
         self.assertEqual(removed_names, ['Removes Fine'])
         scan_calls = [
             c for c in xbmc.executeJSONRPC.call_args_list
             if json.loads(c.args[0])['method'] == 'VideoLibrary.Scan'
         ]
-        self.assertEqual(len(scan_calls), 1, 'one real removal still means the scan should run')
+        self.assertTrue(scan_calls, 'one real removal still means a scan should run')
 
     def test_repair_stale_shows_skips_entirely_when_a_scan_is_already_running(self):
+        self.build_fixture()
         xbmc.getCondVisibility = MagicMock(return_value=True)
         removed_ids = []
         xbmc.executeJSONRPC = MagicMock(side_effect=_json_rpc_stub(
             self.live_show_count, removed_show_ids=removed_ids))
 
-        removed_names = library_repair.repair_stale_shows([{'tvshowid': 5, 'name': 'Stuck Show'}])
+        removed_names = library_repair.repair_stale_shows(
+            [{'tvshowid': 5, 'name': 'Stuck Show'}], self.db_path)
 
         self.assertEqual(removed_names, [])
         self.assertEqual(removed_ids, [], 'must not touch anything while a scan is active')

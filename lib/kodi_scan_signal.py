@@ -117,7 +117,7 @@ def _find_video_db_path():
     return candidates[-1] if candidates else None
 
 
-def _find_own_source_directories():
+def find_own_source_directories():
     """Reads Kodi's own video database (read-only, so this never contends with Kodi's own open
     write connection for a lock) for the top-level source paths whose scraper is set to THIS
     addon specifically (ADDON.getAddonInfo('id') -- e.g. script.chronicle.scraper.tv). This is
@@ -125,6 +125,14 @@ def _find_own_source_directories():
     for": the user sets this per-folder in Kodi's own Video Sources dialog, it can change at any
     time, and it has to be resolved locally and live -- see this module's own doc for why it can
     never be cached or inferred from Chronicle's own server-side data.
+
+    Public (no leading underscore) for internal clarity, though this specific function isn't
+    imported cross-module: tv_addon/lib/library_repair.py's repair_stale_shows() needed this
+    exact same scoped-lookup logic (see that function's own doc for why an unscoped scan is
+    actively harmful, not just wasteful) but deliberately reuses its own local
+    own_source_directories()/trigger_scan() helpers instead of importing this module -- see
+    library_repair.py's own docstring for why (this file isn't checked into tv_addon/lib/ in
+    source control, only build-time-copied, so nothing under tv_addon/tests/ could import it).
 
     idParentPath IS NULL restricts this to actual configured sources, not every subfolder Kodi's
     scanner has separately recorded underneath a recursively-scanned one (scanning the parent
@@ -174,7 +182,7 @@ def check_and_scan():
                   _MIN_SECONDS_BETWEEN_TRIGGERED_SCANS // 60))
         return
 
-    directories = _find_own_source_directories()
+    directories = find_own_source_directories()
     if not directories:
         log.info('kodi_scan_signal: new content signalled, but no source folder on this '
                   'device is currently set to use this addon as its scraper -- nothing to '

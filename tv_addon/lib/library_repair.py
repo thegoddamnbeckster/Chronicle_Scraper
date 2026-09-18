@@ -423,11 +423,27 @@ def _list_real_subfolders(root_path):
     return {f['file'] for f in files if f.get('filetype') == 'directory'}
 
 
-def repair_stale_shows(stale_shows):
-    """Removes each stale show, then triggers ONE full library scan so Kodi re-derives every
-    real season folder name from scratch. Resets watched/resume/rating status for each show
-    removed this way (a fresh scan assigns a new internal show id) -- an accepted tradeoff, since
-    Chronicle's own sync restores it. Returns the list of show names actually removed."""
+def repair_stale_shows(stale_shows, db_path):
+    """Removes each stale show, then triggers a scan of this addon's own configured source
+    folder(s) so Kodi re-derives every real season folder name from scratch. Resets
+    watched/resume/rating status for each show removed this way (a fresh scan assigns a new
+    internal show id) -- an accepted tradeoff, since Chronicle's own sync restores it. Returns
+    the list of show names actually removed.
+
+    Root-caused live (2026-09-18): this used to fire an UNSCOPED VideoLibrary.Scan (params={}) --
+    scanning every configured video source regardless of content type, not just this addon's own.
+    That's the exact anti-pattern own_source_directories()/trigger_scan() (below, and
+    lib/kodi_scan_signal.py's identical logic) already exist to avoid: VideoLibrary.Scan finishing
+    fires Kodi's global onScanFinished(video) event, which every other addon's own Monitor reacts
+    to independently (confirmed live: Chronicle_Scrobbler's own throttled VideoLibrary.Clean, and
+    SIMKL Scrobbler's own full sync pass, both re-fire on every single occurrence). Worse per this
+    module's OWN docstring: VideoLibrary.RemoveTVShow just above never actually deletes a show's
+    episode/files rows, only unlinks them -- so every removed show here is a fresh batch of the
+    exact orphaned rows this whole module exists to clean up, which the NEXT orphan-detection pass
+    (not this one -- see this function's own caller) picks up. Scoping the scan doesn't fix that
+    orphan-recreation tradeoff, only the needless whole-library-scan blast radius; the orphan
+    tradeoff is inherent to VideoLibrary.RemoveTVShow itself and is called out to the user in the
+    repair confirmation dialog (see default.py) rather than silently hidden."""
     if not stale_shows:
         return []
     if _is_scanning():
@@ -451,11 +467,7 @@ def repair_stale_shows(stale_shows):
         removed.append(show['name'])
 
     if removed:
-        try:
-            xbmc.executeJSONRPC(json.dumps(
-                {'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.Scan', 'params': {}}))
-        except Exception as exc:
-            log.warning('Full library scan trigger failed: {0}'.format(exc))
+        trigger_scan(own_source_directories(db_path))
 
     return removed
 
@@ -953,7 +965,7 @@ def finish_repair(db_path, report, execute, progress_callback=None):
         if not result['aborted'] and stale_shows:
             _report(progress_callback, 'Fixing shows with missing season folders...')
         result['repaired_stale_shows'] = (
-            [] if result['aborted'] else repair_stale_shows(stale_shows))
+            [] if result['aborted'] else repair_stale_shows(stale_shows, db_path))
         return result
     finally:
         _release_lock()

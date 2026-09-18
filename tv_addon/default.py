@@ -415,6 +415,22 @@ def _library_repair():
     bg2, update2 = _progress_bg(heading)
     try:
         result = library_repair.finish_repair(db_path, report, execute=True, progress_callback=update2)
+    except Exception:
+        # Root-caused live (2026-09-18): this was a bare try/finally with no except -- the ONE
+        # call in this whole flow that actually deletes rows had no protection at all, unlike
+        # every other library_repair call in this file. An unexpected failure here (run_repair()
+        # already catches and reports its OWN known failure modes via result['aborted'] below;
+        # this is for anything that slips past that) used to surface as Kodi's raw unhandled-
+        # script-error toast, with zero indication of whether the delete ran, partially ran, or
+        # didn't, and zero pointer to kodi.log or the backup this module already made before any
+        # write. Same friendly-message pattern as every other entry point in this file. (bg2 is
+        # closed once, below, by the shared `finally` -- not here too.)
+        log.error('_library_repair: unexpected error during the real repair pass:\n{0}'.format(
+            traceback.format_exc()))
+        xbmcgui.Dialog().ok(
+            heading, 'Repair failed unexpectedly -- see kodi.log for details. If anything was '
+                     'backed up before the failure, it is under this addon\'s own data folder.')
+        return
     finally:
         bg2.close()
 
