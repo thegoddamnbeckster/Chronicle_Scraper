@@ -37,7 +37,8 @@ import xbmc
 import xbmcvfs
 
 from lib.logger import Logger
-from lib.movie_art_sync import get_video_sources, listdir_with_timeout, normalize, year_tolerant_match
+from lib.movie_art_sync import get_video_sources, normalize, year_tolerant_match
+from lib.movie_art_sync import list_source_dirs_cached
 
 log = Logger('tvshow_location')
 
@@ -219,8 +220,8 @@ def _search_sources_for_show(title, year):
 
     listings = []
     for source in get_video_sources():
-        dirs, _files = listdir_with_timeout(source)
-        if dirs is not None:
+        dirs = list_source_dirs_cached(source)
+        if dirs:
             listings.append((source, dirs))
 
     if target_with_year:

@@ -75,6 +75,28 @@ log = Logger('movie_art_sync')
 # doesn't stall an entire scrape.
 _LISTDIR_TIMEOUT_SECONDS = 8
 
+# Confirmed live (2026-09-18): during an active full-library scan, VideoLibrary
+# lookup predictably misses every movie currently being scraped (Kodi hasn't
+# committed it yet -- see this module's own top-of-file doc), so
+# _search_sources_for_movie's own listdir-every-source fallback runs on nearly
+# EVERY movie, not just the rare genuinely-new one it was designed for. Each of
+# those calls re-lists every configured source from scratch over the network
+# (up to _LISTDIR_TIMEOUT_SECONDS per source, and a multipath source can expand
+# into several), even though the sources' own top-level folder listing is
+# essentially identical from one movie to the next, seconds apart -- confirmed
+# directly (kodi.log) this was the dominant per-movie cost during a real scan,
+# roughly one movie every 30-40s regardless of how fast Chronicle's own API
+# responded (a separate, already-fixed bottleneck -- see Chronicle's own
+# v0.20.22). Caching each source's listing for a short window turns "list N
+# sources per movie" into "list N sources once per ~minute, reuse for every
+# movie scraped in between." Cross-process (see lib/activity_tracker.py's own
+# doc for why a module-level dict wouldn't survive to the next call at all --
+# each scraper invocation is its own fresh Python interpreter), same
+# special://temp/chronicle_scraper/ shared-file pattern used elsewhere in this
+# codebase for exactly that reason.
+_SOURCE_LISTING_CACHE_PATH = 'special://temp/chronicle_scraper/movie_source_listing_cache.json'
+_SOURCE_LISTING_CACHE_TTL_SECONDS = 60
+
 _ART_FILES = (
     ('poster', 'jpg'),
     ('fanart', 'jpg'),
@@ -440,6 +462,57 @@ def listdir_with_timeout(path, timeout_seconds=_LISTDIR_TIMEOUT_SECONDS):
     return result['value']
 
 
+def _read_source_listing_cache():
+    if not xbmcvfs.exists(_SOURCE_LISTING_CACHE_PATH):
+        return {}
+    try:
+        f = xbmcvfs.File(_SOURCE_LISTING_CACHE_PATH, 'r')
+        try:
+            raw = bytes(f.readBytes())
+        finally:
+            f.close()
+        return json.loads(raw.decode('utf-8')) if raw else {}
+    except Exception as exc:
+        log.warning("Couldn't read source-listing cache: {0}".format(exc))
+        return {}
+
+
+def _write_source_listing_cache(cache):
+    folder = _SOURCE_LISTING_CACHE_PATH.rsplit('/', 1)[0] + '/'
+    try:
+        if not xbmcvfs.exists(folder):
+            xbmcvfs.mkdirs(folder)
+        f = xbmcvfs.File(_SOURCE_LISTING_CACHE_PATH, 'w')
+        try:
+            f.write(bytearray(json.dumps(cache), 'utf-8'))
+        finally:
+            f.close()
+    except Exception as exc:
+        log.warning("Couldn't write source-listing cache: {0}".format(exc))
+
+
+def list_source_dirs_cached(source):
+    """Same (dirs, files) shape as listdir_with_timeout(), but only actually hits
+    the network once per source per _SOURCE_LISTING_CACHE_TTL_SECONDS window --
+    see this module's own top-of-file note on why this cache exists at all."""
+    cache = _read_source_listing_cache()
+    entry = cache.get(source)
+    now = time.time()
+    if entry is not None and (now - entry.get('timestamp', 0)) < _SOURCE_LISTING_CACHE_TTL_SECONDS:
+        return entry.get('dirs') or []
+
+    dirs, _files = listdir_with_timeout(source)
+    if dirs is None:
+        # Don't cache a timeout/error as if it were a real (empty) listing --
+        # the next movie that needs this source deserves its own fresh attempt,
+        # not to be stuck reusing a failure for the rest of the TTL window.
+        return []
+
+    cache[source] = {'timestamp': now, 'dirs': dirs}
+    _write_source_listing_cache(cache)
+    return dirs
+
+
 def _search_sources_for_movie(title, year):
     """Returns (folder, video_filename) for the first matching folder that
     actually holds a video file, or None.
@@ -496,8 +569,8 @@ def _search_sources_for_movie(title, year):
 
     listings = []
     for source in get_video_sources():
-        dirs, _files = listdir_with_timeout(source)
-        if dirs is not None:
+        dirs = list_source_dirs_cached(source)
+        if dirs:
             listings.append((source, dirs))
 
     if target_with_year:
