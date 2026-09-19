@@ -34,6 +34,7 @@ see the addon README for the full list of known gaps.
 import json
 import os
 import sys
+import time
 from urllib.parse import parse_qsl
 
 import xbmc
@@ -178,7 +179,15 @@ def get_details(media_item_id, handle):
         log.warning('getdetails: called with no resolvable media_item_id -- lookup string could not be parsed')
         return False
 
+    # Per-step timing -- added (2026-09-18) after a real full-library scan turned out to be
+    # dominated almost entirely by client-side work (image downloads, source-folder lookups)
+    # that never shows up in Chronicle's own server-side request log at all. Kept permanently
+    # (not a temporary debug aid), so any future slowdown is directly diagnosable from kodi.log
+    # instead of requiring another round of log archaeology.
+    t_start = time.time()
+
     details = ChronicleClient().get_movie_details(media_item_id)
+    t_chronicle = time.time()
     _log_details_summary('getdetails', media_item_id, details)
     if not details:
         return False
@@ -193,6 +202,7 @@ def get_details(media_item_id, handle):
     # NEXT scrape gets to use the fast path too.
     folder, video_basename, full_filename, discovered_via_fallback, kodi_movie_id = find_movie_location(
         details.get('title'), details.get('year'), known_filename=details.get('knownFileName'))
+    t_location = time.time()
     location = (folder, video_basename)
     if discovered_via_fallback and full_filename:
         ChronicleClient().report_resolved_file(media_item_id, full_filename)
@@ -231,6 +241,7 @@ def get_details(media_item_id, handle):
         if collection.get('backdropUrl'):
             vtag.addAvailableArtwork(collection['backdropUrl'], 'set.fanart')
         sync_collection_art(collection)
+    t_collection_art = time.time()
 
     apply_ratings(vtag, details.get('ratings'))
     apply_artwork(listitem, details.get('artwork'))
@@ -269,8 +280,10 @@ def get_details(media_item_id, handle):
     elif watched_direction == 'pull':
         ChronicleClient().push_watched(
             media_item_id, progress_sync.kodi_lastplayed_to_iso(watched_value))
+    t_progress_sync = time.time()
 
     sync_movie_art(details.get('title'), details.get('year'), details.get('artwork'), location=location)
+    t_movie_art = time.time()
 
     if details.get('cast'):
         vtag.setCast([
@@ -283,6 +296,17 @@ def get_details(media_item_id, handle):
         vtag.setTrailer(trailer_uri)
 
     xbmcplugin.setResolvedUrl(handle=handle, succeeded=True, listitem=listitem)
+    log.info(
+        'getdetails: "{0}" timing -- chronicle api: {1:.2f}s, find location: {2:.2f}s, '
+        'collection art: {3:.2f}s, progress/rating sync: {4:.2f}s, movie art: {5:.2f}s, '
+        'total: {6:.2f}s'.format(
+            details.get('title'),
+            t_chronicle - t_start,
+            t_location - t_chronicle,
+            t_collection_art - t_location,
+            t_progress_sync - t_collection_art,
+            t_movie_art - t_progress_sync,
+            time.time() - t_start))
     return True
 
 

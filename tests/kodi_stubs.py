@@ -64,6 +64,19 @@ def _fake_delete(path):
     return True
 
 
+class _FakeXbmcVfsStat:
+    """Stands in for xbmcvfs.Stat -- only st_size() is used anywhere in this codebase so far.
+    Raises like the real API would for a path that doesn't exist (movie_art_sync._local_file_size
+    catches this and treats it as "unknown size")."""
+    def __init__(self, path):
+        if path not in _FAKE_FILES:
+            raise OSError('No such file: {0!r}'.format(path))
+        self._size = len(_FAKE_FILES[path])
+
+    def st_size(self):
+        return self._size
+
+
 class _FakeListItem:
     """Stands in for xbmcgui.ListItem for tests that exercise get_details()/get_artwork() end
     to end -- a bare `MagicMock` alias (this module's original stub) breaks the instant real
@@ -126,6 +139,7 @@ def _install():
     xbmcvfs.exists = _fake_exists
     xbmcvfs.mkdirs = _fake_mkdirs
     xbmcvfs.delete = _fake_delete
+    xbmcvfs.Stat = _FakeXbmcVfsStat
 
     for name, mod in [
         ('xbmc', xbmc), ('xbmcaddon', xbmcaddon), ('xbmcgui', xbmcgui),

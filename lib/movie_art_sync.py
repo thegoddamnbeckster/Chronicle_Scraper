@@ -97,6 +97,23 @@ _LISTDIR_TIMEOUT_SECONDS = 8
 _SOURCE_LISTING_CACHE_PATH = 'special://temp/chronicle_scraper/movie_source_listing_cache.json'
 _SOURCE_LISTING_CACHE_TTL_SECONDS = 60
 
+# Confirmed live (2026-09-18): sync_movie_art unconditionally re-downloads poster+fanart from
+# their remote CDN URLs (FanartTV/TMDB, up to a 20s timeout each) on EVERY single movie, EVERY
+# single scan, even when nothing has changed since the last successful sync -- this was the
+# single largest remaining per-movie cost once the server-side bottlenecks were fixed (real
+# network image fetches vs. a fast local check). Unconditional overwriting is deliberate design
+# (see this module's own top-of-file doc: Kodi silently reverts a local art file to something
+# stale on its own schedule, independent of scraping, and the only fix that holds up is making
+# the local file agree with Chronicle's pick every single time) -- so skipping the download
+# outright based on mere file EXISTENCE would silently reintroduce that exact bug (Kodi replaces
+# the file's CONTENT, not its presence). This cache instead tracks the file's own SIZE at the
+# moment we last wrote it: cheap (a stat call, not a content read) but still catches the actual
+# observed failure mode, since Kodi reverting to some other image is essentially certain to
+# produce a different byte size. Not a cryptographic guarantee (a same-size revert would slip
+# through), but a deliberate, documented tradeoff in exchange for skipping a real network
+# download in the common case (nothing changed since last scan).
+_ART_SYNC_CACHE_PATH = 'special://temp/chronicle_scraper/art_sync_cache.json'
+
 _ART_FILES = (
     ('poster', 'jpg'),
     ('fanart', 'jpg'),
@@ -150,9 +167,18 @@ def sync_movie_art(title, year, artwork, location=None):
             continue
         url = candidates[0]['url']
         dest = '{0}{1}-{2}.{3}'.format(folder, folder_name, art_type, ext)
+
+        if _already_synced(dest, url):
+            log.info('sync_movie_art: "{0}" ({1}) -- {2} already up to date (same URL, local '
+                     'file size unchanged since last sync), skipping download'.format(
+                     title, year, art_type))
+            continue
+
         log.info('sync_movie_art: "{0}" ({1}) -- writing {2} from {3} to {4}'.format(
             title, year, art_type, url, dest))
-        if _write_remote_file(dest, url):
+        size = _write_remote_file(dest, url)
+        if size is not None:
+            _mark_art_synced(dest, url, size)
             log.info('Synced local {0} for "{1}" from Chronicle'.format(art_type, title))
 
 
@@ -620,13 +646,17 @@ def _find_video_filename(folder):
 
 
 def _write_remote_file(dest_path, url):
+    """Returns the downloaded byte count on success (used to populate the art-sync cache --
+    see this module's own top-of-file note), or None on failure. Deliberately not a bool:
+    0 bytes downloaded successfully is still a real, cacheable outcome, distinct from a
+    download/write failure."""
     import urllib.request
     try:
         with urllib.request.urlopen(url, timeout=20) as resp:
             data = resp.read()
     except Exception as exc:
         log.warning("Couldn't download {0}: {1}".format(url, exc))
-        return False
+        return None
 
     try:
         f = xbmcvfs.File(dest_path, 'w')
@@ -636,6 +666,60 @@ def _write_remote_file(dest_path, url):
             f.close()
     except Exception as exc:
         log.warning("Couldn't write {0}: {1}".format(dest_path, exc))
-        return False
+        return None
 
-    return True
+    return len(data)
+
+
+def _read_art_sync_cache():
+    if not xbmcvfs.exists(_ART_SYNC_CACHE_PATH):
+        return {}
+    try:
+        f = xbmcvfs.File(_ART_SYNC_CACHE_PATH, 'r')
+        try:
+            raw = bytes(f.readBytes())
+        finally:
+            f.close()
+        return json.loads(raw.decode('utf-8')) if raw else {}
+    except Exception as exc:
+        log.warning("Couldn't read art-sync cache: {0}".format(exc))
+        return {}
+
+
+def _write_art_sync_cache(cache):
+    folder = _ART_SYNC_CACHE_PATH.rsplit('/', 1)[0] + '/'
+    try:
+        if not xbmcvfs.exists(folder):
+            xbmcvfs.mkdirs(folder)
+        f = xbmcvfs.File(_ART_SYNC_CACHE_PATH, 'w')
+        try:
+            f.write(bytearray(json.dumps(cache), 'utf-8'))
+        finally:
+            f.close()
+    except Exception as exc:
+        log.warning("Couldn't write art-sync cache: {0}".format(exc))
+
+
+def _local_file_size(path):
+    try:
+        return xbmcvfs.Stat(path).st_size()
+    except Exception:
+        return None
+
+
+def _already_synced(dest, url):
+    """True if this exact URL was already written to this exact destination AND the local
+    file's current size still matches what we wrote then -- see this module's own top-of-file
+    note on why size (not mere existence) is the check, and why that's a deliberate,
+    documented tradeoff rather than a airtight guarantee."""
+    entry = _read_art_sync_cache().get(dest)
+    if entry is None or entry.get('url') != url:
+        return False
+    current_size = _local_file_size(dest)
+    return current_size is not None and current_size == entry.get('size')
+
+
+def _mark_art_synced(dest, url, size):
+    cache = _read_art_sync_cache()
+    cache[dest] = {'url': url, 'size': size}
+    _write_art_sync_cache(cache)
