@@ -97,6 +97,15 @@ before firing -- without either of those, a device with scan_signal_enabled on c
 followup's own unscoped scan and then, moments later, check_and_scan()'s own startup check could
 fire ANOTHER scan on top of it, doubling the onScanFinished cascade this module's own
 check_and_scan() doc argues at length against.
+
+Also runs this device's own check_and_refresh() (see "Per-item refresh-push signal" below) as
+its own last step, once the scan this boot triggered -- Kodi's own native one, this addon's own
+fire above, or a sibling Chronicle Scraper addon's own fire -- actually finishes. Per-user
+direction (2026-09-19): the refresh-push check must NOT be a recurring/periodic poll at all, and
+must only ever run at startup, gated on this exact same native setting, as the final thing that
+happens once a startup scan concludes -- never running in parallel with it. See
+_wait_for_scan_to_finish()'s own doc for why "finishes" needs its own bounded wait rather than
+just firing immediately after the trigger call returns.
 """
 
 import glob
@@ -277,6 +286,17 @@ _STARTUP_FOLLOWUP_REACHABILITY_TIMEOUT_SECONDS = 180
 _STARTUP_FOLLOWUP_REACHABILITY_POLL_SECONDS = 5
 _STARTUP_FOLLOWUP_REACHABILITY_CHECK_TIMEOUT_SECONDS = 10
 
+# Bounded wait for Library.IsScanning to flip True at all after a scan trigger -- there's a
+# short window right after VideoLibrary.Scan (or a sibling addon's own fire) returns where Kodi
+# hasn't set the flag yet. If it never flips, there's nothing running to wait out.
+_SCAN_FINISH_STARTED_TIMEOUT_SECONDS = 30
+_SCAN_FINISH_STARTED_POLL_SECONDS = 1
+# Bounded wait for Library.IsScanning to go back to False once it's confirmed running. Generous
+# -- real full-library scans observed this session ranged from under a minute to well over an
+# hour once the network/share was actually up.
+_SCAN_FINISH_MAX_WAIT_SECONDS = 3 * 60 * 60
+_SCAN_FINISH_POLL_SECONDS = 15
+
 
 def _read_native_startup_scan_setting():
     """True/False/None (unreadable) -- see this module's own doc for why this reads Kodi's own
@@ -377,15 +397,52 @@ def _wait_for_reachable(directories, is_aborted):
     return False
 
 
-def run_startup_scan_followup(service_started_at, is_aborted=None):
+def _wait_for_scan_to_finish(is_aborted):
+    """Blocks (bounded) until Kodi's own Library.IsScanning flag goes back to False, so a caller
+    can run logic that must happen strictly AFTER a scan actually completes -- not merely "some
+    time after it was requested". Covers a scan fired by this call, by a sibling Chronicle
+    Scraper addon's own followup, or Kodi's own native one; the caller doesn't need to know
+    which.
+
+    First waits (briefly, bounded) for the flag to actually flip True at all -- there's a short
+    window right after a trigger where Kodi hasn't set it yet. If it never does, there's nothing
+    running to wait out, so this returns immediately rather than sitting through the full
+    "finish" timeout for no reason."""
+    deadline = time.time() + _SCAN_FINISH_STARTED_TIMEOUT_SECONDS
+    started = False
+    while time.time() < deadline:
+        if is_aborted():
+            return
+        if xbmc.getCondVisibility('Library.IsScanning'):
+            started = True
+            break
+        time.sleep(_SCAN_FINISH_STARTED_POLL_SECONDS)
+    if not started:
+        return
+
+    deadline = time.time() + _SCAN_FINISH_MAX_WAIT_SECONDS
+    while time.time() < deadline:
+        if is_aborted():
+            return
+        if not xbmc.getCondVisibility('Library.IsScanning'):
+            return
+        time.sleep(_SCAN_FINISH_POLL_SECONDS)
+    log.warning('kodi_scan_signal: startup-scan followup -- scan still running after {0}s, '
+                'proceeding to the refresh-check anyway'.format(_SCAN_FINISH_MAX_WAIT_SECONDS))
+
+
+def run_startup_scan_followup(service_started_at, kinds, is_aborted=None):
     """Best-effort, safe to call once from service.py shortly after startup -- see this
     module's own doc (Startup-scan followup) for the full design. Does nothing (not an error)
-    when Kodi's native "Update library on startup" setting is off or unreadable, when a
-    sibling Chronicle Scraper addon has already claimed and fired this boot's followup, or when
-    a library scan (native or a sibling's) is already in progress by the time this is ready to
-    fire. is_aborted (e.g. an xbmc.Monitor's abortRequested) lets a caller cut the reachability
-    wait short on Kodi shutdown; defaults to "never aborted" for a caller that doesn't have one
-    (e.g. a direct test call)."""
+    when Kodi's native "Update library on startup" setting is off or unreadable. Otherwise,
+    regardless of whether this call is the one that actually fires the scan (a sibling Chronicle
+    Scraper addon may have already claimed it this boot, or a scan may already be running), waits
+    for that scan to actually finish and then runs this addon's own check_and_refresh(kinds) as
+    the last step -- see "Per-item refresh-push signal" below for what that does. is_aborted
+    (e.g. an xbmc.Monitor's abortRequested) lets a caller cut any of these waits short on Kodi
+    shutdown; defaults to "never aborted" for a caller that doesn't have one (e.g. a direct test
+    call). kinds is passed straight through to check_and_refresh (e.g. ['movie'] for the Movies
+    addon, ['episode', 'tvshow'] for the TV addon)."""
     is_aborted = is_aborted or (lambda: False)
     try:
         if _read_native_startup_scan_setting() is not True:
@@ -406,37 +463,47 @@ def run_startup_scan_followup(service_started_at, is_aborted=None):
         if is_aborted():
             return
 
-        if not _try_claim_startup_followup(service_started_at):
+        if _try_claim_startup_followup(service_started_at):
+            if xbmc.getCondVisibility('Library.IsScanning'):
+                log.info('kodi_scan_signal: startup-scan followup -- a library scan (Kodi\'s '
+                          'own native one, or one a sibling addon just fired) is already '
+                          'running; skipping the trigger, but still waiting for it to finish '
+                          'before this addon\'s own refresh-check')
+            else:
+                log.info('kodi_scan_signal: startup-scan followup -- Kodi\'s own "Update '
+                          'library on startup" is on, firing a full library scan now (matching '
+                          'manual-scan semantics) to make up for its own too-early, shallow '
+                          'native pass')
+                request = {'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.Scan',
+                           'params': {'showdialogs': False}}
+                response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+                if 'error' in response:
+                    log.warning('kodi_scan_signal: startup-scan followup -- VideoLibrary.Scan '
+                                'rejected: {0}'.format(response['error']))
+                else:
+                    # Feeds check_and_scan()'s own throttle so a device with scan_signal_enabled
+                    # on doesn't fire a SECOND unscoped scan moments later on top of this one --
+                    # see this module's own doc for the cascade cost that would double.
+                    _mark_scan_triggered()
+        else:
             log.info('kodi_scan_signal: startup-scan followup already claimed by the sibling '
-                      'Chronicle Scraper addon this boot -- skipping')
+                      'Chronicle Scraper addon this boot -- still waiting for it to finish '
+                      'before this addon\'s own refresh-check')
+
+        if is_aborted():
             return
 
-        if xbmc.getCondVisibility('Library.IsScanning'):
-            log.info('kodi_scan_signal: startup-scan followup -- a library scan (Kodi\'s own '
-                      'native one, or one a sibling addon just fired) is already running; '
-                      'skipping rather than firing a second, fully overlapping one')
+        _wait_for_scan_to_finish(is_aborted)
+
+        if is_aborted():
             return
 
-        log.info('kodi_scan_signal: startup-scan followup -- Kodi\'s own "Update library on '
-                  'startup" is on, firing a full library scan now (matching manual-scan '
-                  'semantics) to make up for its own too-early, shallow native pass')
-        request = {'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.Scan',
-                   'params': {'showdialogs': False}}
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
-        if 'error' in response:
-            log.warning('kodi_scan_signal: startup-scan followup -- VideoLibrary.Scan '
-                        'rejected: {0}'.format(response['error']))
-            return
-
-        # Feeds check_and_scan()'s own throttle so a device with scan_signal_enabled on
-        # doesn't fire a SECOND unscoped scan moments later on top of this one -- see this
-        # module's own doc for the cascade cost that would double.
-        _mark_scan_triggered()
+        check_and_refresh(kinds)
     except Exception as exc:
         log.warning('kodi_scan_signal: startup-scan followup failed: {0}'.format(exc))
 
 
-## Per-item refresh-push signal (check_and_refresh) -- 2026-09-18
+## Per-item refresh-push signal (check_and_refresh) -- 2026-09-18, re-triggered 2026-09-19
 #
 # Per-user direction: Kodi already has already-scraped metadata go stale with no way to refresh
 # it short of a manual per-item "Refresh information" click. Chronicle can't call a device's
@@ -447,9 +514,17 @@ def run_startup_scan_followup(service_started_at, is_aborted=None):
 # VideoLibrary.Refresh* per item. See Chronicle's own IKodiDeviceService.GetItemsNeedingRefreshAsync
 # doc for the full design, including why there's no separate acknowledgement call here.
 #
-# Each addon polls with only the kind(s) it actually owns (Movies: "movie"; TV: "episode",
-# "tvshow") -- per-user direction, controlled by each addon's OWN settings, the same way
-# scan_signal_enabled/scan_signal_interval_minutes already are, not a single shared toggle.
+# NOT a recurring/periodic poll (2026-09-19 correction to this feature's first shipped version,
+# which was): this only ever runs once per Kodi startup, gated on the exact same native "Update
+# library on startup" setting run_startup_scan_followup already gates on, and only as that
+# function's own LAST step -- after the scan it triggers (or defers to) actually finishes, via
+# _wait_for_scan_to_finish(). check_and_refresh() itself has no gating logic of its own; it's a
+# pure poll-and-refresh primitive, and run_startup_scan_followup owns all of the "when/whether to
+# call it" decisions. There is deliberately no settings.xml toggle for this feature at all -- it
+# rides entirely on the native startup-scan checkbox, nothing new to configure.
+#
+# Each addon calls check_and_refresh with only the kind(s) it actually owns (Movies: "movie";
+# TV: "episode", "tvshow") from its own run_startup_scan_followup call in its own service.py.
 
 _REFRESH_METHOD_BY_KIND = {
     'movie':   ('VideoLibrary.RefreshMovie', 'movieid'),
@@ -463,7 +538,10 @@ def check_and_refresh(kinds):
     that are due for a local refresh, and fires one VideoLibrary.Refresh* per item. Best-effort
     throughout: one item failing to refresh (a stale/removed kodi_id, a transient JSON-RPC
     error) never stops the rest, and any failure here is logged, not raised -- same tolerance
-    as check_and_scan()'s own top-level guard, since this runs unattended on a timer."""
+    as check_and_scan()'s own top-level guard, since this is the unattended last step of a
+    startup follow-up, not something a user is watching. Has no gating logic of its own -- see
+    "Per-item refresh-push signal" above for why its only caller, run_startup_scan_followup,
+    owns all of the "when/whether to call this" decisions."""
     try:
         client = ChronicleClient()
         items = client.get_refresh_signal(kinds)

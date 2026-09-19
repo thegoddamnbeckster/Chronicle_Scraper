@@ -34,14 +34,6 @@
     </category>
 
     <!-- ============================================================================ -->
-    <!-- Metadata Refresh -->
-    <!-- ============================================================================ -->
-    <category label="32178">
-        <setting id="refresh_signal_enabled" type="bool" label="32179" default="true" help="32180"/>
-        <setting id="refresh_signal_interval_minutes" type="slider" label="32140" default="15" range="5,5,120" option="int" help="32181" enable="eq(-1,true)"/>
-    </category>
-
-    <!-- ============================================================================ -->
     <!-- Library Repair -->
     <!-- ============================================================================ -->
     <!-- See lib/library_repair.py's own module docstring for the full design/safety

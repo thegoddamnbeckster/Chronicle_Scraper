@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.17.0"
+       version="3.17.1"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,17 +59,25 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.17.0 - New: this addon now periodically pushes a real refresh to Kodi whenever
-an already-scraped movie's data changes in Chronicle (re-enrichment, an admin edit, a pinned
-image), instead of that item sitting stale until someone manually clicks "Refresh information"
-on it. Confirmed live (2026-09-19): a movie/show's own local Kodi entry doesn't automatically
-switch to a newly-pinned poster just because a later getdetails() call lists it as the new top
-candidate -- Kodi keeps whatever it originally chose until something forces a real
-VideoLibrary.Refresh. This addon now polls Chronicle for its own already-known items that have
-changed since it last scraped them and fires that refresh itself -- never a full library scan,
-only the specific items that actually changed. New Settings category, "Metadata Refresh" (on
-by default, checks every 15 minutes) -- Chronicle's own server code never calls a device's
-JSON-RPC directly, same pull architecture as the existing new-content-detection feature above.
+    <news>v3.17.1 - Correction to v3.17.0's own metadata-refresh feature, shipped and then
+reworked the same day: that version checked Chronicle for changed items on a periodic timer
+(every 15 minutes by default), with its own "Metadata Refresh" settings toggle. Per-user
+direction, this is now tied entirely to Kodi's existing native "Update library on startup"
+checkbox instead -- no new setting to configure. It runs at most once per Kodi session, only
+when that checkbox is on, and only as the very last step after the startup library scan it
+triggers (or defers to a sibling Chronicle Scraper addon for) actually finishes -- never
+racing or overlapping the scan itself, never a recurring background poll. The "Metadata
+Refresh" settings category from v3.17.0 has been removed.
+
+v3.17.0 - New: this addon now pushes a real refresh to Kodi whenever an already-scraped
+movie's data changes in Chronicle (re-enrichment, an admin edit, a pinned image), instead of
+that item sitting stale until someone manually clicks "Refresh information" on it. Confirmed
+live (2026-09-19): a movie/show's own local Kodi entry doesn't automatically switch to a
+newly-pinned poster just because a later getdetails() call lists it as the new top candidate
+-- Kodi keeps whatever it originally chose until something forces a real VideoLibrary.Refresh.
+This addon polls Chronicle for its own already-known items that have changed since it last
+scraped them and fires that refresh itself -- never a full library scan, only the specific
+items that actually changed (see v3.17.1 above for how this is actually triggered).
 
 v3.16.6 - Confirmed live (2026-09-18) the single largest remaining per-movie
 cost, after the scan-speed fixes below: sync_movie_art unconditionally re-downloaded

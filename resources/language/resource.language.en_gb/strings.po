@@ -228,19 +228,3 @@ msgstr ""
 msgctxt "#32148"
 msgid "Runs one collection art sync pass immediately, regardless of the automatic settings above. Useful right after changing a collection's art in Chronicle you want reflected in Kodi without waiting for the next scheduled sync."
 msgstr ""
-
-msgctxt "#32149"
-msgid "Metadata Refresh"
-msgstr ""
-
-msgctxt "#32150"
-msgid "Periodically refresh already-scraped items"
-msgstr ""
-
-msgctxt "#32151"
-msgid "Chronicle can tell this device when a movie it already has fully scraped has changed since (re-enrichment, an admin edit, new artwork) -- without this, an already-scraped item never updates again short of manually clicking \"Refresh information\" on it. This device pushes a local VideoLibrary.RefreshMovie for each such item at the interval below -- never a full library scan, only the specific items that actually changed."
-msgstr ""
-
-msgctxt "#32153"
-msgid "How often this device checks for items due a refresh, in 5-minute steps. Defaults to every 15 minutes."
-msgstr ""

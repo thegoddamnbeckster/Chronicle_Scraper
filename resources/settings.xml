@@ -53,12 +53,4 @@
         <setting id="scan_signal_interval_minutes" type="slider" label="32140" default="120" range="30,30,1440" option="int" help="32141" enable="eq(-1,true)"/>
     </category>
 
-    <!-- ============================================================================ -->
-    <!-- Metadata Refresh -->
-    <!-- ============================================================================ -->
-    <category label="32149">
-        <setting id="refresh_signal_enabled" type="bool" label="32150" default="true" help="32151"/>
-        <setting id="refresh_signal_interval_minutes" type="slider" label="32140" default="15" range="5,5,120" option="int" help="32153" enable="eq(-1,true)"/>
-    </category>
-
 </settings>
