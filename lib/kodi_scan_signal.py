@@ -434,3 +434,62 @@ def run_startup_scan_followup(service_started_at, is_aborted=None):
         _mark_scan_triggered()
     except Exception as exc:
         log.warning('kodi_scan_signal: startup-scan followup failed: {0}'.format(exc))
+
+
+## Per-item refresh-push signal (check_and_refresh) -- 2026-09-18
+#
+# Per-user direction: Kodi already has already-scraped metadata go stale with no way to refresh
+# it short of a manual per-item "Refresh information" click. Chronicle can't call a device's
+# JSON-RPC directly (same reasoning as this module's own scan-signal above), so this is the same
+# pull architecture applied to per-item refreshes instead of a whole-library scan: this device
+# polls Chronicle's own kodi-refresh-signal for items it already knows about (by kind) whose own
+# metadata has changed since this device last scraped them, and fires one local
+# VideoLibrary.Refresh* per item. See Chronicle's own IKodiDeviceService.GetItemsNeedingRefreshAsync
+# doc for the full design, including why there's no separate acknowledgement call here.
+#
+# Each addon polls with only the kind(s) it actually owns (Movies: "movie"; TV: "episode",
+# "tvshow") -- per-user direction, controlled by each addon's OWN settings, the same way
+# scan_signal_enabled/scan_signal_interval_minutes already are, not a single shared toggle.
+
+_REFRESH_METHOD_BY_KIND = {
+    'movie':   ('VideoLibrary.RefreshMovie', 'movieid'),
+    'episode': ('VideoLibrary.RefreshEpisode', 'episodeid'),
+    'tvshow':  ('VideoLibrary.RefreshTVShow', 'tvshowid'),
+}
+
+
+def check_and_refresh(kinds):
+    """Polls Chronicle for items of the given kinds (e.g. ['movie'] or ['episode', 'tvshow'])
+    that are due for a local refresh, and fires one VideoLibrary.Refresh* per item. Best-effort
+    throughout: one item failing to refresh (a stale/removed kodi_id, a transient JSON-RPC
+    error) never stops the rest, and any failure here is logged, not raised -- same tolerance
+    as check_and_scan()'s own top-level guard, since this runs unattended on a timer."""
+    try:
+        client = ChronicleClient()
+        items = client.get_refresh_signal(kinds)
+        if not items:
+            return
+        log.info('kodi_scan_signal: refresh-signal -- {0} item(s) due for a local '
+                  'refresh'.format(len(items)))
+        for item in items:
+            kind = item.get('kind')
+            kodi_id = item.get('kodiId')
+            method_param = _REFRESH_METHOD_BY_KIND.get(kind)
+            if method_param is None or not kodi_id:
+                log.warning('kodi_scan_signal: refresh-signal -- skipping unrecognized item '
+                            '{0!r}'.format(item))
+                continue
+            method, param_name = method_param
+            request = {'jsonrpc': '2.0', 'id': 1, 'method': method,
+                       'params': {param_name: kodi_id}}
+            try:
+                response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+            except Exception as exc:
+                log.warning('kodi_scan_signal: refresh-signal -- {0}({1}={2}) call failed: '
+                            '{3}'.format(method, param_name, kodi_id, exc))
+                continue
+            if 'error' in response:
+                log.warning('kodi_scan_signal: refresh-signal -- {0}({1}={2}) rejected: '
+                            '{3}'.format(method, param_name, kodi_id, response['error']))
+    except Exception as exc:
+        log.warning('kodi_scan_signal: refresh-signal check failed: {0}'.format(exc))

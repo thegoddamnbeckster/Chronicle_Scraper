@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.tv"
        name="Chronicle Scraper (TV)"
-       version="1.13.8"
+       version="1.14.0"
        provider-name="Michael Beck">
 
   <requires>
@@ -58,7 +58,20 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (TV)</summary>
     <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. The corner status indicator lives in the Movies addon and covers both movies and TV shows together; this addon doesn't duplicate it. Neither addon writes a local NFO file of any kind -- Chronicle's own API is the source of truth both scrapers read from directly. It does have its own small background service that keeps Kodi's library in sync with newly-imported content, independent of the Movies addon -- see this version's changelog.</description>
-    <news>v1.13.8 - Same fix as the Movies addon's own v3.16.6 (this addon carries its own
+    <news>v1.14.0 - New: this addon now periodically pushes a real refresh to Kodi whenever
+an already-scraped show or episode's data changes in Chronicle (re-enrichment, an admin edit,
+a pinned image), instead of that item sitting stale until someone manually clicks "Refresh
+information" on it. Confirmed live (2026-09-19, "Stuart Fails to Save the Universe"): a show's
+own local Kodi entry doesn't automatically switch to a newly-pinned poster just because a
+later getdetails() call lists it as the new top candidate -- Kodi keeps whatever it originally
+chose until something forces a real VideoLibrary.Refresh. This addon now polls Chronicle for
+its own already-known shows/episodes that have changed since it last scraped them and fires
+that refresh itself -- never a full library scan, only the specific items that actually
+changed. New Settings category, "Metadata Refresh" (on by default, checks every 15 minutes) --
+Chronicle's own server code never calls a device's JSON-RPC directly, same pull architecture
+as the existing new-content-detection feature above.
+
+v1.13.8 - Same fix as the Movies addon's own v3.16.6 (this addon carries its own
 duplicate copy of movie_art_sync.py, used for cross-type NFO-rebuild resolution): the art-sync
 step now skips re-downloading poster/fanart when the exact same URL was already written last
 time and the local file's own size still matches, instead of unconditionally re-fetching from

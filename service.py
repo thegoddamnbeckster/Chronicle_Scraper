@@ -95,6 +95,8 @@ class ChronicleMonitor(xbmc.Monitor):
         # slow/hanging network call when the next poll interval comes due -- cheap insurance,
         # not a response to any observed failure.
         self._scan_signal_lock = threading.Lock()
+        # Same reasoning as _scan_signal_lock above, for check_and_refresh()'s own periodic poll.
+        self._refresh_signal_lock = threading.Lock()
         # Guards against this service's own periodic timer and a manual "Sync Now" (or an
         # on-load pass still running long) overlapping -- same reasoning as
         # _watch_rating_lock, this task has no destructive per-item step either.
@@ -254,6 +256,31 @@ class ChronicleMonitor(xbmc.Monitor):
         finally:
             self._scan_signal_lock.release()
 
+    def run_refresh_signal_check(self):
+        """Runs one kodi_scan_signal.check_and_refresh() pass on a background thread -- see
+        that module's own doc (Per-item refresh-push signal). This addon only ever polls for
+        its own "movie" kind -- TV items are the TV addon's own responsibility, via its own
+        identical copy of this same check with its own kind(s) and its own settings."""
+        if not self._refresh_signal_lock.acquire(False):
+            log.info('service: refresh-signal check skipped -- another check is already running')
+            return
+        try:
+            threading.Thread(
+                target=self._run_refresh_signal_check_locked,
+                name='chronicle-refresh-signal-check', daemon=True,
+            ).start()
+        except Exception:
+            self._refresh_signal_lock.release()
+            raise
+
+    def _run_refresh_signal_check_locked(self):
+        try:
+            kodi_scan_signal.check_and_refresh(['movie'])
+        except Exception as exc:
+            log.error('service: refresh-signal check failed: {0}'.format(exc))
+        finally:
+            self._refresh_signal_lock.release()
+
     def run_startup_scan_followup(self, service_started_at):
         threading.Thread(
             target=self._run_startup_scan_followup, args=(service_started_at,),
@@ -322,6 +349,12 @@ def run():
     scan_signal_startup_done = False
     last_scan_signal_check = 0.0  # only consulted once scan_signal_enabled is on
     startup_followup_done = False
+
+    # Refresh-signal timing state -- gated entirely behind refresh_signal_enabled (default ON,
+    # unlike scan_signal_enabled's default-off): unlike a scan, a single item's own
+    # VideoLibrary.RefreshMovie never cascades into every other installed addon's own
+    # onScanFinished handler, so there's no equivalent reason to default this off.
+    last_refresh_signal_check = 0.0  # only consulted once refresh_signal_enabled is on
 
     last_scan_active_heartbeat = 0.0  # forces an immediate first heartbeat once scanning starts
 
@@ -418,6 +451,12 @@ def run():
             if now - last_scan_signal_check >= interval_seconds:
                 last_scan_signal_check = now
                 monitor.run_scan_signal_check()
+
+        if ADDON.getSettingBool('refresh_signal_enabled'):
+            refresh_interval_seconds = max(300, ADDON.getSettingInt('refresh_signal_interval_minutes') * 60)
+            if now - last_refresh_signal_check >= refresh_interval_seconds:
+                last_refresh_signal_check = now
+                monitor.run_refresh_signal_check()
 
         activity = activity_tracker.read_activity()
         is_active = activity is not None and \

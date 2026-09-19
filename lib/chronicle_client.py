@@ -370,6 +370,24 @@ class ChronicleClient:
         log.info('acknowledge_scan_needed(): {0}'.format(
                  'acknowledged' if result and result.get('acknowledged') else 'failed'))
 
+    def get_refresh_signal(self, kinds):
+        """GET /api/v1/scraper/kodi-refresh-signal?kinds=... -- items THIS device already knows
+        about (of the given kinds, e.g. ['movie'] or ['episode', 'tvshow']) whose own metadata
+        has changed in Chronicle since this device last scraped them. Same pull-only
+        architecture as is_scan_needed() -- Chronicle's own server code never calls a device's
+        JSON-RPC directly, this device does its own local VideoLibrary.Refresh* for whatever
+        comes back (see lib/kodi_scan_signal.py's check_and_refresh()). No separate
+        acknowledgement call: refreshing an item makes Kodi re-invoke getdetails(), which
+        already calls report_kodi_id() again, closing the loop on its own.
+
+        Returns [] (not an error) on any failure -- same reasoning as is_scan_needed(), a
+        missed poll just means this device checks again next cycle."""
+        kinds_param = urllib.parse.quote(','.join(kinds))
+        result = self._get(
+            '/api/v1/scraper/kodi-refresh-signal?kinds={0}'.format(kinds_param),
+            'get_refresh_signal()', timeout=10)
+        return (result or {}).get('items') or []
+
     def contribute_metadata(self, media_item_id: int, source: str, metadata: dict):
         """POST /api/v1/media/{id}/metadata/{source} -- contributes fields
         harvested from a local source (e.g. a pre-existing NFO another tool

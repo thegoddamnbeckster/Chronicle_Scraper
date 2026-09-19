@@ -254,3 +254,19 @@ msgstr ""
 msgctxt "#32177"
 msgid "Starting..."
 msgstr ""
+
+msgctxt "#32178"
+msgid "Metadata Refresh"
+msgstr ""
+
+msgctxt "#32179"
+msgid "Periodically refresh already-scraped items"
+msgstr ""
+
+msgctxt "#32180"
+msgid "Chronicle can tell this device when a show or episode it already has fully scraped has changed since (re-enrichment, an admin edit, new artwork) -- without this, an already-scraped item never updates again short of manually clicking \"Refresh information\" on it. This device pushes a local VideoLibrary.RefreshEpisode/RefreshTVShow for each such item at the interval below -- never a full library scan, only the specific items that actually changed."
+msgstr ""
+
+msgctxt "#32181"
+msgid "How often this device checks for items due a refresh, in 5-minute steps. Defaults to every 15 minutes."
+msgstr ""
