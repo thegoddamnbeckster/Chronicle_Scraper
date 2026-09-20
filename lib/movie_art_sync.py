@@ -114,9 +114,19 @@ _SOURCE_LISTING_CACHE_TTL_SECONDS = 60
 # download in the common case (nothing changed since last scan).
 _ART_SYNC_CACHE_PATH = 'special://temp/chronicle_scraper/art_sync_cache.json'
 
+# (destination file's own art-type suffix, extension, Chronicle artwork key to source the URL
+# from) -- not always 1:1. Root-caused live (2026-09-20): a movie's own "art.poster" correctly
+# resolved to a freshly-synced "-poster.jpg", but Kodi's SEPARATE, generic "thumbnail" field
+# (what list/grid views across every skin actually show by default) resolved to an untouched,
+# years-old "-thumb.jpg" left over from before this addon existed -- this module never wrote
+# that filename at all, so the corrected poster never displayed anywhere Kodi uses "thumbnail"
+# instead of the "poster" art type specifically. "thumb" is sourced from the SAME "poster"
+# candidate as the row above -- Chronicle has no separate "thumb" artwork concept for movies,
+# and visually a movie's thumbnail and poster are always meant to be the same image.
 _ART_FILES = (
-    ('poster', 'jpg'),
-    ('fanart', 'jpg'),
+    ('poster', 'jpg', 'poster'),
+    ('fanart', 'jpg', 'fanart'),
+    ('thumb', 'jpg', 'poster'),
 )
 
 # Retry budget for the VideoLibrary fast path -- see module docstring. Kept
@@ -159,27 +169,27 @@ def sync_movie_art(title, year, artwork, location=None):
                     'skipping'.format(title, year, folder))
         return
 
-    for art_type, ext in _ART_FILES:
-        candidates = artwork.get(art_type)
+    for dest_art_type, ext, source_art_type in _ART_FILES:
+        candidates = artwork.get(source_art_type)
         if not candidates:
             log.info('sync_movie_art: "{0}" ({1}) -- Chronicle has no {2} candidate, '
-                     'leaving local file (if any) untouched'.format(title, year, art_type))
+                     'leaving local file (if any) untouched'.format(title, year, source_art_type))
             continue
         url = candidates[0]['url']
-        dest = '{0}{1}-{2}.{3}'.format(folder, folder_name, art_type, ext)
+        dest = '{0}{1}-{2}.{3}'.format(folder, folder_name, dest_art_type, ext)
 
         if _already_synced(dest, url):
             log.info('sync_movie_art: "{0}" ({1}) -- {2} already up to date (same URL, local '
                      'file size unchanged since last sync), skipping download'.format(
-                     title, year, art_type))
+                     title, year, dest_art_type))
             continue
 
         log.info('sync_movie_art: "{0}" ({1}) -- writing {2} from {3} to {4}'.format(
-            title, year, art_type, url, dest))
+            title, year, dest_art_type, url, dest))
         size = _write_remote_file(dest, url)
         if size is not None:
             _mark_art_synced(dest, url, size)
-            log.info('Synced local {0} for "{1}" from Chronicle'.format(art_type, title))
+            log.info('Synced local {0} for "{1}" from Chronicle'.format(dest_art_type, title))
 
 
 def find_movie_location(title, year, known_filename=None):

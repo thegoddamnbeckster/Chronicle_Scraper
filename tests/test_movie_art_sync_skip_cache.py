@@ -73,12 +73,15 @@ class TestSyncMovieArtSkipsRedundantDownloads(unittest.TestCase):
         return MagicMock(return_value=cm)
 
     def test_second_sync_of_unchanged_artwork_never_calls_urlopen(self):
+        # Only a 'poster' candidate -- 'fanart' has none (skipped), but 'thumb' also sources
+        # from 'poster' (see _ART_FILES' own doc), so the first sync writes to TWO destination
+        # files (-poster.jpg and -thumb.jpg) from this one candidate, not one.
         artwork = {'poster': [{'url': 'http://example/poster.jpg', 'source': 'tmdb'}]}
         location = ('smb://nas/Movie (2020)/', 'Movie (2020)')
 
         with patch('urllib.request.urlopen', self._fake_urlopen(b'x' * 42)) as mock_urlopen:
             movie_art_sync.sync_movie_art('Movie', 2020, artwork, location=location)
-        self.assertEqual(mock_urlopen.call_count, 1)
+        self.assertEqual(mock_urlopen.call_count, 2)
 
         with patch('urllib.request.urlopen', self._fake_urlopen(b'x' * 42)) as mock_urlopen_2:
             movie_art_sync.sync_movie_art('Movie', 2020, artwork, location=location)
@@ -96,7 +99,23 @@ class TestSyncMovieArtSkipsRedundantDownloads(unittest.TestCase):
             movie_art_sync.sync_movie_art(
                 'Movie', 2020, {'poster': [{'url': 'http://example/poster-v2.jpg', 'source': 'tmdb'}]},
                 location=location)
-        self.assertEqual(mock_urlopen.call_count, 1)
+        # Both -poster.jpg and -thumb.jpg source from 'poster' and must both re-download once
+        # the url changes.
+        self.assertEqual(mock_urlopen.call_count, 2)
+
+    def test_thumb_file_kept_in_sync_with_the_poster_candidate(self):
+        # Root-caused live (2026-09-20): Kodi's own generic "thumbnail" field resolved to a
+        # legacy "-thumb.jpg" file this module never wrote, so a freshly-corrected poster never
+        # actually displayed anywhere Kodi shows "thumbnail" instead of the "poster" art type.
+        artwork = {'poster': [{'url': 'http://example/poster.jpg', 'source': 'tmdb'}]}
+        location = ('smb://nas/Movie (2020)/', 'Movie (2020)')
+
+        with patch('urllib.request.urlopen', self._fake_urlopen(b'x' * 42)):
+            movie_art_sync.sync_movie_art('Movie', 2020, artwork, location=location)
+
+        import xbmcvfs
+        self.assertTrue(xbmcvfs.exists('smb://nas/Movie (2020)/Movie (2020)-poster.jpg'))
+        self.assertTrue(xbmcvfs.exists('smb://nas/Movie (2020)/Movie (2020)-thumb.jpg'))
 
 
 if __name__ == '__main__':
