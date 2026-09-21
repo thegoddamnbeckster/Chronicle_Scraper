@@ -384,6 +384,172 @@ class TestStaleShows(LibraryRepairTestBase):
         self.assertEqual(removed_ids, [], 'must not touch anything while a scan is active')
 
 
+class TestStuckFiles(LibraryRepairTestBase):
+    """Tests for detect_stuck_files()/repair_stuck_files() -- a THIRD, unrelated bug with the
+    same symptom: a `files` row with no matching `episode` row at all, which neither
+    detect_orphans() (requires an episode row) nor detect_stale_shows() (requires a season-path
+    mismatch) can ever find. See library_repair.py's own doc for the root cause."""
+
+    def _seed_show_with_files(self, id_show, show_name, root_path, season_path,
+                               stuck_filenames=(), linked_filenames=()):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute('INSERT INTO tvshow (idShow, c00) VALUES (?, ?)', (id_show, show_name))
+            root_path_id = 100 + id_show
+            season_path_id = 200 + id_show
+            conn.execute('INSERT INTO path (idPath, strPath, strScraper, idParentPath) VALUES (?, ?, ?, NULL)',
+                         (root_path_id, root_path, 'script.chronicle.scraper.tv'))
+            conn.execute('INSERT INTO tvshowlinkpath (idShow, idPath) VALUES (?, ?)', (id_show, root_path_id))
+            conn.execute('INSERT INTO path (idPath, strPath, idParentPath) VALUES (?, ?, ?)',
+                         (season_path_id, season_path, root_path_id))
+
+            next_file_id = [300 + id_show * 100]
+
+            def _add_file(filename, linked):
+                file_id = next_file_id[0]
+                next_file_id[0] += 1
+                conn.execute('INSERT INTO files (idFile, idPath, strFilename) VALUES (?, ?, ?)',
+                             (file_id, season_path_id, filename))
+                if linked:
+                    episode_id = file_id  # any unique id -- not asserted on in these tests
+                    conn.execute('INSERT INTO episode (idEpisode, idShow, idFile, idSeason) VALUES (?, ?, ?, 1)',
+                                 (episode_id, id_show, file_id))
+                return file_id
+
+            stuck_ids = [_add_file(f, linked=False) for f in stuck_filenames]
+            for f in linked_filenames:
+                _add_file(f, linked=True)
+            conn.commit()
+            return stuck_ids
+        finally:
+            conn.close()
+
+    def test_finds_files_with_no_episode_row_scoped_to_this_addons_own_shows(self):
+        self.build_fixture(orphan_count=0)
+        stuck_ids = self._seed_show_with_files(
+            5, 'Lanterns', '/tv/Lanterns/', '/tv/Lanterns/Season 01/',
+            stuck_filenames=['S01E04.mkv', 'S01E05.mkv'], linked_filenames=['S01E01.mkv'])
+
+        report = library_repair.detect_stuck_files(self.db_path)
+
+        self.assertEqual(sorted(report['file_ids']), sorted(stuck_ids))
+        self.assertEqual(len(report['groups']), 1)
+        self.assertEqual(report['groups'][0]['show_name'], 'Lanterns')
+        self.assertEqual(report['groups'][0]['file_count'], 2)
+
+    def test_ignores_a_healthy_show_with_every_file_linked(self):
+        self.build_fixture(orphan_count=0)
+        self._seed_show_with_files(
+            5, 'Healthy Show', '/tv/Healthy Show/', '/tv/Healthy Show/Season 01/',
+            linked_filenames=['S01E01.mkv', 'S01E02.mkv'])
+
+        report = library_repair.detect_stuck_files(self.db_path)
+
+        self.assertEqual(report['file_ids'], [])
+        self.assertEqual(report['groups'], [])
+
+    def test_ignores_files_under_a_path_this_addon_does_not_own(self):
+        # A files row with no episode under some OTHER scraper's source (or a movie source
+        # entirely) must never be touched -- only strScraper == this addon's own id is in scope.
+        self.build_fixture(orphan_count=0)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('INSERT INTO tvshow (idShow, c00) VALUES (9, ?)', ('Someone Elses Show',))
+        conn.execute('INSERT INTO path (idPath, strPath, strScraper, idParentPath) VALUES (109, ?, ?, NULL)',
+                     ('/tv/Other/', 'metadata.tvshows.other'))
+        conn.execute('INSERT INTO tvshowlinkpath (idShow, idPath) VALUES (9, 109)')
+        conn.execute('INSERT INTO path (idPath, strPath, idParentPath) VALUES (209, ?, 109)',
+                     ('/tv/Other/Season 01/',))
+        conn.execute('INSERT INTO files (idFile, idPath, strFilename) VALUES (999, 209, ?)',
+                     ('S01E01.mkv',))
+        conn.commit()
+        conn.close()
+
+        report = library_repair.detect_stuck_files(self.db_path)
+
+        self.assertEqual(report['file_ids'], [])
+
+    def test_finds_stuck_file_directly_under_the_show_root_for_a_flat_show(self):
+        # A single-season/flat show can have its files directly under the root path, not a
+        # separate season subfolder -- must still be found.
+        self.build_fixture(orphan_count=0)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('INSERT INTO tvshow (idShow, c00) VALUES (7, ?)', ('Flat Show',))
+        conn.execute('INSERT INTO path (idPath, strPath, strScraper, idParentPath) VALUES (107, ?, ?, NULL)',
+                     ('/tv/Flat Show/', 'script.chronicle.scraper.tv'))
+        conn.execute('INSERT INTO tvshowlinkpath (idShow, idPath) VALUES (7, 107)')
+        conn.execute('INSERT INTO files (idFile, idPath, strFilename) VALUES (777, 107, ?)',
+                     ('S01E01.mkv',))
+        conn.commit()
+        conn.close()
+
+        report = library_repair.detect_stuck_files(self.db_path)
+
+        self.assertEqual(report['file_ids'], [777])
+
+    def test_missing_tvshowlinkpath_table_skips_gracefully_no_crash(self):
+        self.build_fixture(orphan_count=0)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('DROP TABLE tvshowlinkpath')
+        conn.commit()
+        conn.close()
+        report = library_repair.detect_stuck_files(self.db_path)
+        self.assertEqual(report, {'file_ids': [], 'groups': []})
+
+    def test_repair_deletes_stuck_files_and_dependents_leaves_linked_files_and_control_group(self):
+        orphan_episode_ids, orphan_file_ids = self.build_fixture(orphan_count=0)
+        stuck_ids = self._seed_show_with_files(
+            5, 'Lanterns', '/tv/Lanterns/', '/tv/Lanterns/Season 01/',
+            stuck_filenames=['S01E04.mkv', 'S01E05.mkv'], linked_filenames=['S01E01.mkv'])
+        conn = sqlite3.connect(self.db_path)
+        conn.execute('INSERT INTO bookmark (idFile, timeInSeconds) VALUES (?, 10.0)', (stuck_ids[0],))
+        conn.execute('INSERT INTO streamdetails (idFile, iStreamType) VALUES (?, 0)', (stuck_ids[0],))
+        conn.commit()
+        conn.close()
+
+        report = library_repair.detect_stuck_files(self.db_path)
+        result = library_repair.repair_stuck_files(self.db_path, report, self.backup_dir)
+
+        self.assertFalse(result['aborted'])
+        self.assertEqual(result['deleted_files'], 2)
+        self.assertEqual(result['deleted_bookmark'], 1)
+        self.assertEqual(result['deleted_streamdetails'], 1)
+        self.assertIsNotNone(result['backup_path'])
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            remaining_file_ids = {r[0] for r in conn.execute('SELECT idFile FROM files')}
+        finally:
+            conn.close()
+        for fid in stuck_ids:
+            self.assertNotIn(fid, remaining_file_ids)
+        # The control group (from build_fixture) and the linked S01E01 file must both survive.
+        for fid in _CONTROL_FILE_IDS:
+            self.assertIn(fid, remaining_file_ids)
+
+    def test_repair_no_stuck_files_makes_no_backup(self):
+        self.build_fixture(orphan_count=0)
+        report = {'file_ids': [], 'groups': []}
+        result = library_repair.repair_stuck_files(self.db_path, report, self.backup_dir)
+        self.assertIsNone(result['backup_path'])
+        self.assertEqual(result['deleted_files'], 0)
+
+    def test_full_repair_flow_includes_stuck_files(self):
+        # End-to-end through prepare_repair()/finish_repair(), the same entry points default.py
+        # actually calls -- confirms stuck-file detection and repair are wired into the normal
+        # Repair action, not just directly callable in isolation.
+        self.build_fixture(orphan_count=0)
+        self._seed_show_with_files(
+            5, 'Lanterns', '/tv/Lanterns/', '/tv/Lanterns/Season 01/',
+            stuck_filenames=['S01E04.mkv'], linked_filenames=['S01E01.mkv'])
+
+        db_path, report = library_repair.prepare_repair()
+        self.assertEqual(len(report['stuck_files']['file_ids']), 1)
+        result = library_repair.finish_repair(db_path, report, execute=True)
+
+        self.assertFalse(result['aborted'])
+        self.assertEqual(result['deleted_stuck_files'], 1)
+
+
 class TestPreconditions(LibraryRepairTestBase):
 
     def test_scanning_aborts_before_any_file_access(self):

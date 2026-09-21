@@ -347,14 +347,17 @@ def _library_repair_preview():
     bg.close()
 
     stale_shows = report['stale_shows']
-    if report['total_episodes'] == 0 and not stale_shows:
+    stuck_file_ids = report['stuck_files']['file_ids']
+    if report['total_episodes'] == 0 and not stale_shows and not stuck_file_ids:
         message = ADDON.getLocalizedString(32163)  # nothing wrong at all
     elif report['total_episodes'] == 0:
-        message = ADDON.getLocalizedString(32176)  # neutral -- a stale-show note follows below
+        message = ADDON.getLocalizedString(32176)  # neutral -- a stale-show/stuck-file note follows below
     else:
         message = ADDON.getLocalizedString(32171).format(report['total_episodes'], len(report['groups']))
     if stale_shows:
         message += ADDON.getLocalizedString(32174).format(len(stale_shows))
+    if stuck_file_ids:
+        message += ADDON.getLocalizedString(32178).format(len(stuck_file_ids))
     xbmcgui.Dialog().ok(heading, message)
     ADDON.setSetting('library_repair_last_result', message)
 
@@ -387,7 +390,8 @@ def _library_repair():
     bg.close()
 
     stale_shows = report['stale_shows']
-    if report['total_episodes'] == 0 and not stale_shows:
+    stuck_file_ids = report['stuck_files']['file_ids']
+    if report['total_episodes'] == 0 and not stale_shows and not stuck_file_ids:
         library_repair.finish_repair(db_path, report, execute=False)
         message = ADDON.getLocalizedString(32163)
         xbmcgui.Dialog().ok(heading, message)
@@ -395,11 +399,13 @@ def _library_repair():
         return
 
     if report['total_episodes'] == 0:
-        confirm_message = ADDON.getLocalizedString(32176)  # neutral -- a stale-show note follows below
+        confirm_message = ADDON.getLocalizedString(32176)  # neutral -- a stale-show/stuck-file note follows below
     else:
         confirm_message = ADDON.getLocalizedString(32160).format(report['total_episodes'], len(report['groups']))
     if stale_shows:
         confirm_message += ADDON.getLocalizedString(32174).format(len(stale_shows))
+    if stuck_file_ids:
+        confirm_message += ADDON.getLocalizedString(32178).format(len(stuck_file_ids))
 
     confirmed = xbmcgui.Dialog().yesno(
         heading, confirm_message,
@@ -448,9 +454,11 @@ def _library_repair():
         message = ADDON.getLocalizedString(32164).format(
             result['deleted_episodes'], len(report['groups']), result['backup_path'])
     else:
-        message = ADDON.getLocalizedString(32176)  # no orphan backup was made -- only stale shows were fixed
+        message = ADDON.getLocalizedString(32176)  # no orphan backup was made -- only stale shows/stuck files were fixed
     if result['repaired_stale_shows']:
         message += ADDON.getLocalizedString(32175).format(len(result['repaired_stale_shows']))
+    if result.get('deleted_stuck_files'):
+        message += ADDON.getLocalizedString(32179).format(result['deleted_stuck_files'])
     xbmcgui.Dialog().ok(heading, message)
     ADDON.setSetting('library_repair_last_result', message)
 

@@ -232,7 +232,7 @@ msgid "Found {0} stuck episode(s) across {1} show(s)."
 msgstr ""
 
 msgctxt "#32172"
-msgid "Fixes two things that can leave a show stuck missing episodes no matter how many times you rescan: stuck episode entries left behind after removing a show, and shows whose season folder Kodi can no longer find (e.g. it was renamed on disk).\n\nPreview checks for both and shows you what it found -- nothing is changed. Repair Stuck Episodes fixes what Preview finds, but only after you confirm, and only after a safety backup of your Kodi library is made. Undo Last Repair reverses the single most recent repair, from that backup, if anything looks wrong afterward."
+msgid "Fixes three causes of a show stuck missing episodes: stuck episode entries left behind after removing a show, season folders Kodi can no longer find, and files Kodi permanently skipped after an earlier scan didn't finish.\n\nPreview shows what it found; nothing changes until you confirm Repair, which backs up your library first. Undo Last Repair reverses the most recent episode-entry repair (permanently-skipped files aren't covered -- clearing one just lets it rescan fresh)."
 msgstr ""
 
 msgctxt "#32173"
@@ -253,5 +253,13 @@ msgstr ""
 
 msgctxt "#32177"
 msgid "Starting..."
+msgstr ""
+
+msgctxt "#32178"
+msgid "\n\n{0} file(s) were permanently skipped by Kodi's own scanner after an earlier scan attempt didn't finish -- these will also be cleared and can be rescanned."
+msgstr ""
+
+msgctxt "#32179"
+msgid "\n\nCleared {0} permanently-skipped file(s) -- rescan to pick them up."
 msgstr ""
 

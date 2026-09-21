@@ -407,6 +407,83 @@ def detect_stale_shows(db_path):
     return stale
 
 
+# ── Stuck-file detection (a THIRD, unrelated bug with the same "capped episode count" symptom) ─
+#
+# Root-caused live (2026-09-21): a show can get stuck with missing episodes for a reason neither
+# of the two passes above can ever detect -- detect_orphans() above only ever finds an `episode`
+# row whose OWN show is gone, and detect_stale_shows() only ever finds a show whose recorded
+# season folder no longer matches disk. Both require an `episode` row (or a `tvshow` row) to
+# already exist. This is the case where neither does: a scan registers a file (inserting its
+# `files` row) but never gets as far as creating the matching `episode` row for it -- e.g. an
+# addon-side error partway through that one file's scrape. This module's own top docstring
+# already explains why that's permanent: Kodi's scanner treats "a `files` row already exists for
+# this exact filename" as "already known, don't ask the scraper about it again", regardless of
+# whether an episode row actually exists for it. Confirmed live: "Lanterns" S01E04-E06 stuck
+# exactly this way while its own tvshow row, and its already-scanned S01E01-E03, were completely
+# intact -- the show never showed up as broken or missing anywhere in Kodi's own UI, it just
+# silently never grew past 3 episodes no matter how many times it was rescanned.
+
+def detect_stuck_files(db_path):
+    """Read-only: finds `files` rows with NO matching `episode` row at all, scoped to season
+    folders belonging to a show THIS addon scraped (via tvshowlinkpath, the same linkage
+    detect_stale_shows() above already relies on) -- never touches a file under some other
+    scraper/content type. Returns a StuckFilesReport dict: file_ids to act on, and a
+    human-readable `groups` list keyed by the OWNING show's current name (unlike
+    detect_orphans()'s groups, there IS a live show to name here)."""
+    conn = sqlite3.connect('file:{0}?mode=ro'.format(db_path), uri=True, timeout=5)
+    try:
+        if not _table_exists(conn, 'tvshowlinkpath'):
+            log.warning('tvshowlinkpath table not found -- skipping stuck-file detection on '
+                        'this schema version')
+            return {'file_ids': [], 'groups': []}
+
+        own_id = ADDON.getAddonInfo('id')
+        try:
+            show_roots = conn.execute('''
+                SELECT DISTINCT t.idShow, t.c00, p.idPath
+                FROM tvshow t
+                JOIN tvshowlinkpath lp ON lp.idShow = t.idShow
+                JOIN path p ON p.idPath = lp.idPath
+                WHERE p.strScraper = ?
+            ''', (own_id,)).fetchall()
+        except sqlite3.OperationalError as exc:
+            # Same defensive posture as detect_stale_shows() -- a schema variant this query
+            # doesn't understand must never take down the other two passes too.
+            log.warning('detect_stuck_files: query failed on this schema ({0}) -- skipping'.format(exc))
+            return {'file_ids': [], 'groups': []}
+
+        rows = []
+        for id_show, show_name, root_path_id in show_roots:
+            # Episodes normally live in season-level subfolders of the show's own root path, but
+            # a flat/single-season show can also have its files directly under the root -- check
+            # both, the same way an episode's own idSeason isn't assumed here either.
+            season_path_ids = [row[0] for row in conn.execute(
+                'SELECT idPath FROM path WHERE idParentPath = ?', (root_path_id,)).fetchall()]
+            candidate_path_ids = season_path_ids + [root_path_id]
+            placeholders = ','.join('?' * len(candidate_path_ids))
+            stuck = conn.execute('''
+                SELECT f.idFile, f.strFilename
+                FROM files f
+                LEFT JOIN episode e ON e.idFile = f.idFile
+                WHERE e.idFile IS NULL AND f.idPath IN ({0})
+            '''.format(placeholders), candidate_path_ids).fetchall()
+            for id_file, filename in stuck:
+                rows.append((id_file, filename, show_name))
+    finally:
+        conn.close()
+
+    file_ids = sorted({r[0] for r in rows})
+    groups = {}
+    for id_file, filename, show_name in rows:
+        group = groups.setdefault(show_name, {'show_name': show_name, 'file_count': 0, 'example_files': []})
+        group['file_count'] += 1
+        if len(group['example_files']) < 3:
+            group['example_files'].append(filename or '')
+    groups_list = sorted(groups.values(), key=lambda g: -g['file_count'])
+
+    return {'file_ids': file_ids, 'groups': groups_list}
+
+
 def _list_real_subfolders(root_path):
     request = {
         'jsonrpc': '2.0', 'id': 1, 'method': 'Files.GetDirectory',
@@ -692,6 +769,97 @@ def run_repair(db_path, orphan_report, backup_dir, progress_callback=None):
     return result
 
 
+def repair_stuck_files(db_path, stuck_report, backup_dir, progress_callback=None):
+    """The stuck-files counterpart to run_repair() above, same transactional/backup/chunking
+    rules -- but structurally simpler, since a stuck `files` row by definition never had an
+    `episode` row (so there's no `episode`/`art`/`uniqueid` data to also clean up or preserve).
+
+    Deliberately NOT covered by Undo Last Repair: unlike a real orphaned episode (which carries
+    watched status, custom art, external ids -- genuine data that would be lost forever without
+    the manifest/undo system), a stuck file has no episode data to lose. Removing its `files` row
+    only clears the "already known" marker blocking Kodi's scanner -- the very next scan simply
+    recreates an identical `files` row and, this time, successfully creates the episode alongside
+    it. Nothing here is destructive in the way the episode-orphan repair is.
+    """
+    file_ids = stuck_report.get('file_ids') or []
+    result = {
+        'backup_path': None, 'deleted_files': 0, 'deleted_bookmark': 0,
+        'deleted_streamdetails': 0, 'skipped_shared_files': 0,
+        'aborted': False, 'abort_reason': None,
+    }
+    if not file_ids:
+        return result
+
+    _report(progress_callback, 'Backing up your library...')
+    backup_path = create_backup(db_path, backup_dir)
+    prune_old_backups(backup_dir)
+    result['backup_path'] = backup_path
+
+    _report(progress_callback, 'Clearing stuck file entries...')
+    conn = None
+    for attempt in range(1, 4):
+        try:
+            conn = sqlite3.connect(db_path, timeout=5)
+            conn.isolation_level = None
+            conn.execute('PRAGMA busy_timeout = 5000')
+            conn.execute('BEGIN IMMEDIATE')
+            break
+        except sqlite3.OperationalError as exc:
+            if conn is not None:
+                conn.close()
+                conn = None
+            if 'locked' in str(exc).lower() and attempt < 3:
+                log.warning('Database locked, retrying (attempt {0}/3)'.format(attempt))
+                time.sleep(1.0 * attempt)
+                continue
+            result['aborted'] = True
+            result['abort_reason'] = 'database_locked'
+            return result
+
+    try:
+        # Same defensive guard as run_repair() -- never expected for a genuinely stuck TV
+        # episode file, but checked before ever deleting a `files` row regardless.
+        shared_ids = _find_shared_file_ids(conn, file_ids)
+        result['skipped_shared_files'] = len(shared_ids)
+        deletable_file_ids = [f for f in file_ids if f not in shared_ids]
+
+        for chunk in _chunks(deletable_file_ids, _SQLITE_MAX_VARS):
+            placeholders = ','.join('?' * len(chunk))
+            result['deleted_bookmark'] += conn.execute(
+                'DELETE FROM bookmark WHERE idFile IN ({0})'.format(placeholders), chunk).rowcount
+            result['deleted_streamdetails'] += conn.execute(
+                'DELETE FROM streamdetails WHERE idFile IN ({0})'.format(placeholders), chunk).rowcount
+            for table in _OPTIONAL_FILE_TABLES:
+                if _table_exists(conn, table):
+                    conn.execute('DELETE FROM {0} WHERE idFile IN ({1})'.format(table, placeholders), chunk)
+
+        for chunk in _chunks(deletable_file_ids, _SQLITE_MAX_VARS):
+            placeholders = ','.join('?' * len(chunk))
+            result['deleted_files'] += conn.execute(
+                'DELETE FROM files WHERE idFile IN ({0})'.format(placeholders), chunk).rowcount
+
+        if _is_scanning():
+            conn.execute('ROLLBACK')
+            result['aborted'] = True
+            result['abort_reason'] = 'scan_started_during_repair'
+            return result
+
+        conn.execute('COMMIT')
+    except Exception as exc:
+        try:
+            conn.execute('ROLLBACK')
+        except Exception:
+            pass
+        log.error('repair_stuck_files: unexpected error, rolled back: {0}'.format(exc))
+        result['aborted'] = True
+        result['abort_reason'] = 'unexpected_error'
+        return result
+    finally:
+        conn.close()
+
+    return result
+
+
 # ── Undo (re-insert exactly what the last repair removed) ──────────────────────────────────────
 
 def _manifest_path(backup_dir):
@@ -903,12 +1071,13 @@ def _release_lock():
 # ── High-level entry points for default.py (each acquires/releases the lock itself) ────────────
 
 def preview(progress_callback=None):
-    """Read-only: locate the db, run every precondition check, detect orphans AND stale season
-    folders (two unrelated bugs, same symptom -- see this module's own docs for each). Raises
-    LibraryRepairError on any abort condition; otherwise returns an OrphanReport with an added
-    'stale_shows' key. progress_callback, if given, is called with a short status string at each
-    step -- see _report()'s own doc; this can genuinely take a few seconds on a large library, and
-    the caller needs something to show for that time besides an unresponsive remote click."""
+    """Read-only: locate the db, run every precondition check, detect orphans, stale season
+    folders, AND stuck files (three unrelated bugs, same "capped episode count" symptom -- see
+    this module's own docs for each). Raises LibraryRepairError on any abort condition; otherwise
+    returns an OrphanReport with added 'stale_shows' and 'stuck_files' keys. progress_callback, if
+    given, is called with a short status string at each step -- see _report()'s own doc; this can
+    genuinely take a few seconds on a large library, and the caller needs something to show for
+    that time besides an unresponsive remote click."""
     _acquire_lock()
     try:
         _report(progress_callback, 'Locating your Kodi library database...')
@@ -921,17 +1090,20 @@ def preview(progress_callback=None):
         report = detect_orphans(db_path)
         _report(progress_callback, 'Checking for missing season folders...')
         report['stale_shows'] = detect_stale_shows(db_path)
+        _report(progress_callback, 'Checking for permanently-skipped files...')
+        report['stuck_files'] = detect_stuck_files(db_path)
         return report
     finally:
         _release_lock()
 
 
 def prepare_repair(progress_callback=None):
-    """First half of the Repair action: locate the db, check preconditions, detect orphans and
-    stale season folders -- everything needed to show the user a confirmation dialog. Raises
-    LibraryRepairError on any abort condition. On success, the CALLER is responsible for calling
-    finish_repair() exactly once afterward (whether the user confirms or declines) to release the
-    lock this acquires. progress_callback: see preview()'s own doc -- identical detection steps."""
+    """First half of the Repair action: locate the db, check preconditions, detect orphans,
+    stale season folders, and stuck files -- everything needed to show the user a confirmation
+    dialog. Raises LibraryRepairError on any abort condition. On success, the CALLER is
+    responsible for calling finish_repair() exactly once afterward (whether the user confirms or
+    declines) to release the lock this acquires. progress_callback: see preview()'s own doc --
+    identical detection steps."""
     _acquire_lock()
     try:
         _report(progress_callback, 'Locating your Kodi library database...')
@@ -944,6 +1116,8 @@ def prepare_repair(progress_callback=None):
         report = detect_orphans(db_path)
         _report(progress_callback, 'Checking for missing season folders...')
         report['stale_shows'] = detect_stale_shows(db_path)
+        _report(progress_callback, 'Checking for permanently-skipped files...')
+        report['stuck_files'] = detect_stuck_files(db_path)
     except Exception:
         _release_lock()
         raise
@@ -953,10 +1127,11 @@ def prepare_repair(progress_callback=None):
 def finish_repair(db_path, report, execute, progress_callback=None):
     """Second half of the Repair action -- always releases the lock prepare_repair() acquired.
     execute=False (user declined) makes no changes and returns None. execute=True runs the
-    orphaned-row repair, THEN removes+rescans any stale-season-folder shows as a second step, and
-    returns a combined RepairResult (adds 'repaired_stale_shows': [name, ...]). progress_callback:
-    see preview()'s own doc -- this is the long-running half (backup + delete transaction), where
-    ongoing feedback matters even more than during detection."""
+    orphaned-row repair, THEN removes+rescans any stale-season-folder shows, THEN clears any
+    stuck files, and returns a combined RepairResult (adds 'repaired_stale_shows': [name, ...]
+    and the stuck-files result's own keys merged in). progress_callback: see preview()'s own doc
+    -- this is the long-running half (backup + delete transaction), where ongoing feedback
+    matters even more than during detection."""
     try:
         if not execute:
             return None
@@ -966,6 +1141,16 @@ def finish_repair(db_path, report, execute, progress_callback=None):
             _report(progress_callback, 'Fixing shows with missing season folders...')
         result['repaired_stale_shows'] = (
             [] if result['aborted'] else repair_stale_shows(stale_shows, db_path))
+
+        stuck_files = report.get('stuck_files') or {'file_ids': []}
+        if not result['aborted'] and stuck_files.get('file_ids'):
+            _report(progress_callback, 'Clearing permanently-skipped files...')
+            stuck_result = repair_stuck_files(db_path, stuck_files, _backup_dir(), progress_callback=progress_callback)
+            result['deleted_stuck_files'] = stuck_result['deleted_files']
+            result['stuck_files_aborted'] = stuck_result['aborted']
+        else:
+            result['deleted_stuck_files'] = 0
+            result['stuck_files_aborted'] = False
         return result
     finally:
         _release_lock()
