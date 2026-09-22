@@ -66,15 +66,15 @@ class TestEpisodeDetailsFields(unittest.TestCase):
 
     def test_air_date_is_set_from_aired(self):
         vtag = self._run(_episode_details(aired='2023-08-22T00:00:00Z'))
-        vtag.setPremiered.assert_called_once_with('2023-08-22')
+        vtag.setFirstAired.assert_called_once_with('2023-08-22')
 
     def test_air_date_with_no_time_component_still_works(self):
         vtag = self._run(_episode_details(aired='2023-08-22'))
-        vtag.setPremiered.assert_called_once_with('2023-08-22')
+        vtag.setFirstAired.assert_called_once_with('2023-08-22')
 
-    def test_missing_aired_never_calls_setpremiered(self):
+    def test_missing_aired_never_calls_setfirstaired(self):
         vtag = self._run(_episode_details(aired=None))
-        vtag.setPremiered.assert_not_called()
+        vtag.setFirstAired.assert_not_called()
 
     def test_runtime_sets_duration_even_with_no_resume_position(self):
         # The exact gap this test locks in: no resumePositionPercent means
