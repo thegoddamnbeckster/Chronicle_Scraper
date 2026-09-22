@@ -275,6 +275,23 @@ class ChronicleClient:
         return self._get('/api/v1/scraper/tv/episode-details?id={0}'.format(media_item_id),
                           'get_episode_details({0})'.format(media_item_id))
 
+    def get_episode_details_by_file(self, file_name: str, season=None, episode=None):
+        """GET /api/v1/scraper/tv/episode-details-by-file?fileName=&season=&episode= -- same
+        shape as get_episode_details(), resolved purely from the video file's own basename
+        instead of a known Chronicle id. Read-only: never creates anything. Returns None when
+        there's no unambiguous match (nothing in Chronicle for this exact file, the filename is
+        genuinely ambiguous, or season/episode was supplied and contradicts the matched item's
+        own season/episode number -- the same "don't trust a possibly-stale filename record"
+        guard the movie addon's get_movie_details_by_file uses via year) -- same as any other
+        failure here, since a caller walking Kodi's own full inventory (full_sync_check.py) has
+        nothing safer to do than skip that file. Always pass both when known."""
+        url = '/api/v1/scraper/tv/episode-details-by-file?fileName={0}'.format(urllib.parse.quote(file_name))
+        if season is not None:
+            url += '&season={0}'.format(season)
+        if episode is not None:
+            url += '&episode={0}'.format(episode)
+        return self._get(url, 'get_episode_details_by_file({0!r})'.format(file_name))
+
     def report_resolved_file(self, media_item_id: int, filename: str):
         """POST /api/v1/scraper/movies/{id}/resolved-file -- tells Chronicle the
         real filename this addon just discovered the slow way (title/year

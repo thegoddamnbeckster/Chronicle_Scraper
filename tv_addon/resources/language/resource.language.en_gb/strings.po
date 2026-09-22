@@ -263,3 +263,11 @@ msgctxt "#32179"
 msgid "\n\nCleared {0} permanently-skipped file(s) -- rescan to pick them up."
 msgstr ""
 
+msgctxt "#32180"
+msgid "Verify every episode matches Chronicle after each scan"
+msgstr ""
+
+msgctxt "#32181"
+msgid "After any video library scan finishes -- Kodi's own automatic one, your own manual \"Update Library\", or this addon's own new-content detection above -- checks every episode Kodi already has against Chronicle's current data (matched by the exact video file, not by title/season/episode) and corrects only whatever actually disagrees. Fixes cases where a file was scraped with the wrong data at some point and never corrected since. On by default."
+msgstr ""
+

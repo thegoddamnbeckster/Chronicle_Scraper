@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.17.3"
+       version="3.17.4"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,16 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.17.3 - Fixed art not actually updating in Kodi after Chronicle's pick
+    <news>v3.17.4 - New: after every video library scan finishes (Kodi's own
+startup scan, your own manual "Update Library", or this addon's own new-content detection),
+checks every movie Kodi already has against Chronicle's current data -- matched by the exact
+video file, never by title/year -- and corrects only whatever actually disagrees. Fixes movies
+that were scraped with the wrong data at some point and never corrected since (root-caused
+live: a "Ghostbusters (2016)" file carrying the 1984 film's title/year/plot). New settings
+toggle "Verify every movie matches Chronicle after each scan" under New Content Detection, on
+by default.
+
+v3.17.3 - Fixed art not actually updating in Kodi after Chronicle's pick
 changed: sync_movie_art() overwrote a movie's local poster/fanart file on disk correctly, but
 never told Kodi to drop its own cached copy of that same path. Kodi's texture cache only
 re-hashes a local file about once a day, so the new art sat correct on disk while Kodi kept

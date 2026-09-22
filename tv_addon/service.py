@@ -28,6 +28,7 @@ import xbmc
 import xbmcaddon
 
 from lib import activity_tracker
+from lib import full_sync_check
 from lib import kodi_scan_signal
 from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
@@ -41,6 +42,20 @@ log = Logger('service')
 # file's own top-of-module doc for why the two services can't share code across addon packages.
 _ACTIVITY_IDLE_TIMEOUT_SECONDS = 30
 _SCAN_ACTIVE_HEARTBEAT_SECONDS = 60
+
+# onScanFinished fires the instant a scan ends, which is exactly when this addon's own
+# just-finished per-episode scraper activity is still inside _ACTIVITY_IDLE_TIMEOUT_SECONDS --
+# see run_full_sync_check's own doc. Bounded so a genuinely stuck/long-running scrape can't wait
+# forever; generous since a real scan/scrape tail can legitimately run long on a big library.
+_FULL_SYNC_CHECK_DEFER_WAIT_TIMEOUT_SECONDS = 20 * 60
+_FULL_SYNC_CHECK_DEFER_POLL_SECONDS = 10
+
+# VideoLibrary.Scan finishing cascades into every OTHER addon's own onScanFinished handler too
+# (see kodi_scan_signal.py's own doc on this) -- one native/manual/self-triggered scan can
+# legitimately fire onScanFinished several times in quick succession as different addons' own
+# triggered scans each complete in turn. This keeps a completed full sync-check pass from
+# re-running on every one of those, not just the first. Same value as the Movies addon's own.
+_FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS = 5 * 60
 
 # Chronicle's "new content available" flag (lib/kodi_scan_signal.py) is always checked once
 # after Kodi starts, regardless of the scan_signal_enabled setting -- most imports land via
@@ -69,6 +84,85 @@ class ChronicleTVMonitor(xbmc.Monitor):
         # not a response to any observed failure. Same precedent as the Movies addon's own
         # _scan_signal_lock.
         self._scan_signal_lock = threading.Lock()
+        # Guards against onScanFinished firing again (a second scan completing) while a
+        # previous full sync-check pass is still walking the library.
+        self._full_sync_check_lock = threading.Lock()
+        # See _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS's own doc -- 0.0 so the very first
+        # onScanFinished this session always runs regardless of when the service itself started.
+        self._full_sync_check_last_completed_at = 0.0
+
+    def _should_defer_for_active_scan(self, task_label):
+        """True if either Kodi's own library scan (Library.IsScanning) or this addon's own
+        scraper activity tail (activity_tracker) is recent enough to still be "in progress" --
+        same reasoning and same shared activity_tracker signal as the Movies addon's own
+        identically-named method (see that file's own doc): full_sync_check's own work
+        shouldn't contend with an active scan/scrape for the same local/server capacity."""
+        kodi_scanning = xbmc.getCondVisibility('Library.IsScanning')
+        scraper_active = activity_tracker.is_recently_active(_ACTIVITY_IDLE_TIMEOUT_SECONDS)
+        if kodi_scanning or scraper_active:
+            log.info('service: {0} deferred -- {1} still in progress'.format(
+                     task_label, 'a Kodi library scan' if kodi_scanning else 'scraper activity'))
+            return True
+        return False
+
+    def onScanFinished(self, library):
+        """Kodi's own native callback, fired the same way regardless of what triggered the
+        scan -- its own automatic startup scan, the user's manual "Update Library", or this
+        addon's own new-content-detection feature calling VideoLibrary.Scan. Per-user direction
+        (2026-09-22): the full sync-check should run after ALL of those alike, gated by its own
+        settings toggle (default on) rather than trying to tell them apart -- see
+        lib/full_sync_check.py's own doc for what this actually does and why."""
+        if library != 'video':
+            return
+        self.run_full_sync_check('scan finished')
+
+    def run_full_sync_check(self, trigger_label):
+        """Runs one full_sync_check.run() pass -- checks every episode Kodi already has
+        against Chronicle's current data (matched by file, not title/season/episode) and
+        corrects only whatever disagrees. Guarded by _full_sync_check_lock so an onScanFinished
+        firing again mid-pass can't overlap a previous one."""
+        if not ADDON.getSettingBool('full_sync_check_enabled'):
+            return
+        since_last = time.time() - self._full_sync_check_last_completed_at
+        if since_last < _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS:
+            log.info('service: full sync-check ({0}) skipped -- a pass completed {1:.0f}s ago, '
+                     'inside the {2}s cooldown (VideoLibrary.Scan finishing cascades into '
+                     'multiple onScanFinished firings)'.format(
+                     trigger_label, since_last, _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS))
+            return
+        if not self._full_sync_check_lock.acquire(False):
+            log.info('service: full sync-check ({0}) skipped -- another pass is already '
+                     'running'.format(trigger_label))
+            return
+
+        def _do():
+            try:
+                # Checked INSIDE the thread, with a bounded wait -- see the Movies addon's own
+                # identical comment for why checking once before spawning would make this defer
+                # on every single run and never get a second chance.
+                deadline = time.time() + _FULL_SYNC_CHECK_DEFER_WAIT_TIMEOUT_SECONDS
+                while self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)):
+                    if self.abortRequested() or time.time() >= deadline:
+                        log.info('service: full sync-check ({0}) gave up waiting for other '
+                                 'activity to clear'.format(trigger_label))
+                        return
+                    if self.waitForAbort(_FULL_SYNC_CHECK_DEFER_POLL_SECONDS):
+                        return
+
+                log.info('service: starting full sync-check ({0})'.format(trigger_label))
+                # Also stops the sweep if a fresh scan/scrape starts mid-pass -- see the Movies
+                # addon's own identical comment for why.
+                result = full_sync_check.run(is_cancelled=lambda: self.abortRequested() or
+                    self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)))
+                log.info('service: full sync-check ({0}) complete -- {1}'.format(
+                         trigger_label, result))
+                self._full_sync_check_last_completed_at = time.time()
+            except Exception as exc:
+                log.error('service: full sync-check ({0}) failed: {1}'.format(trigger_label, exc))
+            finally:
+                self._full_sync_check_lock.release()
+
+        threading.Thread(target=_do, name='chronicle-tv-full-sync-check', daemon=True).start()
 
     def run_scan_signal_check(self):
         if not self._scan_signal_lock.acquire(False):

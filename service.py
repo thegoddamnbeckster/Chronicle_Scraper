@@ -28,6 +28,7 @@ from lib.logger import Logger
 from lib import activity_tracker
 from lib import collection_art_sync
 from lib import device_registration
+from lib import full_sync_check
 from lib import kodi_scan_signal
 from lib import watch_rating_sync
 from lib.chronicle_client import ChronicleClient
@@ -82,6 +83,20 @@ _STARTUP_SCAN_FOLLOWUP_DELAY_SECONDS = 10
 # longer than the 3s idle-loop tick so this isn't a Chronicle POST on every single tick.
 _SCAN_ACTIVE_HEARTBEAT_SECONDS = 60
 
+# onScanFinished fires the instant a scan ends, which is exactly when this addon's own
+# just-finished per-item scraper activity is still inside _ACTIVITY_IDLE_TIMEOUT_SECONDS -- see
+# run_full_sync_check's own doc. Bounded so a genuinely stuck/long-running scrape can't wait
+# forever; generous since a real scan/scrape tail can legitimately run long on a big library.
+_FULL_SYNC_CHECK_DEFER_WAIT_TIMEOUT_SECONDS = 20 * 60
+_FULL_SYNC_CHECK_DEFER_POLL_SECONDS = 10
+
+# VideoLibrary.Scan finishing cascades into every OTHER addon's own onScanFinished handler too
+# (see kodi_scan_signal.py's own doc on this) -- one native/manual/self-triggered scan can
+# legitimately fire onScanFinished several times in quick succession as different addons' own
+# triggered scans each complete in turn. This keeps a completed full sync-check pass from
+# re-running on every one of those, not just the first.
+_FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS = 5 * 60
+
 
 class ChronicleMonitor(xbmc.Monitor):
     def __init__(self):
@@ -99,6 +114,14 @@ class ChronicleMonitor(xbmc.Monitor):
         # on-load pass still running long) overlapping -- same reasoning as
         # _watch_rating_lock, this task has no destructive per-item step either.
         self._collection_art_lock = threading.Lock()
+        # Guards against onScanFinished firing again (a second scan completing) while a
+        # previous full sync-check pass is still walking the library -- same non-destructive
+        # reasoning as the other locks above, this is about not wasting duplicate work, not
+        # data safety.
+        self._full_sync_check_lock = threading.Lock()
+        # See _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS's own doc -- 0.0 so the very first
+        # onScanFinished this session always runs regardless of when the service itself started.
+        self._full_sync_check_last_completed_at = 0.0
 
     def _should_defer_for_active_scan(self, task_label):
         """True if either Kodi's own library scan (Library.IsScanning) or EITHER addon's own
@@ -229,6 +252,78 @@ class ChronicleMonitor(xbmc.Monitor):
                 self._collection_art_lock.release()
 
         threading.Thread(target=_do, name='chronicle-collection-art-sync', daemon=True).start()
+
+    def onScanFinished(self, library):
+        """Kodi's own native callback, fired the same way regardless of what triggered the
+        scan -- its own automatic startup scan, the user's manual "Update Library", or this
+        addon's own new-content-detection feature calling VideoLibrary.Scan. Per-user direction
+        (2026-09-22): the full sync-check should run after ALL of those alike, gated by its own
+        settings toggle (default on) rather than trying to tell them apart -- see
+        lib/full_sync_check.py's own doc for what this actually does and why."""
+        if library != 'video':
+            return
+        self.run_full_sync_check('scan finished')
+
+    def run_full_sync_check(self, trigger_label):
+        """Runs one full_sync_check.run() pass -- checks every movie Kodi already has against
+        Chronicle's current data (matched by file, not title/year) and corrects only whatever
+        disagrees. Guarded by _full_sync_check_lock so an onScanFinished firing again mid-pass
+        can't overlap a previous one."""
+        if not ADDON.getSettingBool('full_sync_check_enabled'):
+            return
+        since_last = time.time() - self._full_sync_check_last_completed_at
+        if since_last < _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS:
+            log.info('service: full sync-check ({0}) skipped -- a pass completed {1:.0f}s ago, '
+                     'inside the {2}s cooldown (VideoLibrary.Scan finishing cascades into '
+                     'multiple onScanFinished firings)'.format(
+                     trigger_label, since_last, _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS))
+            return
+        if not self._full_sync_check_lock.acquire(False):
+            log.info('service: full sync-check ({0}) skipped -- another pass is already '
+                     'running'.format(trigger_label))
+            return
+
+        def _do():
+            try:
+                # Checked INSIDE the thread, with a bounded wait, not once before spawning it --
+                # onScanFinished fires the instant Kodi's own scan ends, which is exactly when
+                # this addon's own last per-item scraper call (find/getdetails, tracked via
+                # activity_tracker -- the same calls Kodi just made AS the scan) is still well
+                # within its own idle window. Checking once and bailing here would make this
+                # feature defer on every single run and never get a second chance, since nothing
+                # else re-triggers it -- this isn't a periodic poll, only onScanFinished calls it.
+                deadline = time.time() + _FULL_SYNC_CHECK_DEFER_WAIT_TIMEOUT_SECONDS
+                while self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)):
+                    if self.abortRequested() or time.time() >= deadline:
+                        log.info('service: full sync-check ({0}) gave up waiting for other '
+                                 'activity to clear'.format(trigger_label))
+                        return
+                    if self.waitForAbort(_FULL_SYNC_CHECK_DEFER_POLL_SECONDS):
+                        return
+
+                log.info('service: starting full sync-check ({0})'.format(trigger_label))
+                # Also stops the sweep if a fresh scan/scrape starts mid-pass -- the wait loop
+                # above only guarantees nothing else was active at the START; without this, a
+                # pass already underway would keep hammering Chronicle/JSON-RPC for its entire
+                # remaining duration in parallel with new scan activity, exactly what
+                # _should_defer_for_active_scan exists to prevent. Checked per item (see
+                # full_sync_check.run()'s own loop), not continuously, so this only adds one
+                # cheap local check per item, not a background poll.
+                result = full_sync_check.run(is_cancelled=lambda: self.abortRequested() or
+                    self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)))
+                log.info('service: full sync-check ({0}) complete -- {1}'.format(
+                         trigger_label, result))
+                # Marks completion regardless of a mid-run cancel -- a cancelled/aborted pass
+                # still did real (if partial) work and real Chronicle/JSON-RPC traffic, exactly
+                # what the cooldown exists to space out; only the "gave up waiting" early
+                # returns above (which did no work at all) skip this.
+                self._full_sync_check_last_completed_at = time.time()
+            except Exception as exc:
+                log.error('service: full sync-check ({0}) failed: {1}'.format(trigger_label, exc))
+            finally:
+                self._full_sync_check_lock.release()
+
+        threading.Thread(target=_do, name='chronicle-full-sync-check', daemon=True).start()
 
     def run_scan_signal_check(self):
         """Runs one kodi_scan_signal.check_and_scan() pass on a background thread -- see that

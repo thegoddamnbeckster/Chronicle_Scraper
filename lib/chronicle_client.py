@@ -207,6 +207,23 @@ class ChronicleClient:
         return self._get('/api/v1/scraper/movies/details?id={0}'.format(media_item_id),
                           'get_movie_details({0})'.format(media_item_id))
 
+    def get_movie_details_by_file(self, file_name: str, year=None):
+        """GET /api/v1/scraper/movies/details-by-file?fileName=&year= -- same shape as
+        get_movie_details(), resolved purely from the video file's own basename instead of a
+        known Chronicle id. Read-only: never creates anything. Returns None when there's no
+        unambiguous match (nothing in Chronicle for this exact file, the exact filename is
+        genuinely ambiguous, or year was supplied and contradicts the matched item's own Year --
+        the same "don't trust a possibly-stale filename record" guard search_movie()'s own
+        fileName fast-path uses) -- same as any other failure here, since a caller walking
+        Kodi's own full inventory (full_sync_check.py) has nothing safer to do than skip that
+        file. Always pass year when it's known (Kodi's own VideoLibrary.GetMovies already
+        returns it at no extra cost) -- see the endpoint's own doc for why this matters more
+        here than it does for an interactive scrape."""
+        url = '/api/v1/scraper/movies/details-by-file?fileName={0}'.format(urllib.parse.quote(file_name))
+        if year:
+            url += '&year={0}'.format(year)
+        return self._get(url, 'get_movie_details_by_file({0!r})'.format(file_name))
+
     def search_show(self, title: str, year=None):
         """GET /api/v1/scraper/tv/search?title=&year= -- same resolve-or-create
         pattern as search_movie(), for the show itself only."""
@@ -237,6 +254,19 @@ class ChronicleClient:
         """GET /api/v1/scraper/tv/episode-details?id= -- full details for one episode."""
         return self._get('/api/v1/scraper/tv/episode-details?id={0}'.format(media_item_id),
                           'get_episode_details({0})'.format(media_item_id))
+
+    def get_episode_details_by_file(self, file_name: str, season=None, episode=None):
+        """GET /api/v1/scraper/tv/episode-details-by-file?fileName=&season=&episode= -- same
+        shape as get_episode_details(), resolved purely from the video file's own basename. See
+        get_movie_details_by_file's own doc -- same read-only, no-guessing contract; season/
+        episode are the episode-side equivalent of that method's own year guard against a
+        possibly-stale filename record. Always pass both when known."""
+        url = '/api/v1/scraper/tv/episode-details-by-file?fileName={0}'.format(urllib.parse.quote(file_name))
+        if season is not None:
+            url += '&season={0}'.format(season)
+        if episode is not None:
+            url += '&episode={0}'.format(episode)
+        return self._get(url, 'get_episode_details_by_file({0!r})'.format(file_name))
 
     def report_resolved_file(self, media_item_id: int, filename: str):
         """POST /api/v1/scraper/movies/{id}/resolved-file -- tells Chronicle the

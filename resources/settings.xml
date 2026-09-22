@@ -51,6 +51,7 @@
     <category label="32137">
         <setting id="scan_signal_enabled" type="bool" label="32138" default="false" help="32139"/>
         <setting id="scan_signal_interval_minutes" type="slider" label="32140" default="120" range="30,30,1440" option="int" help="32141" enable="eq(-1,true)"/>
+        <setting id="full_sync_check_enabled" type="bool" label="32149" default="true" help="32150"/>
     </category>
 
 </settings>

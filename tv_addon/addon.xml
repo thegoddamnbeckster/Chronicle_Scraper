@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.tv"
        name="Chronicle Scraper (TV)"
-       version="1.14.6"
+       version="1.14.7"
        provider-name="Michael Beck">
 
   <requires>
@@ -58,7 +58,15 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (TV)</summary>
     <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. The corner status indicator lives in the Movies addon and covers both movies and TV shows together; this addon doesn't duplicate it. Neither addon writes a local NFO file of any kind -- Chronicle's own API is the source of truth both scrapers read from directly. It does have its own small background service that keeps Kodi's library in sync with newly-imported content, independent of the Movies addon -- see this version's changelog.</description>
-    <news>v1.14.6 - Internal only, no behaviour change here: kept this addon's unused
+    <news>v1.14.7 - New: after every video library scan finishes (Kodi's own
+startup scan, your own manual "Update Library", or this addon's own new-content detection),
+checks every episode Kodi already has against Chronicle's current data -- matched by the exact
+video file, never by title/season/episode -- and corrects only whatever actually disagrees.
+Fixes episodes that were scraped with the wrong data at some point and never corrected since,
+the TV-side counterpart to the movie addon's own identical fix. New settings toggle "Verify
+every episode matches Chronicle after each scan" under New Content Detection, on by default.
+
+v1.14.6 - Internal only, no behaviour change here: kept this addon's unused
 copy of lib/movie_art_sync.py (this addon doesn't call it -- TV art is set live via
 setArt()/addAvailableArtwork(), never through that module) in sync with the movie addon's copy,
 which just got a real texture-cache-invalidation fix. No functional change for TV.

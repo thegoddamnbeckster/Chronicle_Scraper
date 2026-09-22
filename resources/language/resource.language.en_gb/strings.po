@@ -228,3 +228,11 @@ msgstr ""
 msgctxt "#32148"
 msgid "Runs one collection art sync pass immediately, regardless of the automatic settings above. Useful right after changing a collection's art in Chronicle you want reflected in Kodi without waiting for the next scheduled sync."
 msgstr ""
+
+msgctxt "#32149"
+msgid "Verify every movie matches Chronicle after each scan"
+msgstr ""
+
+msgctxt "#32150"
+msgid "After any video library scan finishes -- Kodi's own automatic one, your own manual \"Update Library\", or this addon's own new-content detection above -- checks every movie Kodi already has against Chronicle's current data (matched by the exact video file, not by title/year) and corrects only whatever actually disagrees. Fixes cases where a file was scraped with the wrong data at some point and never corrected since. On by default."
+msgstr ""
