@@ -388,8 +388,26 @@ def detect_stale_shows(db_path):
             if id_show in seen_ids:
                 continue  # a show linked to more than one root path is still only ONE show to repair
             try:
-                season_paths = conn.execute(
-                    'SELECT strPath FROM path WHERE idParentPath=?', (id_path,)).fetchall()
+                # Root-caused live (2026-09-22): `path WHERE idParentPath=?` returns EVERY child
+                # path Kodi has ever recorded under the show's root -- not just season folders.
+                # A real show's root also contains Kodi's own housekeeping folders (.actors/,
+                # extrafanart/, confirmed present live on a real device sitting right alongside
+                # the real season folders), and any of those can independently go missing/
+                # inconsistent in a live directory listing without the season folders themselves
+                # having moved at all -- false-flagging the ENTIRE show as stale. Confirmed live:
+                # this was flagging ~117 of ~130 shows across two independent devices, one of
+                # which had never had any repair run on it, and a from-scratch reproduction
+                # using each show's own ACTUAL episode file paths (bypassing this table
+                # entirely) found zero genuinely stale shows in the same library. Scoping to
+                # paths that actually own an episode file -- the same signal that from-scratch
+                # reproduction used -- is what those non-season folders can never satisfy.
+                season_paths = conn.execute('''
+                    SELECT DISTINCT p2.strPath
+                    FROM episode e
+                    JOIN files f ON f.idFile = e.idFile
+                    JOIN path p2 ON p2.idPath = f.idPath
+                    WHERE e.idShow = ?
+                ''', (id_show,)).fetchall()
             except sqlite3.OperationalError as exc:
                 log.warning('detect_stale_shows: could not read season paths for show {0} ({1})'.format(
                     id_show, exc))

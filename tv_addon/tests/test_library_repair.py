@@ -217,6 +217,11 @@ class TestStaleShows(LibraryRepairTestBase):
     action as a second step. See library_repair.py's own doc for the root cause."""
 
     def _seed_show_with_season_path(self, id_show, root_path, season_path):
+        # Seeds a real episode/files row under the season path too -- not just the bare `path`
+        # row -- matching how a real show's data actually looks. detect_stale_shows() derives
+        # its season paths from episode file locations (see its own doc for why: a `path` row
+        # with no episode, like Kodi's own .actors/extrafanart housekeeping folders, must never
+        # be treated as a season path to check).
         conn = sqlite3.connect(self.db_path)
         try:
             conn.execute('INSERT INTO tvshow (idShow, c00) VALUES (?, ?)', (id_show, 'Stuck Show'))
@@ -226,6 +231,10 @@ class TestStaleShows(LibraryRepairTestBase):
                          (id_show, 100 + id_show))
             conn.execute('INSERT INTO path (idPath, strPath, idParentPath) VALUES (?, ?, ?)',
                          (200 + id_show, season_path, 100 + id_show))
+            conn.execute('INSERT INTO files (idFile, idPath, strFilename) VALUES (?, ?, ?)',
+                         (300 + id_show, 200 + id_show, 'S01E01.mkv'))
+            conn.execute('INSERT INTO episode (idEpisode, idShow, idFile, idSeason) VALUES (?, ?, ?, 1)',
+                         (400 + id_show, id_show, 300 + id_show))
             conn.commit()
         finally:
             conn.close()
@@ -254,6 +263,31 @@ class TestStaleShows(LibraryRepairTestBase):
         stale = library_repair.detect_stale_shows(self.db_path)
 
         self.assertEqual(stale, [])
+
+    def test_does_not_flag_a_show_over_a_missing_non_season_housekeeping_folder(self):
+        # Root-caused live (2026-09-22): a show's root also contains Kodi's own housekeeping
+        # folders (.actors/, extrafanart/) sitting right alongside the real season folders --
+        # confirmed present on a real device via Files.GetDirectory. If Kodi ever recorded a
+        # `path` row for one of those (e.g. it was created once, then later removed as part of
+        # Kodi's own art-cache management) and it no longer appears in a live listing, that must
+        # NEVER flag the whole show as stale -- only a path that actually owns an episode file
+        # counts. This is the exact shape that was flagging ~117 of ~130 shows in a real
+        # library, on a device that had never even had a repair run on it.
+        self.build_fixture(orphan_count=0)
+        self._seed_show_with_season_path(5, '/tv/Stuck Show/', '/tv/Stuck Show/Season 1/')
+        conn = sqlite3.connect(self.db_path)
+        # A housekeeping path Kodi recorded once but which isn't in the live listing below --
+        # no episode/files row references it, unlike the real season path just seeded.
+        conn.execute('INSERT INTO path (idPath, strPath, idParentPath) VALUES (206, ?, 105)',
+                     ('/tv/Stuck Show/.actors/',))
+        conn.commit()
+        conn.close()
+        xbmc.executeJSONRPC = MagicMock(side_effect=_json_rpc_stub(
+            self.live_show_count, real_folders={'/tv/Stuck Show/': ['/tv/Stuck Show/Season 1/']}))
+
+        stale = library_repair.detect_stale_shows(self.db_path)
+
+        self.assertEqual(stale, [], 'a missing non-episode-owning path must never flag the show')
 
     def test_ignores_show_with_no_season_level_paths(self):
         # The control show (from build_fixture) has no season-level path row and no
@@ -287,6 +321,9 @@ class TestStaleShows(LibraryRepairTestBase):
         conn.execute('INSERT INTO tvshowlinkpath (idShow, idPath) VALUES (5, 106)')
         conn.execute('INSERT INTO path (idPath, strPath, idParentPath) VALUES (205, ?, 105)',
                      ('/tv/Stuck Show/Season 1/',))
+        conn.execute('INSERT INTO files (idFile, idPath, strFilename) VALUES (305, 205, ?)',
+                     ('S01E01.mkv',))
+        conn.execute('INSERT INTO episode (idEpisode, idShow, idFile, idSeason) VALUES (405, 5, 305, 1)')
         conn.commit()
         conn.close()
         xbmc.executeJSONRPC = MagicMock(side_effect=_json_rpc_stub(
@@ -713,6 +750,9 @@ class TestRepairFlow(LibraryRepairTestBase):
         conn.execute('INSERT INTO tvshowlinkpath (idShow, idPath) VALUES (5, 105)')
         conn.execute('INSERT INTO path (idPath, strPath, idParentPath) VALUES (205, ?, 105)',
                      ('/tv/Stuck Show/Season 1/',))
+        conn.execute('INSERT INTO files (idFile, idPath, strFilename) VALUES (305, 205, ?)',
+                     ('S01E01.mkv',))
+        conn.execute('INSERT INTO episode (idEpisode, idShow, idFile, idSeason) VALUES (405, 5, 305, 1)')
         conn.commit()
         conn.close()
         xbmc.executeJSONRPC = MagicMock(side_effect=_json_rpc_stub(
@@ -740,6 +780,9 @@ class TestRepairFlow(LibraryRepairTestBase):
         conn.execute('INSERT INTO tvshowlinkpath (idShow, idPath) VALUES (5, 105)')
         conn.execute('INSERT INTO path (idPath, strPath, idParentPath) VALUES (205, ?, 105)',
                      ('/tv/Stuck Show/Season 1/',))
+        conn.execute('INSERT INTO files (idFile, idPath, strFilename) VALUES (305, 205, ?)',
+                     ('S01E01.mkv',))
+        conn.execute('INSERT INTO episode (idEpisode, idShow, idFile, idSeason) VALUES (405, 5, 305, 1)')
         conn.commit()
         conn.close()
         removed_ids = []
