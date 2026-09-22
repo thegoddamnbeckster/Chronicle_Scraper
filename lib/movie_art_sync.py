@@ -184,11 +184,18 @@ def sync_movie_art(title, year, artwork, location=None):
                      title, year, dest_art_type))
             continue
 
+        existed = xbmcvfs.exists(dest)
         log.info('sync_movie_art: "{0}" ({1}) -- writing {2} from {3} to {4}'.format(
             title, year, dest_art_type, url, dest))
         size = _write_remote_file(dest, url)
         if size is not None:
             _mark_art_synced(dest, url, size)
+            if existed:
+                # Same path, new bytes: Kodi caches every image it loads and only
+                # re-checks a local file's hash about once a day, so without this
+                # the old picture keeps rendering until then (see collection_sync.py's
+                # own copy of this exact fix for the full explanation).
+                _invalidate_texture(dest)
             log.info('Synced local {0} for "{1}" from Chronicle'.format(dest_art_type, title))
 
 
@@ -733,3 +740,49 @@ def _mark_art_synced(dest, url, size):
     cache = _read_art_sync_cache()
     cache[dest] = {'url': url, 'size': size}
     _write_art_sync_cache(cache)
+
+
+def _invalidate_texture(path):
+    """Drops Kodi's cached copy of an image so a replaced file at the same path is
+    actually re-read. Kodi's texture cache is keyed by path and for a local file
+    only re-hashes on a roughly daily interval, so overwriting poster.jpg alone
+    leaves the old picture on screen until that check happens to come round.
+    Removing the cache entry forces a re-read on next display. Ported from
+    collection_sync.py's own identical fix for the same underlying problem.
+
+    Best-effort throughout: a miss here costs a stale thumbnail, never correct
+    artwork, so nothing about it should interrupt the sync."""
+    request = {
+        'jsonrpc': '2.0', 'id': 1, 'method': 'Textures.GetTextures',
+        'params': {
+            'filter': {'field': 'url', 'operator': 'contains',
+                       'value': path.rsplit('/', 1)[-1]},
+            'properties': ['url'],
+        },
+    }
+    try:
+        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+    except Exception as exc:
+        log.warning("Couldn't query Textures.GetTextures for {0}: {1}".format(path, exc))
+        return
+
+    removed = 0
+    for texture in response.get('result', {}).get('textures', []):
+        url = texture.get('url') or ''
+        decoded = unquote(url)
+        # Filename-contains is a broad filter on purpose (see above); confirm the
+        # full path really is this file before removing anyone else's texture.
+        if path not in decoded and path not in url:
+            continue
+        remove = {
+            'jsonrpc': '2.0', 'id': 1, 'method': 'Textures.RemoveTexture',
+            'params': {'textureid': texture.get('textureid')},
+        }
+        try:
+            xbmc.executeJSONRPC(json.dumps(remove))
+            removed += 1
+        except Exception as exc:
+            log.warning("Couldn't remove cached texture {0}: {1}".format(
+                texture.get('textureid'), exc))
+
+    log.info('Invalidated {0} cached texture(s) for {1}'.format(removed, path))
