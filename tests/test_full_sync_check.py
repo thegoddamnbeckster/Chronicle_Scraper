@@ -9,10 +9,12 @@ actually differs -- never a blind overwrite -- so these tests focus on exactly t
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests.kodi_stubs as kodi_stubs  # noqa: F401 -- side-effect: stubs xbmc before import below
 
+from lib import full_sync_check
 from lib.full_sync_check import diff_movie
 
 
@@ -82,34 +84,22 @@ class TestDiffMovie(unittest.TestCase):
 
         self.assertNotIn('tagline', updates)
 
-    def test_poster_mismatch_uses_first_chronicle_candidate(self):
+    def test_never_touches_art_regardless_of_poster_mismatch(self):
+        # Regression test (2026-09-22, the day after this feature's first release): Kodi uses a
+        # movie's own local "-poster.jpg" file unconditionally, before ever looking at anything
+        # VideoLibrary.SetMovieDetails' own art parameter offers -- confirmed live, the
+        # Ghostbusters (2016) fix landed for every other field but the poster kept showing the
+        # wrong image regardless, because nothing had rewritten the local file. diff_movie must
+        # never produce an 'art' key at all -- see run()'s own unconditional sync_movie_art()
+        # call, the mechanism that actually reaches the screen.
         kodi = _kodi_item(art={'poster': 'https://old.example/poster.jpg'})
         details = _chronicle_details(artwork={'poster': [
             {'url': 'https://new.example/poster.jpg', 'source': 'chronicle'},
-            {'url': 'https://other.example/poster.jpg', 'source': 'tmdb'},
-        ]})
-
-        updates = diff_movie(kodi, details)
-
-        self.assertEqual(updates['art']['poster'], 'https://new.example/poster.jpg')
-
-    def test_matching_poster_not_included(self):
-        kodi = _kodi_item(art={'poster': 'https://same.example/poster.jpg', 'fanart': 'https://same.example/fanart.jpg'})
-        details = _chronicle_details(artwork={'poster': [
-            {'url': 'https://same.example/poster.jpg', 'source': 'chronicle'},
         ]})
 
         updates = diff_movie(kodi, details)
 
         self.assertNotIn('art', updates)
-
-    def test_poster_update_preserves_other_art_slots(self):
-        kodi = _kodi_item(art={'poster': 'https://old.example/poster.jpg', 'fanart': 'https://keep.example/fanart.jpg'})
-        details = _chronicle_details()
-
-        updates = diff_movie(kodi, details)
-
-        self.assertEqual(updates['art']['fanart'], 'https://keep.example/fanart.jpg')
 
     def test_director_mismatch_detected_from_crew(self):
         kodi = _kodi_item(director=['Ivan Reitman'])
@@ -162,6 +152,78 @@ class TestDiffMovie(unittest.TestCase):
         updates = diff_movie(kodi, details)
 
         self.assertNotIn('director', updates)
+
+
+class TestRunSyncsArtUnconditionally(unittest.TestCase):
+    """run()'s own orchestration: sync_movie_art() must be called for every resolved movie,
+    with a location derived straight from Kodi's own file path -- not gated behind diff_movie
+    (which deliberately never reports an art difference; see TestDiffMovie's own doc above)."""
+
+    def setUp(self):
+        kodi_stubs.reset_vfs()
+
+    def test_sync_movie_art_called_with_location_derived_from_kodi_file_path(self):
+        movie = {
+            'movieid': 42, 'title': 'Ghostbusters', 'year': 2016,
+            'file': 'smb://nas/Movies/Ghostbusters (2016)/Ghostbusters (2016).mkv',
+        }
+        details = {
+            'title': 'Ghostbusters', 'year': 2016,
+            'artwork': {'poster': [{'url': 'https://new.example/poster.jpg', 'source': 'chronicle'}]},
+        }
+
+        with patch('lib.full_sync_check._get_all_movies', return_value=[movie]), \
+             patch('lib.full_sync_check.ChronicleClient') as mock_client_cls, \
+             patch('lib.full_sync_check.movie_art_sync.sync_movie_art') as mock_sync_art:
+            mock_client = mock_client_cls.return_value
+            mock_client.test_connection.return_value = (True, '')
+            mock_client.get_movie_details_by_file.return_value = details
+
+            full_sync_check.run()
+
+        mock_sync_art.assert_called_once_with(
+            'Ghostbusters', 2016, details['artwork'],
+            location=('smb://nas/Movies/Ghostbusters (2016)/', 'Ghostbusters (2016)'))
+
+    def test_sync_movie_art_still_called_when_every_other_field_already_matches(self):
+        # The whole point: an already-correct movie (diff_movie returns {}, nothing pushed via
+        # SetMovieDetails) must still get its art checked -- sync_movie_art's own skip-cache is
+        # what keeps that cheap, not a decision made here.
+        movie = {
+            'movieid': 42, 'title': 'Ghostbusters', 'year': 2016,
+            'file': 'smb://nas/Movies/Ghostbusters (2016)/Ghostbusters (2016).mkv',
+        }
+        details = {'title': 'Ghostbusters', 'year': 2016, 'artwork': {}}
+
+        with patch('lib.full_sync_check._get_all_movies', return_value=[movie]), \
+             patch('lib.full_sync_check.ChronicleClient') as mock_client_cls, \
+             patch('lib.full_sync_check.movie_art_sync.sync_movie_art') as mock_sync_art:
+            mock_client = mock_client_cls.return_value
+            mock_client.test_connection.return_value = (True, '')
+            mock_client.get_movie_details_by_file.return_value = details
+
+            result = full_sync_check.run()
+
+        mock_sync_art.assert_called_once()
+        self.assertEqual(result['updated'], 0, "no SetMovieDetails field differed")
+
+    def test_sync_movie_art_failure_does_not_stop_the_pass(self):
+        movie = {
+            'movieid': 42, 'title': 'Ghostbusters', 'year': 2016,
+            'file': 'smb://nas/Movies/Ghostbusters (2016)/Ghostbusters (2016).mkv',
+        }
+        details = {'title': 'Ghostbusters', 'year': 2016, 'artwork': {}}
+
+        with patch('lib.full_sync_check._get_all_movies', return_value=[movie]), \
+             patch('lib.full_sync_check.ChronicleClient') as mock_client_cls, \
+             patch('lib.full_sync_check.movie_art_sync.sync_movie_art', side_effect=RuntimeError('boom')):
+            mock_client = mock_client_cls.return_value
+            mock_client.test_connection.return_value = (True, '')
+            mock_client.get_movie_details_by_file.return_value = details
+
+            result = full_sync_check.run()
+
+        self.assertEqual(result['checked'], 1, "the item is still counted as checked despite the art-sync failure")
 
 
 if __name__ == '__main__':

@@ -22,9 +22,20 @@ This is the durable, general fix for that whole class of problem, not a one-off.
 
 Per-user direction: only ever updates a field that actually differs from what Chronicle has --
 "you're only doing this for items that are not the same as what Chronicle has" -- never a blind
-overwrite of everything on every pass. Only ever calls VideoLibrary.SetMovieDetails, never
-writes an NFO file and never involves Chronicle's own server calling this device's JSON-RPC --
-same pull-only architecture as every other feature in this addon.
+overwrite of everything on every pass. Only ever calls VideoLibrary.SetMovieDetails/writes a
+movie's own local art files, never writes an NFO file and never involves Chronicle's own server
+calling this device's JSON-RPC -- same pull-only architecture as every other feature in this addon.
+
+Poster/fanart/thumb go through movie_art_sync.sync_movie_art(), not VideoLibrary.SetMovieDetails'
+own `art` parameter. Caught live (2026-09-22), right after this feature's first release: Kodi
+uses a movie's own local "-poster.jpg" file unconditionally, before ever looking at anything a
+scraper (or SetMovieDetails' art param) offers -- see movie_art_sync.py's own module doc, the
+same reason the normal scrape path never trusted SetMovieDetails for art either. The Ghostbusters
+(2016) fix landed correctly for every OTHER field but the poster kept showing the wrong (1984)
+image regardless, because nothing had actually rewritten the local file. sync_movie_art() already
+solves this properly (writes the local file, skip-caches on unchanged URL+size, invalidates
+Kodi's texture cache on overwrite) and is called unconditionally per item, same as the normal
+scrape flow -- its own skip-cache is what keeps an unchanged poster cheap, not a diff check here.
 """
 
 import json
@@ -34,6 +45,7 @@ import xbmc
 
 from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
+from lib import movie_art_sync
 
 log = Logger('full_sync_check')
 
@@ -107,13 +119,11 @@ def diff_movie(kodi_item, details):
             uniqueid['tmdb'] = tmdb
         updates['uniqueid'] = uniqueid
 
-    posters = (details.get('artwork') or {}).get('poster') or []
-    chronicle_poster = posters[0]['url'] if posters else None
-    kodi_poster = (kodi_item.get('art') or {}).get('poster')
-    if chronicle_poster and kodi_poster != chronicle_poster:
-        art = dict(kodi_item.get('art') or {})
-        art['poster'] = chronicle_poster
-        updates['art'] = art
+    # Deliberately NOT handling 'art' here -- see this module's own top-of-file doc. Kodi
+    # ignores VideoLibrary.SetMovieDetails' own art parameter in favor of a movie's local
+    # poster/fanart file whenever one exists, so a diff-and-set approach here would silently
+    # never actually take effect. sync_movie_art() (called unconditionally in run(), with its
+    # own skip-cache) is what actually reaches the screen.
 
     return updates
 
@@ -173,6 +183,22 @@ def run(is_cancelled=None, progress_callback=None):
         if not details:
             continue  # nothing unambiguous in Chronicle for this exact file -- nothing to sync
         checked += 1
+
+        # Unconditional, same as the normal scrape flow (python/scraper.py) -- sync_movie_art's
+        # own skip-cache (unchanged URL + local file size) is what keeps an already-correct
+        # poster cheap here, not a diff check. location is derived straight from the file Kodi
+        # itself just told us about -- more direct and reliable than sync_movie_art's own
+        # fallback lookup (a VideoLibrary re-query, then source-folder browsing), which exists
+        # for when the caller doesn't already know the file's real current location.
+        folder = posixpath.dirname(file_path) + '/'
+        video_basename = movie_art_sync.strip_video_ext(posixpath.basename(file_path))
+        try:
+            movie_art_sync.sync_movie_art(
+                details.get('title'), details.get('year'), details.get('artwork'),
+                location=(folder, video_basename))
+        except Exception as exc:
+            log.warning('full_sync_check: art sync failed for "{0}": {1}'.format(
+                        movie.get('title'), exc))
 
         updates = diff_movie(movie, details)
         if not updates:
