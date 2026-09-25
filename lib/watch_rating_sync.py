@@ -39,6 +39,7 @@ import posixpath
 
 import xbmc
 
+from lib import episode_numbers
 from lib import media_id_cache
 from lib import progress_sync
 from lib.chronicle_client import ChronicleClient
@@ -55,7 +56,8 @@ _MIN_ITEM_SPACING_SECONDS = 0.2
 # this periodic-sync path.
 _MOVIE_STATE_PROPERTIES = ['title', 'year', 'file'] + progress_sync.STATE_PROPERTIES
 _SHOW_PROPERTIES = ['title', 'year', 'userrating', 'plot', 'premiered', 'mpaa', 'genre', 'studio']
-_EPISODE_STATE_PROPERTIES = ['season', 'episode'] + progress_sync.STATE_PROPERTIES
+_EPISODE_STATE_PROPERTIES = (['season', 'episode', 'file', 'title', 'plot', 'firstaired', 'art']
+                             + progress_sync.STATE_PROPERTIES)
 
 
 def run(is_cancelled=None, progress_callback=None):
@@ -269,7 +271,11 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
     for kodi_ep in kodi_episodes:
         if is_cancelled is not None and is_cancelled():
             break
-        ep_key = (kodi_ep.get('season'), kodi_ep.get('episode'))
+        # Matched on the FILE NAME's own season/episode first, not Kodi's: Kodi's numbers are only as
+        # good as the scrape that set them, and when they are wrong, matching on them pairs this
+        # file with a DIFFERENT Chronicle episode -- so its title, plot, thumb, rating and watched
+        # status all land on the wrong episode (see lib/episode_numbers.py).
+        ep_key = episode_numbers.resolve(kodi_ep)
         chronicle_ep = chronicle_by_key.get(ep_key)
         episode_id = chronicle_ep.get('id') if chronicle_ep else None
         if episode_id is None:
@@ -297,6 +303,7 @@ def _sync_one_episode(client, show, kodi_ep, episode_id):
     client.report_kodi_id(episode_id, 'episode', kodi_ep['episodeid'])
 
     updates = _build_state_updates(details, kodi_ep, client, episode_id, log_label=label)
+    updates.update(diff_episode_text(kodi_ep, details))
     if updates:
         _set_episode_details(kodi_ep['episodeid'], updates)
         log.info('watch_rating_sync: "{0}" -- applied {1}'.format(label, ', '.join(sorted(updates.keys()))))
@@ -421,6 +428,32 @@ def _set_episode_details(episodeid, updates):
         'params': dict(updates, episodeid=episodeid),
     }
     _execute_set(request, 'SetEpisodeDetails', episodeid)
+
+
+def diff_episode_text(kodi_ep, details):
+    """VideoLibrary.SetEpisodeDetails params for whatever descriptive fields of a Kodi episode
+    (listed with _EPISODE_STATE_PROPERTIES) differ from Chronicle's details for the SAME episode --
+    {} when everything already matches. Includes the season/episode numbers themselves: an
+    episode Kodi filed under the wrong numbers is corrected to the ones the file name and Chronicle
+    agree on. Never blanks a field Chronicle has nothing for."""
+    updates = {}
+    if details.get('title') and kodi_ep.get('title') != details['title']:
+        updates['title'] = details['title']
+    if details.get('overview') and kodi_ep.get('plot') != details['overview']:
+        updates['plot'] = details['overview']
+    aired = details.get('aired')
+    if aired and kodi_ep.get('firstaired') != aired[:10]:
+        updates['firstaired'] = aired[:10]
+    for kodi_key, chronicle_key in (('season', 'season'), ('episode', 'episode')):
+        value = details.get(chronicle_key)
+        if value is not None and kodi_ep.get(kodi_key) is not None and kodi_ep.get(kodi_key) != value:
+            updates[kodi_key] = value
+    thumb = details.get('thumbUrl')
+    if thumb and (kodi_ep.get('art') or {}).get('thumb') != thumb:
+        art = dict(kodi_ep.get('art') or {})
+        art['thumb'] = thumb
+        updates['art'] = art
+    return updates
 
 
 def diff_show_text(kodi_show, details):
