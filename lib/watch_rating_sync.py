@@ -54,7 +54,7 @@ _MIN_ITEM_SPACING_SECONDS = 0.2
 # silently drift between the per-scrape lookup path (progress_sync.lookup_movie_state) and
 # this periodic-sync path.
 _MOVIE_STATE_PROPERTIES = ['title', 'year', 'file'] + progress_sync.STATE_PROPERTIES
-_SHOW_PROPERTIES = ['title', 'year', 'userrating']
+_SHOW_PROPERTIES = ['title', 'year', 'userrating', 'plot', 'premiered', 'mpaa', 'genre', 'studio']
 _EPISODE_STATE_PROPERTIES = ['season', 'episode'] + progress_sync.STATE_PROPERTIES
 
 
@@ -243,6 +243,15 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
             log.info('watch_rating_sync: "{0}" -- rating updated to {1}'.format(
                      label, show_details['userRating']))
 
+    # Show-level TEXT metadata (plot/premiered/rating/genre/studio): a show scraped once and never
+    # corrected kept its old data forever, while movies and episodes already had a post-scan
+    # check. Same contract as those -- only a field Chronicle has a value for AND that
+    # differs is ever written.
+    text_updates = diff_show_text(show, show_details)
+    if text_updates:
+        _set_tvshow_details(show['tvshowid'], text_updates)
+        log.info('watch_rating_sync: "{0}" -- corrected {1}'.format(label, ', '.join(sorted(text_updates))))
+
     chronicle_episodes = client.get_episode_list(show_id) or []
     if not chronicle_episodes:
         return 0
@@ -412,6 +421,36 @@ def _set_episode_details(episodeid, updates):
         'params': dict(updates, episodeid=episodeid),
     }
     _execute_set(request, 'SetEpisodeDetails', episodeid)
+
+
+def diff_show_text(kodi_show, details):
+    """VideoLibrary.SetTVShowDetails params for whatever text fields of a Kodi show (listed with
+    _SHOW_PROPERTIES) differ from Chronicle's show details -- {} when everything already matches.
+    Never blanks a field Chronicle has nothing for, and compares list fields as sets since Kodi
+    doesn't guarantee read-back order."""
+    updates = {}
+    if details.get('overview') and kodi_show.get('plot') != details['overview']:
+        updates['plot'] = details['overview']
+    premiered = details.get('premiered')
+    if premiered and kodi_show.get('premiered') != premiered[:10]:
+        updates['premiered'] = premiered[:10]
+    if details.get('mpaa') and kodi_show.get('mpaa') != details['mpaa']:
+        updates['mpaa'] = details['mpaa']
+    genres = details.get('genres') or []
+    if genres and set(kodi_show.get('genre') or []) != set(genres):
+        updates['genre'] = genres
+    studio = details.get('studio')
+    if studio and set(kodi_show.get('studio') or []) != {studio}:
+        updates['studio'] = [studio]
+    return updates
+
+
+def _set_tvshow_details(tvshowid, updates):
+    request = {
+        'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.SetTVShowDetails',
+        'params': dict(updates, tvshowid=tvshowid),
+    }
+    _execute_set(request, 'SetTVShowDetails', tvshowid)
 
 
 def _set_tvshow_rating(tvshowid, rating):
