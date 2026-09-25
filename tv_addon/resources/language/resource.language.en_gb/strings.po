@@ -272,7 +272,7 @@ msgid "After any video library scan finishes -- Kodi's own automatic one, your o
 msgstr ""
 
 msgctxt "#32182"
-msgid "\n\n{0} episode(s) across {1} show(s) are marked watched with the exact same watch time -- not real viewing. They will be reset to unwatched here and in Chronicle."
+msgid "\n\n{0} episode(s) across {1} show(s) are marked watched with an identical watch time. That can be a one-time history sync of real viewing, so Repair lets you pick which shows to reset -- nothing is reset automatically."
 msgstr ""
 
 msgctxt "#32183"
@@ -285,4 +285,18 @@ msgstr ""
 
 msgctxt "#32185"
 msgid "\n\nRestored watched status on {0} episode(s)."
+msgstr ""
+
+msgctxt "#32186"
+msgid "Reset watched status for which shows? (only pick shows you did NOT actually watch)"
+msgstr ""
+
+msgctxt "#32187"
+msgid "{0} -- {1} episode(s), all stamped {2}"
+msgstr ""
+
+msgctxt "#32188"
+msgid "
+
+Reset {0} fake watched mark(s) across {1} chosen show(s), here and in Chronicle."
 msgstr ""

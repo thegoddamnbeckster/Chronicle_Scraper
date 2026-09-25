@@ -1283,6 +1283,33 @@ def detect_fabricated_watched():
     return {'episodes': episodes, 'groups': groups}
 
 
+def summarize_fabricated_by_show(fabricated):
+    """Per-show rows for a picker dialog: [{'show_name', 'count', 'when'}], biggest first. 'when' is
+    the show's most common shared timestamp's date (a bulk sync shows as one date across many
+    shows -- worth seeing before deciding it is not real viewing)."""
+    by_show = {}
+    for ep in (fabricated or {}).get('episodes') or []:
+        row = by_show.setdefault(ep.get('show_name'), {'show_name': ep.get('show_name'), 'count': 0, 'dates': {}})
+        row['count'] += 1
+        day = (ep.get('lastplayed') or '')[:10]
+        row['dates'][day] = row['dates'].get(day, 0) + 1
+    rows = []
+    for row in by_show.values():
+        rows.append({'show_name': row['show_name'], 'count': row['count'],
+                     'when': max(row['dates'], key=row['dates'].get)})
+    rows.sort(key=lambda r: (-r['count'], r['show_name'] or ''))
+    return rows
+
+
+def filter_fabricated_to_shows(fabricated, show_names):
+    """Restrict a detect_fabricated_watched() report to the user-chosen shows."""
+    chosen = set(show_names)
+    return {
+        'episodes': [e for e in fabricated.get('episodes') or [] if e.get('show_name') in chosen],
+        'groups': [g for g in fabricated.get('groups') or [] if g.get('show_name') in chosen],
+    }
+
+
 def _fabricated_manifest_path(backup_dir):
     return os.path.join(backup_dir, _FABRICATED_MANIFEST_NAME)
 

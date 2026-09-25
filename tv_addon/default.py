@@ -412,8 +412,23 @@ def _library_repair():
     if stuck_file_ids:
         confirm_message += ADDON.getLocalizedString(32178).format(len(stuck_file_ids))
     if fabricated['episodes']:
-        confirm_message += ADDON.getLocalizedString(32182).format(
-            len(fabricated['episodes']), len({g['show_name'] for g in fabricated['groups']}))
+        # Never reset in bulk: identical watch times are also what a one-time history sync
+        # leaves behind for genuinely watched shows (confirmed live 2026-09-25: 930 episodes over
+        # 53 shows, many of them real). The user picks exactly which shows are NOT real viewing;
+        # nothing is preselected.
+        rows = library_repair.summarize_fabricated_by_show(fabricated)
+        labels = [ADDON.getLocalizedString(32187).format(r['show_name'], r['count'], r['when']) for r in rows]
+        picked = xbmcgui.Dialog().multiselect(ADDON.getLocalizedString(32186), labels)
+        chosen = [rows[i]['show_name'] for i in (picked or [])]
+        fabricated = library_repair.filter_fabricated_to_shows(fabricated, chosen)
+        report['fabricated_watched'] = fabricated
+        if fabricated['episodes']:
+            confirm_message += ADDON.getLocalizedString(32188).format(
+                len(fabricated['episodes']), len(chosen))
+        if report['total_episodes'] == 0 and not stale_shows and not stuck_file_ids and not fabricated['episodes']:
+            library_repair.finish_repair(db_path, report, execute=False)
+            xbmcgui.Dialog().ok(heading, ADDON.getLocalizedString(32166))  # no changes were made
+            return
 
     confirmed = xbmcgui.Dialog().yesno(
         heading, confirm_message,
