@@ -321,7 +321,8 @@ def _build_state_updates(details, kodi_item, client, media_item_id, log_label):
         client.push_resume(media_item_id, value, progress_sync.kodi_lastplayed_to_iso(kodi_lastplayed))
 
     watched_direction, watched_value = progress_sync.resolve_watched_direction(
-        details.get('isWatched'), details.get('lastWatchedAt'), kodi_item)
+        details.get('isWatched'), details.get('lastWatchedAt'), kodi_item,
+        chronicle_reset_at=details.get('watchResetAt'))
     if watched_direction == 'push' and watched_value:
         updates['playcount'] = 1
         updates['lastplayed'] = watched_value.replace('T', ' ')[:19]
@@ -332,6 +333,12 @@ def _build_state_updates(details, kodi_item, client, media_item_id, log_label):
         # watched-push independently set playcount=1 in the very same reconciliation pass.
         # Placed after the resume block on purpose so it always wins if the two ever
         # legitimately disagree here.
+        updates['resume'] = {'position': 0, 'total': 0}
+    elif watched_direction == 'reset':
+        # The user reset this item in Chronicle after Kodi's last play -- clear Kodi's own stale
+        # watched state instead of pulling it back (see progress_sync.resolve_watched_direction).
+        updates['playcount'] = 0
+        updates['lastplayed'] = ''
         updates['resume'] = {'position': 0, 'total': 0}
     elif watched_direction == 'pull':
         client.push_watched(media_item_id, progress_sync.kodi_lastplayed_to_iso(kodi_lastplayed))

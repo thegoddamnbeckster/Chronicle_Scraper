@@ -128,7 +128,7 @@ def resolve_progress_direction(chronicle_pct, chronicle_ts, kodi_item):
     return 'push', chronicle_pct
 
 
-def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item):
+def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item, chronicle_reset_at=None):
     """Sibling of resolve_progress_direction, for FULLY WATCHED status rather than partial
     resume position -- per-user request (2026-09-05): an episode completed on one Shield
     stayed permanently unwatched on another. resolve_progress_direction alone can never fix
@@ -139,6 +139,13 @@ def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item
     ScraperEpisodeDetailsDto's own doc) against Kodi's local playcount/lastplayed instead,
     using the identical "whichever side is more recent wins, one-sided data wins outright"
     logic as resolve_progress_direction.
+
+    chronicle_reset_at: when the user explicitly reset this item's watched status in Chronicle
+    (a "rewatch" reset of an episode, season or show). If Kodi still carries a watch whose
+    lastplayed is at or before that instant while Chronicle is unwatched, that watch is a stale
+    pre-reset echo, not a new play: returns ('reset', None) so the caller clears Kodi's own
+    playcount instead of pulling the old watch straight back into Chronicle (which is what
+    made every Chronicle-side reset undo itself within minutes).
 
     Returns ('push', chronicle_watched_at) to mark Kodi as watched from Chronicle's side,
     ('pull', kodi_lastplayed) to report Kodi's own watched state into Chronicle instead, or
@@ -156,6 +163,8 @@ def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item
     if not has_kodi and not has_chronicle:
         return None, None
     if has_kodi and not has_chronicle:
+        if chronicle_reset_at and not _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_reset_at):
+            return 'reset', None
         return 'pull', kodi_lastplayed
     if has_chronicle and not has_kodi:
         return 'push', chronicle_watched_at
@@ -195,6 +204,14 @@ def apply_resume_push(vtag, resume_pct, runtime_minutes):
         return
     total_seconds = runtime_minutes * 60
     vtag.setResumePoint(resume_pct / 100.0 * total_seconds, total_seconds)
+
+
+def apply_watched_reset(vtag):
+    """Clears Kodi's playcount/lastplayed/resume via InfoTagVideo -- the counterpart of
+    apply_watched_push for a Chronicle-side "rewatch" reset (see resolve_watched_direction)."""
+    vtag.setPlaycount(0)
+    vtag.setLastPlayed('')
+    vtag.setResumePoint(0, 0)
 
 
 def kodi_lastplayed_to_iso(kodi_lastplayed):

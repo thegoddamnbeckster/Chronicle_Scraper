@@ -444,9 +444,12 @@ def get_episode_details(encoded_ids, handle):
     # unwatched on another, since resumePositionPercent/resumeUpdatedAt are cleared to null
     # on completion and gave resolve_progress_direction nothing to compare).
     watched_direction, watched_value = progress_sync.resolve_watched_direction(
-        details.get('isWatched'), details.get('lastWatchedAt'), kodi_state)
+        details.get('isWatched'), details.get('lastWatchedAt'), kodi_state,
+        chronicle_reset_at=details.get('watchResetAt'))
     if watched_direction == 'push':
         progress_sync.apply_watched_push(vtag, watched_value)
+    elif watched_direction == 'reset':
+        progress_sync.apply_watched_reset(vtag)
     elif watched_direction == 'pull':
         ChronicleClient().push_watched(
             episode_id, progress_sync.kodi_lastplayed_to_iso(watched_value))

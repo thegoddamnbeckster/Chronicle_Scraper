@@ -1110,8 +1110,12 @@ def preview(progress_callback=None):
         report['stale_shows'] = detect_stale_shows(db_path)
         _report(progress_callback, 'Checking for permanently-skipped files...')
         report['stuck_files'] = detect_stuck_files(db_path)
-        _report(progress_callback, 'Checking for fabricated watched marks...')
-        report['fabricated_watched'] = detect_fabricated_watched()
+        # Fabricated-watched detection is deliberately NOT run here any more: identical watch
+        # times also mark genuinely watched shows (a one-time history sync), so it cannot decide
+        # on its own and asking the user to pick from dozens of shows was rejected. The durable
+        # answer is Chronicle's rewatch reset (episode/season/show), which stamps a reset time
+        # that Kodi devices honour on their next sync. detect_fabricated_watched() and the undo
+        # path stay for manifests written by 1.14.8/1.14.9.
         return report
     finally:
         _release_lock()
@@ -1138,8 +1142,12 @@ def prepare_repair(progress_callback=None):
         report['stale_shows'] = detect_stale_shows(db_path)
         _report(progress_callback, 'Checking for permanently-skipped files...')
         report['stuck_files'] = detect_stuck_files(db_path)
-        _report(progress_callback, 'Checking for fabricated watched marks...')
-        report['fabricated_watched'] = detect_fabricated_watched()
+        # Fabricated-watched detection is deliberately NOT run here any more: identical watch
+        # times also mark genuinely watched shows (a one-time history sync), so it cannot decide
+        # on its own and asking the user to pick from dozens of shows was rejected. The durable
+        # answer is Chronicle's rewatch reset (episode/season/show), which stamps a reset time
+        # that Kodi devices honour on their next sync. detect_fabricated_watched() and the undo
+        # path stay for manifests written by 1.14.8/1.14.9.
     except Exception:
         _release_lock()
         raise

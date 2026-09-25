@@ -274,9 +274,12 @@ def get_details(media_item_id, handle):
     # permanently unwatched on another with no error, since nothing was actually wrong --
     # nothing was trying to reconcile watched status at all.
     watched_direction, watched_value = progress_sync.resolve_watched_direction(
-        details.get('isWatched'), details.get('lastWatchedAt'), kodi_state)
+        details.get('isWatched'), details.get('lastWatchedAt'), kodi_state,
+        chronicle_reset_at=details.get('watchResetAt'))
     if watched_direction == 'push':
         progress_sync.apply_watched_push(vtag, watched_value)
+    elif watched_direction == 'reset':
+        progress_sync.apply_watched_reset(vtag)
     elif watched_direction == 'pull':
         ChronicleClient().push_watched(
             media_item_id, progress_sync.kodi_lastplayed_to_iso(watched_value))
