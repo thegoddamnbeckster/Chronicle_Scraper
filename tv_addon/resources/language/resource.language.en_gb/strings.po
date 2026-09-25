@@ -232,7 +232,7 @@ msgid "Found {0} stuck episode(s) across {1} show(s)."
 msgstr ""
 
 msgctxt "#32172"
-msgid "Fixes three causes of a show stuck missing episodes: stuck episode entries left behind after removing a show, season folders Kodi can no longer find, and files Kodi permanently skipped after an earlier scan didn't finish.\n\nPreview shows what it found; nothing changes until you confirm Repair, which backs up your library first. Undo Last Repair reverses the most recent episode-entry repair (permanently-skipped files aren't covered -- clearing one just lets it rescan fresh)."
+msgid "Fixes four causes of wrong library data: stuck episode entries left behind after removing a show, season folders Kodi can no longer find, files Kodi permanently skipped after an earlier scan didn't finish, and fabricated \"watched\" marks (several episodes sharing one identical watch time).\n\nPreview shows what it found; nothing changes until you confirm Repair, which backs up your library first. Undo Last Repair reverses the most recent episode-entry repair and restores reset watched marks in Kodi (permanently-skipped files aren't covered -- clearing one just lets it rescan fresh)."
 msgstr ""
 
 msgctxt "#32173"
@@ -271,3 +271,18 @@ msgctxt "#32181"
 msgid "After any video library scan finishes -- Kodi's own automatic one, your own manual \"Update Library\", or this addon's own new-content detection above -- checks every episode Kodi already has against Chronicle's current data (matched by the exact video file, not by title/season/episode) and corrects only whatever actually disagrees. Fixes cases where a file was scraped with the wrong data at some point and never corrected since. On by default."
 msgstr ""
 
+msgctxt "#32182"
+msgid "\n\n{0} episode(s) across {1} show(s) are marked watched with the exact same watch time -- not real viewing. They will be reset to unwatched here and in Chronicle."
+msgstr ""
+
+msgctxt "#32183"
+msgid "\n\nReset {0} fake watched mark(s) ({1} skipped -- run Repair again to retry)."
+msgstr ""
+
+msgctxt "#32184"
+msgid "\n\nAlso restores watched status on {0} episode(s) reset by the last repair."
+msgstr ""
+
+msgctxt "#32185"
+msgid "\n\nRestored watched status on {0} episode(s)."
+msgstr ""

@@ -348,16 +348,20 @@ def _library_repair_preview():
 
     stale_shows = report['stale_shows']
     stuck_file_ids = report['stuck_files']['file_ids']
-    if report['total_episodes'] == 0 and not stale_shows and not stuck_file_ids:
+    fabricated = report.get('fabricated_watched') or {'episodes': [], 'groups': []}
+    if report['total_episodes'] == 0 and not stale_shows and not stuck_file_ids and not fabricated['episodes']:
         message = ADDON.getLocalizedString(32163)  # nothing wrong at all
     elif report['total_episodes'] == 0:
-        message = ADDON.getLocalizedString(32176)  # neutral -- a stale-show/stuck-file note follows below
+        message = ADDON.getLocalizedString(32176)  # neutral -- a stale-show/stuck-file/watched note follows below
     else:
         message = ADDON.getLocalizedString(32171).format(report['total_episodes'], len(report['groups']))
     if stale_shows:
         message += ADDON.getLocalizedString(32174).format(len(stale_shows))
     if stuck_file_ids:
         message += ADDON.getLocalizedString(32178).format(len(stuck_file_ids))
+    if fabricated['episodes']:
+        message += ADDON.getLocalizedString(32182).format(
+            len(fabricated['episodes']), len({g['show_name'] for g in fabricated['groups']}))
     xbmcgui.Dialog().ok(heading, message)
     ADDON.setSetting('library_repair_last_result', message)
 
@@ -391,7 +395,8 @@ def _library_repair():
 
     stale_shows = report['stale_shows']
     stuck_file_ids = report['stuck_files']['file_ids']
-    if report['total_episodes'] == 0 and not stale_shows and not stuck_file_ids:
+    fabricated = report.get('fabricated_watched') or {'episodes': [], 'groups': []}
+    if report['total_episodes'] == 0 and not stale_shows and not stuck_file_ids and not fabricated['episodes']:
         library_repair.finish_repair(db_path, report, execute=False)
         message = ADDON.getLocalizedString(32163)
         xbmcgui.Dialog().ok(heading, message)
@@ -406,6 +411,9 @@ def _library_repair():
         confirm_message += ADDON.getLocalizedString(32174).format(len(stale_shows))
     if stuck_file_ids:
         confirm_message += ADDON.getLocalizedString(32178).format(len(stuck_file_ids))
+    if fabricated['episodes']:
+        confirm_message += ADDON.getLocalizedString(32182).format(
+            len(fabricated['episodes']), len({g['show_name'] for g in fabricated['groups']}))
 
     confirmed = xbmcgui.Dialog().yesno(
         heading, confirm_message,
@@ -459,6 +467,11 @@ def _library_repair():
         message += ADDON.getLocalizedString(32175).format(len(result['repaired_stale_shows']))
     if result.get('deleted_stuck_files'):
         message += ADDON.getLocalizedString(32179).format(result['deleted_stuck_files'])
+    watched = result.get('fabricated_watched') or {}
+    if result.get('fabricated_watched_error'):
+        message += '\n\n' + result['fabricated_watched_error']
+    elif watched.get('cleared') or watched.get('skipped'):
+        message += ADDON.getLocalizedString(32183).format(watched.get('cleared', 0), watched.get('skipped', 0))
     xbmcgui.Dialog().ok(heading, message)
     ADDON.setSetting('library_repair_last_result', message)
 
@@ -474,14 +487,20 @@ def _library_repair_undo():
     restore."""
     heading = ADDON.getLocalizedString(32155)
     manifest = library_repair.peek_last_manifest()
-    if not manifest:
+    watched_manifest = library_repair.peek_fabricated_manifest()
+    if not manifest and not watched_manifest:
         xbmcgui.Dialog().ok(heading, 'No repair has been run on this device yet -- there is nothing to undo.')
         return
 
-    when = time.strftime('%Y-%m-%d %H:%M', time.localtime(manifest.get('created_at', 0)))
+    if manifest:
+        when = time.strftime('%Y-%m-%d %H:%M', time.localtime(manifest.get('created_at', 0)))
+        confirm_message = ADDON.getLocalizedString(32168).format(len(manifest['episode_ids']), when)
+    else:
+        confirm_message = ''
+    if watched_manifest:
+        confirm_message += ADDON.getLocalizedString(32184).format(len(watched_manifest.get('episodes') or []))
     confirmed = xbmcgui.Dialog().yesno(
-        heading,
-        ADDON.getLocalizedString(32168).format(len(manifest['episode_ids']), when),
+        heading, confirm_message,
         yeslabel=ADDON.getLocalizedString(32159),
         nolabel=ADDON.getLocalizedString(32158),
     )
@@ -504,6 +523,9 @@ def _library_repair_undo():
         log.warning('_library_repair_undo: aborted mid-run -- {0}'.format(result['abort_reason']))
     else:
         message = ADDON.getLocalizedString(32169).format(result['restored_episodes'])
+    restored_watched = (result.get('restored_watched') or {}).get('restored', 0)
+    if restored_watched:
+        message += ADDON.getLocalizedString(32185).format(restored_watched)
     xbmcgui.Dialog().ok(heading, message)
     ADDON.setSetting('library_repair_last_result', message)
 

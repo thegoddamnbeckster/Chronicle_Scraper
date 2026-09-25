@@ -470,6 +470,33 @@ class ChronicleClient:
         except Exception as exc:
             log.warning('push_watched({0}): unexpected error: {1}'.format(media_item_id, exc))
 
+    def reset_watch_progress(self, media_item_id: int):
+        """POST /api/v1/library/by-media/{id}/reset-watch-progress -- resets this device's
+        Chronicle user's watch status for one item back to never-watched. Used only by Library
+        Repair's fabricated-watched pass (see lib/library_repair.py), which clears Kodi's own
+        bad watched marks and must clear Chronicle's in the same run or reconciliation pushes
+        them straight back. Returns True on success, False on any failure (unlike the
+        best-effort push_* calls, the caller needs to know)."""
+        if not self._base_url or not self._api_key:
+            return False
+        url = '{0}/api/v1/library/by-media/{1}/reset-watch-progress'.format(self._base_url, media_item_id)
+        req = self._build_request(url, data=b'{}', method='POST')
+
+        def _do():
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status
+
+        try:
+            return call_with_timeout(_do, 10) == 200
+        except urllib.error.HTTPError as exc:
+            log.warning('reset_watch_progress({0}): Chronicle returned HTTP {1} ({2})'.format(
+                        media_item_id, exc.code, exc.reason))
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            log.warning('reset_watch_progress({0}): Chronicle not reachable ({1})'.format(media_item_id, exc))
+        except Exception as exc:
+            log.warning('reset_watch_progress({0}): unexpected error: {1}'.format(media_item_id, exc))
+        return False
+
     def push_resume(self, media_item_id: int, progress_percent: float, timestamp_iso):
         """POST /api/v1/scrobble -- imports Kodi's own local resume position into
         Chronicle when it's newer than what Chronicle already has (see
