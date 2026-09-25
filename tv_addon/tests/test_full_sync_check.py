@@ -83,12 +83,6 @@ class TestDiffEpisode(unittest.TestCase):
 
         self.assertNotIn('firstaired', updates)
 
-    def test_wrong_season_or_episode_number_in_kodi_is_corrected(self):
-        # An episode Kodi filed under the wrong numbers is corrected to the ones Chronicle and the
-        # file name agree on.
-        kodi = {'season': 1, 'episode': 5}
-        self.assertEqual(diff_episode(kodi, {'season': 1, 'episode': 3}), {'episode': 3})
-
     def test_thumb_mismatch_preserves_other_art_slots(self):
         kodi = _kodi_item(art={'thumb': 'https://old.example/thumb.jpg', 'fanart': 'https://keep.example/fanart.jpg'})
         details = _chronicle_details()

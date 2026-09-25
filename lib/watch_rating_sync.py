@@ -271,12 +271,13 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
     for kodi_ep in kodi_episodes:
         if is_cancelled is not None and is_cancelled():
             break
-        # Matched on the FILE NAME's own season/episode first, not Kodi's: Kodi's numbers are only as
-        # good as the scrape that set them, and when they are wrong, matching on them pairs this
-        # file with a DIFFERENT Chronicle episode -- so its title, plot, thumb, rating and watched
-        # status all land on the wrong episode (see lib/episode_numbers.py).
-        ep_key = episode_numbers.resolve(kodi_ep)
-        chronicle_ep = chronicle_by_key.get(ep_key)
+        # Matched on what the FILE really is (its title, then its numbers) rather than on Kodi's own
+        # numbers alone: when those are wrong, or a show's files are numbered differently from
+        # Chronicle's list, the file was paired with a DIFFERENT episode -- so its title, plot,
+        # thumb, rating and watched status all landed on the wrong one (see lib/episode_numbers.py).
+        chronicle_ep = episode_numbers.match(kodi_ep, chronicle_episodes)
+        ep_key = ((chronicle_ep.get('season'), chronicle_ep.get('episode')) if chronicle_ep
+                  else (kodi_ep.get('season'), kodi_ep.get('episode')))
         episode_id = chronicle_ep.get('id') if chronicle_ep else None
         if episode_id is None:
             continue  # Chronicle doesn't know this episode yet (or its own record has no id,
@@ -433,9 +434,9 @@ def _set_episode_details(episodeid, updates):
 def diff_episode_text(kodi_ep, details):
     """VideoLibrary.SetEpisodeDetails params for whatever descriptive fields of a Kodi episode
     (listed with _EPISODE_STATE_PROPERTIES) differ from Chronicle's details for the SAME episode --
-    {} when everything already matches. Includes the season/episode numbers themselves: an
-    episode Kodi filed under the wrong numbers is corrected to the ones the file name and Chronicle
-    agree on. Never blanks a field Chronicle has nothing for."""
+    {} when everything already matches. Deliberately does NOT renumber: Kodi's numbering follows
+    the files (a multi-episode file is two Kodi entries), which can legitimately differ from
+    Chronicle's. Never blanks a field Chronicle has nothing for."""
     updates = {}
     if details.get('title') and kodi_ep.get('title') != details['title']:
         updates['title'] = details['title']
@@ -444,10 +445,6 @@ def diff_episode_text(kodi_ep, details):
     aired = details.get('aired')
     if aired and kodi_ep.get('firstaired') != aired[:10]:
         updates['firstaired'] = aired[:10]
-    for kodi_key, chronicle_key in (('season', 'season'), ('episode', 'episode')):
-        value = details.get(chronicle_key)
-        if value is not None and kodi_ep.get(kodi_key) is not None and kodi_ep.get(kodi_key) != value:
-            updates[kodi_key] = value
     thumb = details.get('thumbUrl')
     if thumb and (kodi_ep.get('art') or {}).get('thumb') != thumb:
         art = dict(kodi_ep.get('art') or {})

@@ -27,7 +27,6 @@ import posixpath
 
 import xbmc
 
-from lib import episode_numbers
 from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
 
@@ -86,13 +85,6 @@ def diff_episode(kodi_item, details):
     aired = details.get('aired')
     if aired and kodi_item.get('firstaired') != aired[:10]:
         updates['firstaired'] = aired[:10]
-
-    # Kodi's own numbers wrong for this file: correct them to the ones Chronicle and the file name
-    # agree on (the by-file lookup only resolves when Chronicle's own numbers match the file's).
-    for key in ('season', 'episode'):
-        value = details.get(key)
-        if value is not None and kodi_item.get(key) is not None and kodi_item.get(key) != value:
-            updates[key] = value
 
     thumb = details.get('thumbUrl')
     kodi_thumb = (kodi_item.get('art') or {}).get('thumb')
@@ -161,11 +153,8 @@ def run(is_cancelled=None, progress_callback=None):
             continue
         file_name = posixpath.basename(file_path)
 
-        # The file name's own numbers, not Kodi's: an episode Kodi filed under wrong numbers would
-        # otherwise contradict Chronicle's record, be treated as unresolved and never corrected --
-        # exactly the episodes that most need it (see lib/episode_numbers.py).
-        season, number = episode_numbers.resolve(episode)
-        details = client.get_episode_details_by_file(file_name, season=season, episode=number)
+        details = client.get_episode_details_by_file(
+            file_name, season=episode.get('season'), episode=episode.get('episode'))
         if not details:
             continue  # nothing unambiguous in Chronicle for this exact file -- nothing to sync
         checked += 1

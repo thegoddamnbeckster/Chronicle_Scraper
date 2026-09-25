@@ -34,11 +34,10 @@ class TestDiffEpisodeText(unittest.TestCase):
                                     {'title': 'Dead and Confused', 'overview': 'Plot.'})
         self.assertEqual(updates, {'title': 'Dead and Confused', 'plot': 'Plot.'})
 
-    def test_wrong_season_and_episode_numbers_are_corrected(self):
-        updates = diff_episode_text(_kodi(season=1, episode=5), {'season': 1, 'episode': 3})
-        self.assertEqual(updates, {'episode': 3})
-        updates = diff_episode_text(_kodi(season=2, episode=3), {'season': 1, 'episode': 3})
-        self.assertEqual(updates, {'season': 1})
+    def test_numbers_are_never_rewritten(self):
+        # Kodi's numbering follows the files (a multi-episode file is two Kodi entries), which can
+        # legitimately differ from Chronicle's -- only descriptive text is corrected.
+        self.assertEqual(diff_episode_text(_kodi(season=1, episode=5), {'season': 1, 'episode': 3}), {})
 
     def test_fields_chronicle_has_nothing_for_are_never_blanked(self):
         self.assertEqual(diff_episode_text(_kodi(), {'title': None, 'overview': None, 'aired': None}), {})
