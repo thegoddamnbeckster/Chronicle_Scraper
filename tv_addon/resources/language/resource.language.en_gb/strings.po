@@ -286,17 +286,3 @@ msgstr ""
 msgctxt "#32185"
 msgid "\n\nRestored watched status on {0} episode(s)."
 msgstr ""
-
-msgctxt "#32186"
-msgid "Reset watched status for which shows? (only pick shows you did NOT actually watch)"
-msgstr ""
-
-msgctxt "#32187"
-msgid "{0} -- {1} episode(s), all stamped {2}"
-msgstr ""
-
-msgctxt "#32188"
-msgid "
-
-Reset {0} fake watched mark(s) across {1} chosen show(s), here and in Chronicle."
-msgstr ""

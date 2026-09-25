@@ -57,5 +57,32 @@ class TestWatchReset(unittest.TestCase):
         vtag.setResumePoint.assert_called_once_with(0, 0)
 
 
+class TestResetStampTimezone(unittest.TestCase):
+    """The server sends the reset stamp in UTC; Kodi's lastplayed is naive LOCAL time. The stamp is
+    converted to local before comparing, so the outcome must not depend on the device's offset."""
+
+    def test_conversion_round_trips_to_local_wall_clock(self):
+        import time
+        now = time.time()
+        utc_iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(now))
+        expected_local = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(int(now)))
+        self.assertEqual(progress_sync._utc_iso_to_local_naive(utc_iso), expected_local)
+
+    def test_kodi_watch_a_minute_before_reset_is_cleared_in_any_timezone(self):
+        import time
+        reset_ts = time.time()
+        utc_iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(reset_ts))
+        kodi_before = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(reset_ts - 60))
+        kodi_after = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(reset_ts + 60))
+        self.assertEqual(progress_sync.resolve_watched_direction(
+            False, None, _kodi(kodi_before), chronicle_reset_at=utc_iso)[0], 'reset')
+        self.assertEqual(progress_sync.resolve_watched_direction(
+            False, None, _kodi(kodi_after), chronicle_reset_at=utc_iso)[0], 'pull')
+
+    def test_unparseable_stamp_falls_back_to_the_old_pull_behaviour(self):
+        self.assertEqual(progress_sync.resolve_watched_direction(
+            False, None, _kodi(), chronicle_reset_at='garbage')[0], 'pull')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -23,6 +23,8 @@ module at all.
 """
 
 import json
+import calendar
+import time
 from datetime import datetime
 
 import xbmc
@@ -163,7 +165,8 @@ def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item
     if not has_kodi and not has_chronicle:
         return None, None
     if has_kodi and not has_chronicle:
-        if chronicle_reset_at and not _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_reset_at):
+        reset_local = _utc_iso_to_local_naive(chronicle_reset_at)
+        if reset_local and not _kodi_lastplayed_is_newer(kodi_lastplayed, reset_local):
             return 'reset', None
         return 'pull', kodi_lastplayed
     if has_chronicle and not has_kodi:
@@ -204,6 +207,19 @@ def apply_resume_push(vtag, resume_pct, runtime_minutes):
         return
     total_seconds = runtime_minutes * 60
     vtag.setResumePoint(resume_pct / 100.0 * total_seconds, total_seconds)
+
+
+def _utc_iso_to_local_naive(iso):
+    """Server timestamps are UTC; Kodi's lastplayed is naive LOCAL time. Convert the server's UTC
+    ISO string to the same naive local 'YYYY-MM-DD HH:MM:SS' form before comparing them."""
+    if not iso:
+        return None
+    try:
+        utc = datetime.strptime(iso[:19], '%Y-%m-%dT%H:%M:%S')
+    except ValueError:
+        return None
+    local = time.localtime(calendar.timegm(utc.timetuple()))
+    return time.strftime('%Y-%m-%dT%H:%M:%S', local)
 
 
 def apply_watched_reset(vtag):

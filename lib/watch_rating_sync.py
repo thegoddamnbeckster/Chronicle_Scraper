@@ -337,8 +337,10 @@ def _build_state_updates(details, kodi_item, client, media_item_id, log_label):
     elif watched_direction == 'reset':
         # The user reset this item in Chronicle after Kodi's last play -- clear Kodi's own stale
         # watched state instead of pulling it back (see progress_sync.resolve_watched_direction).
+        # playcount 0 alone is what "unwatched" means (Kodi drops the last-played date itself when
+        # a playcount is set to 0); lastplayed is deliberately not sent, since one rejected
+        # property would fail the whole Set*Details call and lose the rating update with it.
         updates['playcount'] = 0
-        updates['lastplayed'] = ''
         updates['resume'] = {'position': 0, 'total': 0}
     elif watched_direction == 'pull':
         client.push_watched(media_item_id, progress_sync.kodi_lastplayed_to_iso(kodi_lastplayed))

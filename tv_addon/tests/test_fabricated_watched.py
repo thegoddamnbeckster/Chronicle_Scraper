@@ -197,35 +197,5 @@ class TestRepairAndUndo(unittest.TestCase):
                 library_repair.run_undo()
 
 
-class TestPicker(unittest.TestCase):
-
-    REPORT = {
-        'episodes': [
-            {'episodeid': 1, 'show_name': 'Ted Lasso', 'lastplayed': '2026-08-04 08:42:02'},
-            {'episodeid': 2, 'show_name': 'Ted Lasso', 'lastplayed': '2026-08-04 08:42:02'},
-            {'episodeid': 3, 'show_name': 'Ted Lasso', 'lastplayed': '2026-08-04 08:42:02'},
-            {'episodeid': 4, 'show_name': 'Stuart', 'lastplayed': '2026-09-19 17:10:40'},
-            {'episodeid': 5, 'show_name': 'Stuart', 'lastplayed': '2026-09-19 17:10:40'},
-            {'episodeid': 6, 'show_name': 'Stuart', 'lastplayed': '2026-09-19 17:10:40'},
-            {'episodeid': 7, 'show_name': 'Stuart', 'lastplayed': '2026-09-19 17:10:40'},
-        ],
-        'groups': [{'show_name': 'Ted Lasso', 'count': 3, 'lastplayed': 'x'},
-                   {'show_name': 'Stuart', 'count': 4, 'lastplayed': 'y'}],
-    }
-
-    def test_summary_is_per_show_biggest_first_with_date(self):
-        rows = library_repair.summarize_fabricated_by_show(self.REPORT)
-        self.assertEqual(rows, [{'show_name': 'Stuart', 'count': 4, 'when': '2026-09-19'},
-                                {'show_name': 'Ted Lasso', 'count': 3, 'when': '2026-08-04'}])
-
-    def test_filter_keeps_only_chosen_shows(self):
-        out = library_repair.filter_fabricated_to_shows(self.REPORT, ['Stuart'])
-        self.assertEqual([e['episodeid'] for e in out['episodes']], [4, 5, 6, 7])
-        self.assertEqual([g['show_name'] for g in out['groups']], ['Stuart'])
-
-    def test_choosing_nothing_leaves_nothing_to_reset(self):
-        self.assertEqual(library_repair.filter_fabricated_to_shows(self.REPORT, [])['episodes'], [])
-
-
 if __name__ == '__main__':
     unittest.main()
