@@ -133,6 +133,12 @@ def needs_cast_refresh(kodi_item, details, updates):
     return any(k in updates for k in IDENTITY_KEYS) and cast_differs(kodi_item, details)
 
 
+def plausible_year(year):
+    """A real release year -- Kodi reports an unknown one as 65535 (-1 stored unsigned)."""
+    import time
+    return isinstance(year, int) and 1878 <= year <= time.gmtime().tm_year + 10
+
+
 def diff_movie(kodi_item, details):
     """Returns a dict of VideoLibrary.SetMovieDetails params for whatever fields actually
     differ between what Kodi currently has (kodi_item, a VideoLibrary.GetMovies entry using
@@ -146,6 +152,12 @@ def diff_movie(kodi_item, details):
         updates['title'] = details['title']
     if details.get('year') and kodi_item.get('year') != details['year']:
         updates['year'] = details['year']
+    elif not plausible_year(kodi_item.get('year')) and not details.get('year'):
+        # Kodi's own year is impossible (65535) and Chronicle has none to replace it with: the year in
+        # the file's own name is the next best witness, better than showing 65535.
+        file_year = year_from_path(kodi_item.get('file'))
+        if file_year:
+            updates['year'] = file_year
     if details.get('overview') and kodi_item.get('plot') != details['overview']:
         updates['plot'] = details['overview']
     if details.get('tagline') and kodi_item.get('tagline') != details['tagline']:

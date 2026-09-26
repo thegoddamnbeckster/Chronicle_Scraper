@@ -277,5 +277,22 @@ class TestDiffMovieCastAndCompany(unittest.TestCase):
             self.assertNotIn(key, updates)
 
 
+class TestImpossibleYear(unittest.TestCase):
+    """Kodi reported 65535 as the year of a movie (its stored -1): the sync must replace it, from Chronicle
+    when Chronicle has a year, else from the year in the file's own name."""
+
+    def test_an_impossible_kodi_year_is_replaced_by_the_file_names_year_when_chronicle_has_none(self):
+        kodi = _kodi_item(year=65535, file='smb://n/Movies/Captain America (2014)/Captain America (2014).mkv')
+        self.assertEqual(diff_movie(kodi, _chronicle_details(year=None))['year'], 2014)
+
+    def test_chronicles_year_wins_when_it_has_one(self):
+        kodi = _kodi_item(year=65535, file='smb://n/Movies/X (2014)/X (2014).mkv')
+        self.assertEqual(diff_movie(kodi, _chronicle_details(year=2016))['year'], 2016)
+
+    def test_a_plausible_kodi_year_is_left_alone_when_chronicle_has_none(self):
+        kodi = _kodi_item(year=1984, file='smb://n/Movies/X (2014)/X (2014).mkv')
+        self.assertNotIn('year', diff_movie(kodi, _chronicle_details(year=None)))
+
+
 if __name__ == '__main__':
     unittest.main()
