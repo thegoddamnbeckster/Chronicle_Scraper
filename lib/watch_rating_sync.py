@@ -41,7 +41,9 @@ import xbmc
 
 from lib import episode_numbers
 from lib import media_id_cache
-from lib.full_sync_check import year_from_path
+from lib import movie_art_sync
+from lib.full_sync_check import _MOVIE_PROPERTIES as _MOVIE_TEXT_PROPERTIES
+from lib.full_sync_check import diff_movie, year_from_path
 from lib import progress_sync
 from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
@@ -55,7 +57,10 @@ _MIN_ITEM_SPACING_SECONDS = 0.2
 # the shared part separately, so a future change to what reconciliation depends on can't
 # silently drift between the per-scrape lookup path (progress_sync.lookup_movie_state) and
 # this periodic-sync path.
-_MOVIE_STATE_PROPERTIES = ['title', 'year', 'file'] + progress_sync.STATE_PROPERTIES
+# Everything a movie's text/art check compares, on top of the state fields -- ONE listing per movie feeds
+# both, so a single pass syncs watched state, ratings AND metadata together.
+_MOVIE_STATE_PROPERTIES = list(dict.fromkeys(
+    ['title', 'year', 'file'] + _MOVIE_TEXT_PROPERTIES + progress_sync.STATE_PROPERTIES))
 _SHOW_PROPERTIES = ['title', 'year', 'userrating', 'plot', 'premiered', 'mpaa', 'genre', 'studio', 'uniqueid']
 _EPISODE_STATE_PROPERTIES = (['season', 'episode', 'file', 'title', 'plot', 'firstaired', 'art']
                              + progress_sync.STATE_PROPERTIES)
@@ -220,6 +225,22 @@ def _sync_one_movie(client, cache, movie):
     client.report_kodi_id(media_item_id, 'movie', movie['movieid'])
 
     updates = _build_state_updates(details, movie, client, media_item_id, log_label=label)
+
+    # The movie's own text (title/plot/cast/genre/...) and art in the SAME pass -- the post-scan check
+    # (full_sync_check) used to be the only place that ever compared them, so a movie whose Chronicle
+    # data was corrected or enriched after that check ran (Total Recall, 2026-09-26) stayed wrong on
+    # the device until some later library scan happened to re-run it.
+    file_path = movie.get('file')
+    if file_path:
+        try:
+            movie_art_sync.sync_movie_art(
+                details.get('title'), details.get('year'), details.get('artwork'),
+                location=(posixpath.dirname(file_path) + '/',
+                          movie_art_sync.strip_video_ext(posixpath.basename(file_path))))
+        except Exception as exc:
+            log.warning('watch_rating_sync: art sync failed for "{0}": {1}'.format(label, exc))
+    updates.update(diff_movie(movie, details))
+
     if updates:
         _set_movie_details(movie['movieid'], updates)
         log.info('watch_rating_sync: "{0}" -- applied {1}'.format(label, ', '.join(sorted(updates.keys()))))
