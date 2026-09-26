@@ -29,6 +29,7 @@ from lib import activity_tracker
 from lib import collection_art_sync
 from lib import device_registration
 from lib import full_sync_check
+from lib import install_marker
 from lib import status_display
 from lib import kodi_scan_signal
 from lib import watch_rating_sync
@@ -441,6 +442,15 @@ def run():
     scan_signal_startup_done = False
     last_scan_signal_check = 0.0  # only consulted once scan_signal_enabled is on
     startup_followup_done = False
+
+    # Never start a library scan just because the add-on was installed or upgraded (every install
+    # restarts this service): skip both startup scan checks for this one start.
+    if install_marker.is_first_start_of_version(ADDON.getAddonInfo('version')):
+        log.info('service: first start of this add-on version -- not starting a library scan; the '
+                 'startup scan checks resume on the next normal Kodi start')
+        scan_signal_startup_done = True
+        startup_followup_done = True
+        last_scan_signal_check = time.time()
 
     last_scan_active_heartbeat = 0.0  # forces an immediate first heartbeat once scanning starts
 
