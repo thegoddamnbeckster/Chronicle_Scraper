@@ -83,5 +83,25 @@ class TestMoviePass(unittest.TestCase):
         self.assertEqual(applied, [])
 
 
+class TestSetMembership(unittest.TestCase):
+
+    def test_set_differs_only_when_chronicle_has_a_collection_and_kodis_set_is_different(self):
+        from lib.full_sync_check import set_differs
+        coll = {'collection': {'name': 'The Matrix Collection'}}
+        self.assertTrue(set_differs({'set': ''}, coll))
+        self.assertTrue(set_differs({'set': 'Something Else'}, coll))
+        self.assertFalse(set_differs({'set': 'The Matrix Collection'}, coll))
+        self.assertFalse(set_differs({'set': 'Whatever'}, {'collection': None}))  # never pulled out of a set
+
+    def test_a_movie_missing_its_set_is_re_scraped_even_when_nothing_else_differs(self):
+        movie = dict(KODI_MOVIE, year=2012, plot="2012's plot.", cast=[{'name': 'Colin Farrell'}], set='')
+        details = dict(DETAILS_2012, collection={'name': 'Total Recall Collection'})
+        with patch.object(w, '_set_movie_details'), patch.object(w.movie_art_sync, 'sync_movie_art'), \
+             patch.object(w, 'refresh_movie') as refresh:
+            w._sync_one_movie(FakeClient(details), {}, movie)
+
+        refresh.assert_called_once_with(10890)
+
+
 if __name__ == '__main__':
     unittest.main()

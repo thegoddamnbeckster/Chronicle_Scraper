@@ -52,7 +52,7 @@ log = Logger('full_sync_check')
 
 _MOVIE_PROPERTIES = [
     'file', 'title', 'year', 'plot', 'tagline', 'mpaa', 'genre', 'director',
-    'imdbnumber', 'uniqueid', 'premiered', 'art', 'cast', 'studio', 'country',
+    'imdbnumber', 'uniqueid', 'premiered', 'art', 'cast', 'studio', 'country', 'set',
 ]
 
 _YEAR_IN_NAME = re.compile(r'[\(\[]((?:19|20)\d{2})[\)\]]')
@@ -122,6 +122,20 @@ def refresh_movie(movieid):
         log.warning('full_sync_check: RefreshMovie({0}) rejected: {1}'.format(movieid, response['error']))
         return False
     return True
+
+
+def set_differs(kodi_item, details):
+    """True when Chronicle puts this movie in a collection and Kodi's set for it is different (or
+    none). Only that direction: a movie Chronicle has no collection for is never pulled out of a set
+    Kodi has, since the set may have come from elsewhere.
+
+    Kodi has no way to assign a set over JSON-RPC's SetMovieDetails without also owning the set row,
+    so -- like cast -- membership is restored by a re-scrape, whose answer (scraper.py's setSet) puts
+    the movie back in Chronicle's collection. Live (2026-09-26): The Matrix and Captain America: The
+    Winter Soldier were standalone in Kodi because Kodi was bound to a duplicate Chronicle item with no
+    collection; once bound to the real one their set had to be restored."""
+    chronicle_set = ((details.get('collection') or {}).get('name') or '').strip()
+    return bool(chronicle_set) and (kodi_item.get('set') or '').strip() != chronicle_set
 
 
 IDENTITY_KEYS = ('title', 'year', 'plot')
@@ -286,7 +300,7 @@ def run(is_cancelled=None, progress_callback=None):
         if not updates:
             continue
 
-        refresh = needs_cast_refresh(movie, details, updates)
+        refresh = needs_cast_refresh(movie, details, updates) or set_differs(movie, details)
         if _set_movie_details(movie['movieid'], updates):
             updated += 1
             log.info('full_sync_check: "{0}" ({1}) -- updated {2}'.format(
