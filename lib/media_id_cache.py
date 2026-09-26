@@ -26,6 +26,7 @@ re-resolve via search once, refreshing the cache.
 """
 
 import json
+import re
 
 import xbmcaddon
 import xbmcvfs
@@ -35,6 +36,46 @@ from lib.logger import Logger
 log = Logger('media_id_cache')
 _ADDON = xbmcaddon.Addon()
 _CACHE_PATH = 'special://profile/addon_data/{0}/media_id_cache.json'.format(_ADDON.getAddonInfo('id'))
+
+
+_STOPWORDS = {'the', 'a', 'an', 'and', 'of', 'us', 'uk', 'edition', 'cut', 'version'}
+_ROMAN = {'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'}
+_YEAR_TOKEN = re.compile(r'(?:19|20)\d{2}')
+
+
+def _title_tokens(title):
+    t = re.sub(r'\(\s*(?:19|20)\d{2}\s*\)', ' ', (title or '').lower())
+    t = t.replace("'", '')
+    return [w for w in re.split(r'[^a-z0-9]+', t) if w]
+
+
+def titles_agree(kodi_title, chronicle_title):
+    """Whether a Kodi item's title and the title of the Chronicle item it was matched to are plausibly
+    the same work -- the check a cached id must pass before anything is written for it.
+
+    This cache is keyed by Kodi's OWN ids, which Kodi reassigns whenever a library is rebuilt or a
+    show removed and re-added. Confirmed live (2026-09-26): 32 movies and 6 shows on one device were
+    mapped to a different item entirely ("Scream" -> "Evil Bong 2", "A Knight of the Seven Kingdoms"
+    -> "Star Trek: Discovery"), so ratings and watched marks were being written onto the wrong
+    items -- and once episode text started syncing, the wrong show's titles and plots too.
+
+    Tolerant of legitimate naming differences ("Anne Rice's Mayfair Witches" vs "Mayfair Witches",
+    "... (US)", "... - Defrosted Edition"): the shorter title's words must appear in the longer one.
+    Strict about sequel numbers ("Home Alone" is not "Home Alone 2"). With no title on either side
+    there is nothing to judge, so it agrees.
+    """
+    a = [w for w in _title_tokens(kodi_title) if w not in _STOPWORDS]
+    b = [w for w in _title_tokens(chronicle_title) if w not in _STOPWORDS]
+    if not a or not b:
+        return True
+
+    def numbers(tokens):
+        return {w for w in tokens if (w.isdigit() and not _YEAR_TOKEN.fullmatch(w)) or w in _ROMAN}
+
+    if numbers(a) != numbers(b):
+        return False
+    sa, sb = set(a), set(b)
+    return len(sa & sb) / float(min(len(sa), len(sb))) >= 0.6
 
 
 def movie_key(movieid):

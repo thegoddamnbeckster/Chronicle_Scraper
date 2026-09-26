@@ -183,6 +183,22 @@ def _sync_one_movie(client, cache, movie):
             log.info('watch_rating_sync: "{0}" -- no details returned, skipping'.format(label))
             return
 
+    # A cached id is keyed by Kodi's OWN id, which Kodi reassigns when a library is rebuilt -- so it
+    # can name a completely different film (see media_id_cache.titles_agree). Never write anything
+    # for an item whose Chronicle match doesn't even share its title: drop the cache entry, resolve
+    # afresh, and skip the item if it still disagrees.
+    if not media_id_cache.titles_agree(title, details.get('title')):
+        log.info('watch_rating_sync: "{0}" -- cached Chronicle item {1} is "{2}", not this movie; '
+                 're-resolving'.format(label, media_item_id, details.get('title')))
+        cache.pop(key, None)
+        media_item_id = _resolve_movie_id(client, cache, movie)
+        details = client.get_movie_details(media_item_id) if media_item_id else None
+        if not details or not media_id_cache.titles_agree(title, details.get('title')):
+            cache.pop(key, None)
+            log.warning('watch_rating_sync: "{0}" -- no Chronicle item with a matching title; '
+                        'skipping (nothing written)'.format(label))
+            return
+
     # A cached id (or an earlier wrong match) whose film contradicts the year in the file's own name
     # is a cross-link, not a match: drop it and resolve again, now by the file's year.
     file_year = year_from_path(movie.get('file'))
@@ -246,6 +262,22 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
         if not show_details:
             log.info('watch_rating_sync: "{0}" -- no details returned, skipping episodes '
                      'too'.format(label))
+            return 0
+
+    # Same guard as _sync_one_movie: a cached show id keyed by Kodi's own (reassignable) tvshowid can
+    # name a different show, and everything below would then write THAT show's text, ratings and
+    # watched state onto this one (confirmed live 2026-09-26: "A Knight of the Seven Kingdoms" got
+    # "Star Trek: Discovery"'s episode titles and plots).
+    if not media_id_cache.titles_agree(title, show_details.get('title')):
+        log.info('watch_rating_sync: "{0}" -- cached Chronicle show {1} is "{2}", not this show; '
+                 're-resolving'.format(label, show_id, show_details.get('title')))
+        cache.pop(key, None)
+        show_id = _resolve_show_id(client, cache, show)
+        show_details = client.get_show_details(show_id) if show_id else None
+        if not show_details or not media_id_cache.titles_agree(title, show_details.get('title')):
+            cache.pop(key, None)
+            log.warning('watch_rating_sync: "{0}" -- no Chronicle show with a matching title; '
+                        'skipping it and its episodes (nothing written)'.format(label))
             return 0
 
     # Lets Chronicle's own NfoPushService push a future show-level update straight to this
