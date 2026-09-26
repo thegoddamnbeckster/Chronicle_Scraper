@@ -43,7 +43,7 @@ from lib import episode_numbers
 from lib import media_id_cache
 from lib import movie_art_sync
 from lib.full_sync_check import _MOVIE_PROPERTIES as _MOVIE_TEXT_PROPERTIES
-from lib.full_sync_check import diff_movie, year_from_path
+from lib.full_sync_check import diff_movie, needs_cast_refresh, refresh_movie, year_from_path
 from lib import progress_sync
 from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
@@ -239,10 +239,14 @@ def _sync_one_movie(client, cache, movie):
                           movie_art_sync.strip_video_ext(posixpath.basename(file_path))))
         except Exception as exc:
             log.warning('watch_rating_sync: art sync failed for "{0}": {1}'.format(label, exc))
-    updates.update(diff_movie(movie, details))
+    text_updates = diff_movie(movie, details)
+    refresh = needs_cast_refresh(movie, details, text_updates)
+    updates.update(text_updates)
 
     if updates:
         _set_movie_details(movie['movieid'], updates)
+        if refresh:
+            refresh_movie(movie['movieid'])
         log.info('watch_rating_sync: "{0}" -- applied {1}'.format(label, ', '.join(sorted(updates.keys()))))
 
 
@@ -559,8 +563,8 @@ def diff_show_text(kodi_show, details):
     Never blanks a field Chronicle has nothing for, and compares list fields as sets since Kodi
     doesn't guarantee read-back order."""
     updates = {}
-    if details.get('year') and kodi_show.get('year') != details['year']:
-        updates['year'] = details['year']
+    # No 'year': Kodi's SetTVShowDetails has no such parameter (it rejects the WHOLE call), and a
+    # show's year follows its premiered date, which IS corrected below.
     if details.get('overview') and kodi_show.get('plot') != details['overview']:
         updates['plot'] = details['overview']
     premiered = details.get('premiered')

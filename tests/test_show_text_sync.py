@@ -42,11 +42,12 @@ class TestDiffShowText(unittest.TestCase):
     def test_premiered_is_compared_as_a_date(self):
         self.assertEqual(diff_show_text(_kodi(), {'premiered': '2024-01-05T00:00:00'}), {'premiered': '2024-01-05'})
 
-    def test_a_wrong_year_is_corrected(self):
-        # Kodi's year for "A Knight of the Seven Kingdoms" was another show's (2017), which also made the
-        # sync's title+year lookup mint a duplicate empty show.
-        self.assertEqual(diff_show_text(_kodi(year=2017), {'year': 2026}), {'year': 2026})
-        self.assertEqual(diff_show_text(_kodi(year=2026), {'year': 2026}), {})
+    def test_year_is_never_written_because_kodi_has_no_such_parameter(self):
+        # SetTVShowDetails rejects the whole call for an unknown parameter; a show's year follows its
+        # premiered date, which is corrected instead.
+        self.assertNotIn('year', diff_show_text(_kodi(year=2017), {'year': 2026}))
+        self.assertEqual(diff_show_text(_kodi(year=2017), {'year': 2026, 'premiered': '2026-01-18'}),
+                         {'premiered': '2026-01-18'})
 
     def test_studio_is_written_as_a_list(self):
         self.assertEqual(diff_show_text(_kodi(), {'studio': 'Netflix'}), {'studio': ['Netflix']})

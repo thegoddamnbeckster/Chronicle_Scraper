@@ -90,6 +90,49 @@ def _get_all_movies():
     return response.get('result', {}).get('movies') or []
 
 
+def cast_differs(kodi_item, details):
+    """True when Chronicle has a cast for this movie and its set of names differs from Kodi's.
+
+    Deliberately NOT part of diff_movie's SetMovieDetails params: Kodi's JSON-RPC
+    VideoLibrary.SetMovieDetails has no cast parameter at all ("Too many parameters"), so putting
+    one in the update made Kodi reject the WHOLE call -- confirmed live (2026-09-26): every field of
+    Total Recall (2012)'s correction was discarded because its cast differed, and since v3.17.11 the
+    same happened to any movie with a differing cast. Cast is only settable by a re-scrape (see
+    refresh_movie)."""
+    cast = [c for c in (details.get('cast') or []) if c.get('name')]
+    kodi_names = {(c.get('name') or '').lower() for c in (kodi_item.get('cast') or [])}
+    return bool(cast) and kodi_names != {c['name'].lower() for c in cast}
+
+
+def refresh_movie(movieid):
+    """Asks Kodi to re-scrape one movie (VideoLibrary.RefreshMovie) -- the only way to change its
+    cast. The scrape goes through this addon, which answers with Chronicle's current data. Only ever
+    called for a movie whose identity-level text was just corrected AND whose cast differs, never for
+    a cast-only difference (names/order differ harmlessly all the time)."""
+    request = {
+        'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.RefreshMovie',
+        'params': {'movieid': movieid, 'ignorenfo': True},
+    }
+    try:
+        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+    except Exception as exc:
+        log.warning('full_sync_check: RefreshMovie({0}) failed: {1}'.format(movieid, exc))
+        return False
+    if 'error' in response:
+        log.warning('full_sync_check: RefreshMovie({0}) rejected: {1}'.format(movieid, response['error']))
+        return False
+    return True
+
+
+IDENTITY_KEYS = ('title', 'year', 'plot')
+
+
+def needs_cast_refresh(kodi_item, details, updates):
+    """A re-scrape is warranted only when this movie was just found to be a different work (its
+    title, year or plot had to be corrected) AND its cast differs."""
+    return any(k in updates for k in IDENTITY_KEYS) and cast_differs(kodi_item, details)
+
+
 def diff_movie(kodi_item, details):
     """Returns a dict of VideoLibrary.SetMovieDetails params for whatever fields actually
     differ between what Kodi currently has (kodi_item, a VideoLibrary.GetMovies entry using
@@ -127,13 +170,6 @@ def diff_movie(kodi_item, details):
                  if (c.get('job') or '').lower() == 'director']
     if directors and set(kodi_item.get('director') or []) != set(directors):
         updates['director'] = directors
-
-    cast = [c for c in (details.get('cast') or []) if c.get('name')]
-    kodi_cast_names = {(c.get('name') or '').lower() for c in (kodi_item.get('cast') or [])}
-    if cast and kodi_cast_names != {c['name'].lower() for c in cast}:
-        updates['cast'] = [
-            {'name': c['name'], 'role': c.get('role') or '', 'order': i, 'thumbnail': c.get('thumbUrl') or ''}
-            for i, c in enumerate(cast)]
 
     studio = details.get('studio')
     if studio and set(kodi_item.get('studio') or []) != {studio}:
@@ -238,10 +274,13 @@ def run(is_cancelled=None, progress_callback=None):
         if not updates:
             continue
 
+        refresh = needs_cast_refresh(movie, details, updates)
         if _set_movie_details(movie['movieid'], updates):
             updated += 1
             log.info('full_sync_check: "{0}" ({1}) -- updated {2}'.format(
                 movie.get('title'), movie.get('year'), ', '.join(sorted(updates.keys()))))
+            if refresh:
+                refresh_movie(movie['movieid'])
         else:
             errors += 1
 

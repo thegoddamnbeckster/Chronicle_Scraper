@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests.kodi_stubs as kodi_stubs  # noqa: F401 -- side-effect: stubs xbmc before import below
 
 from lib import full_sync_check
-from lib.full_sync_check import diff_movie, year_from_path
+from lib.full_sync_check import cast_differs, diff_movie, needs_cast_refresh, year_from_path
 
 
 def _kodi_item(**overrides):
@@ -243,18 +243,25 @@ class TestYearFromPath(unittest.TestCase):
 
 class TestDiffMovieCastAndCompany(unittest.TestCase):
 
-    def test_different_cast_is_replaced_whole_with_order_and_thumbnails(self):
+    def test_cast_is_never_in_the_setmoviedetails_params(self):
+        # Kodi's SetMovieDetails has NO cast parameter: including one ("Too many parameters") made Kodi
+        # reject the WHOLE call, discarding every other correction for that movie.
         kodi = _kodi_item(cast=[{'name': 'Arnold Schwarzenegger', 'role': 'Quaid', 'order': 0}])
-        details = _chronicle_details(cast=[{'name': 'Colin Farrell', 'role': 'Quaid', 'thumbUrl': 'https://t/c.jpg'},
-                                           {'name': 'Kate Beckinsale', 'role': 'Lori'}])
-        updates = diff_movie(kodi, details)
-        self.assertEqual(updates['cast'], [
-            {'name': 'Colin Farrell', 'role': 'Quaid', 'order': 0, 'thumbnail': 'https://t/c.jpg'},
-            {'name': 'Kate Beckinsale', 'role': 'Lori', 'order': 1, 'thumbnail': ''}])
+        details = _chronicle_details(cast=[{'name': 'Colin Farrell', 'role': 'Quaid'}])
+        self.assertNotIn('cast', diff_movie(kodi, details))
 
-    def test_same_cast_in_a_different_order_is_no_difference(self):
-        kodi = _kodi_item(cast=[{'name': 'B'}, {'name': 'A'}])
-        self.assertNotIn('cast', diff_movie(kodi, _chronicle_details(cast=[{'name': 'a'}, {'name': 'b'}])))
+    def test_cast_differs_compares_name_sets_ignoring_order_and_case(self):
+        self.assertTrue(cast_differs(_kodi_item(cast=[{'name': 'A'}]), {'cast': [{'name': 'B'}]}))
+        self.assertFalse(cast_differs(_kodi_item(cast=[{'name': 'B'}, {'name': 'A'}]), {'cast': [{'name': 'a'}, {'name': 'b'}]}))
+        self.assertFalse(cast_differs(_kodi_item(cast=[{'name': 'A'}]), {'cast': None}))
+
+    def test_a_refresh_is_wanted_only_when_the_movie_itself_was_corrected_and_the_cast_differs(self):
+        kodi = _kodi_item(cast=[{'name': 'A'}])
+        details = {'cast': [{'name': 'B'}]}
+        self.assertTrue(needs_cast_refresh(kodi, details, {'plot': 'new'}))
+        self.assertTrue(needs_cast_refresh(kodi, details, {'year': 2012}))
+        self.assertFalse(needs_cast_refresh(kodi, details, {'studio': ['X']}))  # not an identity change
+        self.assertFalse(needs_cast_refresh(kodi, {'cast': [{'name': 'A'}]}, {'plot': 'new'}))  # cast already right
 
     def test_studio_and_country_are_written_as_lists_only_when_they_differ(self):
         kodi = _kodi_item(studio=['Carolco Pictures'], country=['United States of America'])

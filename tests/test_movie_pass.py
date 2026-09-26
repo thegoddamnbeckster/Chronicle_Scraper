@@ -59,14 +59,16 @@ class TestMoviePass(unittest.TestCase):
     def test_a_visit_corrects_text_and_cast_and_syncs_art_in_one_go(self):
         applied = []
         with patch.object(w, '_set_movie_details', lambda mid, u: applied.append((mid, u))), \
-             patch.object(w.movie_art_sync, 'sync_movie_art') as art:
+             patch.object(w.movie_art_sync, 'sync_movie_art') as art, \
+             patch.object(w, 'refresh_movie') as refresh:
             w._sync_one_movie(FakeClient(DETAILS_2012), {}, dict(KODI_MOVIE))
 
         self.assertEqual(len(applied), 1)
         _, updates = applied[0]
         self.assertEqual(updates['plot'], "2012's plot.")
         self.assertEqual(updates['year'], 2012)
-        self.assertEqual([c['name'] for c in updates['cast']], ['Colin Farrell'])
+        self.assertNotIn('cast', updates)  # Kodi rejects a whole SetMovieDetails call that carries cast
+        refresh.assert_called_once_with(10890)  # cast is corrected by a re-scrape instead
         art.assert_called_once()
         self.assertEqual(art.call_args.kwargs['location'], ('smb://nas/Movies/Total Recall (2012)/',
                                                             'Total Recall (2012)'))
