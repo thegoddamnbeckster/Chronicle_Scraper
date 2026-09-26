@@ -56,7 +56,7 @@ _MIN_ITEM_SPACING_SECONDS = 0.2
 # silently drift between the per-scrape lookup path (progress_sync.lookup_movie_state) and
 # this periodic-sync path.
 _MOVIE_STATE_PROPERTIES = ['title', 'year', 'file'] + progress_sync.STATE_PROPERTIES
-_SHOW_PROPERTIES = ['title', 'year', 'userrating', 'plot', 'premiered', 'mpaa', 'genre', 'studio']
+_SHOW_PROPERTIES = ['title', 'year', 'userrating', 'plot', 'premiered', 'mpaa', 'genre', 'studio', 'uniqueid']
 _EPISODE_STATE_PROPERTIES = (['season', 'episode', 'file', 'title', 'plot', 'firstaired', 'art']
                              + progress_sync.STATE_PROPERTIES)
 
@@ -219,6 +219,20 @@ def _sync_one_movie(client, cache, movie):
         log.info('watch_rating_sync: "{0}" -- applied {1}'.format(label, ', '.join(sorted(updates.keys()))))
 
 
+def _show_external_ids(show):
+    """(source, externalId) pairs to look a Kodi show up by, in Chronicle's own id formats: TMDB's
+    are stored "tv:{id}", IMDb's and TVDB's bare."""
+    unique = show.get('uniqueid') or {}
+    pairs = []
+    if unique.get('tmdb'):
+        pairs.append(('tmdb', 'tv:{0}'.format(unique['tmdb'])))
+    if unique.get('imdb'):
+        pairs.append(('imdb', unique['imdb']))
+    if unique.get('tvdb'):
+        pairs.append(('tvdb', unique['tvdb']))
+    return pairs
+
+
 def _resolve_show_id(client, cache, show):
     """Sibling of _resolve_movie_id for shows -- see that function's own doc."""
     key = media_id_cache.tvshow_key(show['tvshowid'])
@@ -226,7 +240,18 @@ def _resolve_show_id(client, cache, show):
     if cached_id is not None:
         return cached_id
 
-    result = client.search_show(show.get('title'), show.get('year'))
+    # By the show's own provider ids first: Kodi's title and (especially) YEAR are only as good as the
+    # scrape that set them, and the title+year search below is resolve-OR-CREATE -- with a wrong year
+    # it mints a duplicate empty show instead of finding the real one (confirmed live 2026-09-26:
+    # "A Knight of the Seven Kingdoms" carried another show's year, so it never resolved to itself).
+    result = None
+    for source, external_id in _show_external_ids(show):
+        result = client.resolve_show_by_external_id(source, external_id)
+        if result and result.get('id'):
+            break
+        result = None
+    if result is None:
+        result = client.search_show(show.get('title'), show.get('year'))
     if not result or not result.get('id'):
         return None
     cache[key] = result['id']
@@ -507,6 +532,8 @@ def diff_show_text(kodi_show, details):
     Never blanks a field Chronicle has nothing for, and compares list fields as sets since Kodi
     doesn't guarantee read-back order."""
     updates = {}
+    if details.get('year') and kodi_show.get('year') != details['year']:
+        updates['year'] = details['year']
     if details.get('overview') and kodi_show.get('plot') != details['overview']:
         updates['plot'] = details['overview']
     premiered = details.get('premiered')

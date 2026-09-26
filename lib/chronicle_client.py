@@ -238,6 +238,21 @@ class ChronicleClient:
         return self._get(url, 'search_show({0!r}, {1!r})'.format(title, year), full_url=True,
                           timeout=_SEARCH_TIMEOUT_SECONDS)
 
+    def resolve_show_by_external_id(self, source: str, external_id: str):
+        """GET /api/v1/scraper/tv/resolve-by-external-id?source=&externalId= -- the show Chronicle
+        already has for this provider id, or None. Never creates anything, unlike search_show()
+        (a resolve-or-create by title + year, which invents a brand-new stub whenever the year Kodi
+        reports doesn't match -- confirmed live 2026-09-26: Kodi's own year for "A Knight of the
+        Seven Kingdoms" was another show's, so each lookup created a duplicate empty show)."""
+        if not self._base_url or not self._api_key:
+            log.warning('Chronicle URL or API key not configured — resolve_show_by_external_id skipped')
+            return None
+
+        url = '{0}/api/v1/scraper/tv/resolve-by-external-id?source={1}&externalId={2}'.format(
+            self._base_url, urllib.parse.quote(source), urllib.parse.quote(external_id))
+        return self._get(url, 'resolve_show_by_external_id({0!r}, {1!r})'.format(source, external_id),
+                         full_url=True, timeout=_SEARCH_TIMEOUT_SECONDS)
+
     def get_show_details(self, media_item_id: int):
         """GET /api/v1/scraper/tv/details?id= -- show-level details plus every
         season Chronicle already has for it."""
