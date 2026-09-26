@@ -29,6 +29,7 @@ from lib import activity_tracker
 from lib import collection_art_sync
 from lib import device_registration
 from lib import full_sync_check
+from lib import status_display
 from lib import kodi_scan_signal
 from lib import watch_rating_sync
 from lib.chronicle_client import ChronicleClient
@@ -122,6 +123,9 @@ class ChronicleMonitor(xbmc.Monitor):
         # See _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS's own doc -- 0.0 so the very first
         # onScanFinished this session always runs regardless of when the service itself started.
         self._full_sync_check_last_completed_at = 0.0
+        # True between Kodi's onCleanStarted and onCleanFinished, so the corner status can say so.
+        self.cleaning = False
+        self._last_defer_notice_at = 0.0
 
     def _should_defer_for_active_scan(self, task_label):
         """True if either Kodi's own library scan (Library.IsScanning) or EITHER addon's own
@@ -139,6 +143,13 @@ class ChronicleMonitor(xbmc.Monitor):
         if kodi_scanning or scraper_active:
             log.info('service: {0} deferred -- {1} still in progress'.format(
                      task_label, 'a Kodi library scan' if kodi_scanning else 'scraper activity'))
+            # Say so on screen (at most every 5 minutes): a task that quietly does nothing looks broken.
+            if time.time() - self._last_defer_notice_at >= 300:
+                self._last_defer_notice_at = time.time()
+                xbmcgui.Dialog().notification(
+                    ADDON.getLocalizedString(32000),
+                    ADDON.getLocalizedString(32153).format(task_label),
+                    icon=xbmcgui.NOTIFICATION_INFO, time=6000)
             return True
         return False
 
@@ -252,6 +263,14 @@ class ChronicleMonitor(xbmc.Monitor):
                 self._collection_art_lock.release()
 
         threading.Thread(target=_do, name='chronicle-collection-art-sync', daemon=True).start()
+
+    def onCleanStarted(self, library):
+        if library == 'video':
+            self.cleaning = True
+
+    def onCleanFinished(self, library):
+        if library == 'video':
+            self.cleaning = False
 
     def onScanFinished(self, library):
         """Kodi's own native callback, fired the same way regardless of what triggered the
@@ -548,26 +567,27 @@ def run():
                 name='chronicle-scan-active-heartbeat', daemon=True,
             ).start()
 
-        show_now = is_active and not kodi_scanning
+        count = activity.get('count', 0) if activity else 0
+        label = (activity.get('last_label') or '') if activity else ''
+        suffix = ' -- {0}'.format(label) if label else ''
+        message = status_display.status_text(
+            kodi_scanning, monitor.cleaning, is_active,
+            ADDON.getLocalizedString(32107).format(count, suffix),
+            ADDON.getLocalizedString(32151), ADDON.getLocalizedString(32152))
 
-        if show_now:
-            count = activity.get('count', 0)
-            label = activity.get('last_label') or ''
-            suffix = ' -- {0}'.format(label) if label else ''
-            message = ADDON.getLocalizedString(32107).format(count, suffix)
+        if message is not None:
             if bg is None:
                 bg = xbmcgui.DialogProgressBG()
                 bg.create(ADDON.getLocalizedString(32000), message)
-                log.info('service: scraper activity detected -- showing corner status')
-            elif count != last_shown_count:
+                log.info('service: library busy -- showing corner status')
+            elif message != last_shown_count:
                 bg.update(0, message=message)
-            last_shown_count = count
+            last_shown_count = message
         elif bg is not None:
             bg.close()
             bg = None
             last_shown_count = None
-            log.info('service: {0} -- hiding corner status'.format(
-                     'Kodi library scan still running' if kodi_scanning else 'scraper activity gone idle'))
+            log.info('service: nothing running -- hiding corner status')
             if not is_active:
                 activity_tracker.reset()
 
