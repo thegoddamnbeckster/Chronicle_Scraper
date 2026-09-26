@@ -210,6 +210,12 @@ def _sync_one_movie(client, cache, movie):
         details = client.get_movie_details(media_item_id) if media_item_id else None
         if not details:
             return
+        if details.get('year') and abs(file_year - details['year']) >= 2:
+            # Still the wrong film after a fresh lookup: write nothing rather than cross-link it.
+            cache.pop(key, None)
+            log.warning('watch_rating_sync: "{0}" -- file name says {1} but Chronicle only offers a {2} '
+                        'film; skipping (nothing written)'.format(label, file_year, details['year']))
+            return
 
     client.report_kodi_id(media_item_id, 'movie', movie['movieid'])
 
