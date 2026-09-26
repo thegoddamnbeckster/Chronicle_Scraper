@@ -217,6 +217,13 @@ def get_details(media_item_id, handle):
     vtag.setMediaType('movie')
 
     apply_common_video_info(vtag, details)
+    if not details.get('year'):
+        # No year from Chronicle (a fan edit, say): without one Kodi stores -1 and shows 65535, so fall
+        # back to the year tagged in the file's own name.
+        from lib.full_sync_check import year_from_path
+        file_year = year_from_path(full_filename or details.get('knownFileName'))
+        if file_year:
+            vtag.setYear(file_year)
 
     if details.get('tagline'):
         vtag.setTagLine(details['tagline'])

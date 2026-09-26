@@ -103,5 +103,15 @@ class TestSetMembership(unittest.TestCase):
         refresh.assert_called_once_with(10890)
 
 
+class TestTwoYearTags(unittest.TestCase):
+
+    def test_a_year_matching_either_tag_is_not_a_contradiction(self):
+        from lib.full_sync_check import years_in_path
+        path = 'smb://n/Movies/Captain America - Defrosted Edition (2017)/Captain America (2014).mkv'
+        self.assertEqual(sorted(years_in_path(path)), [2014, 2017])
+        self.assertFalse(w._contradicts([2014, 2017], 2017))
+        self.assertTrue(w._contradicts([2014, 2017], 1990))
+
+
 if __name__ == '__main__':
     unittest.main()

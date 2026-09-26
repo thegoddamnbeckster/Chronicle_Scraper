@@ -74,6 +74,17 @@ def year_from_path(path):
     return None
 
 
+def years_in_path(path):
+    """Every (YYYY)/[YYYY] year tag in a movie's file name and its folder name. A fan edit can carry two
+    (live 2026-09-26: folder "... Defrosted Edition (2017)" holding "... (2014).mkv"), and a match for
+    either is not a contradiction."""
+    parts = (path or '').replace('\\', '/').split('/')
+    found = []
+    for candidate in (parts[-1], parts[-2] if len(parts) > 1 else ''):
+        found.extend(int(y) for y in _YEAR_IN_NAME.findall(candidate))
+    return found
+
+
 def _get_all_movies():
     request = {
         'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetMovies',

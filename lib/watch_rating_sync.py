@@ -43,7 +43,7 @@ from lib import episode_numbers
 from lib import media_id_cache
 from lib import movie_art_sync
 from lib.full_sync_check import _MOVIE_PROPERTIES as _MOVIE_TEXT_PROPERTIES
-from lib.full_sync_check import diff_movie, needs_cast_refresh, refresh_movie, set_differs, year_from_path
+from lib.full_sync_check import diff_movie, needs_cast_refresh, refresh_movie, set_differs, year_from_path, years_in_path
 from lib import progress_sync
 from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
@@ -162,6 +162,11 @@ def _resolve_movie_id(client, cache, movie):
     return result['id']
 
 
+def _contradicts(path_years, year):
+    """True when none of the years tagged in the path is within a year of Chronicle's."""
+    return bool(path_years) and all(abs(y - year) >= 2 for y in path_years)
+
+
 def _sync_one_movie(client, cache, movie):
     title = movie.get('title')
     year = movie.get('year')
@@ -207,7 +212,8 @@ def _sync_one_movie(client, cache, movie):
     # A cached id (or an earlier wrong match) whose film contradicts the year in the file's own name
     # is a cross-link, not a match: drop it and resolve again, now by the file's year.
     file_year = year_from_path(movie.get('file'))
-    if file_year and details.get('year') and abs(file_year - details['year']) >= 2:
+    path_years = years_in_path(movie.get('file'))
+    if file_year and details.get('year') and _contradicts(path_years, details['year']):
         log.info('watch_rating_sync: "{0}" -- file name says {1} but Chronicle item {2} is {3}; '
                  're-resolving'.format(label, file_year, media_item_id, details['year']))
         cache.pop(key, None)
@@ -215,7 +221,7 @@ def _sync_one_movie(client, cache, movie):
         details = client.get_movie_details(media_item_id) if media_item_id else None
         if not details:
             return
-        if details.get('year') and abs(file_year - details['year']) >= 2:
+        if details.get('year') and _contradicts(path_years, details['year']):
             # Still the wrong film after a fresh lookup: write nothing rather than cross-link it.
             cache.pop(key, None)
             log.warning('watch_rating_sync: "{0}" -- file name says {1} but Chronicle only offers a {2} '
