@@ -41,6 +41,7 @@ import xbmc
 
 from lib import episode_numbers
 from lib import media_id_cache
+from lib.full_sync_check import year_from_path
 from lib import progress_sync
 from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
@@ -142,9 +143,12 @@ def _resolve_movie_id(client, cache, movie):
         return cached_id
 
     title = movie.get('title')
-    year = movie.get('year')
     file_path = movie.get('file') or ''
     filename = posixpath.basename(file_path) if file_path else None
+    # The FILE's year, not Kodi's own: Kodi's is only as good as the scrape that set it, and a wrong
+    # one ("Total Recall (2012).mkv" scraped as the 1990 film) made Chronicle's search agree with
+    # the wrong item, cross-linking this file's watched state and rating to another film.
+    year = year_from_path(file_path) or movie.get('year')
 
     result = client.search_movie(title, year, filename=filename)
     if not result or not result.get('id'):
@@ -177,6 +181,18 @@ def _sync_one_movie(client, cache, movie):
             details = client.get_movie_details(media_item_id) if media_item_id else None
         if not details:
             log.info('watch_rating_sync: "{0}" -- no details returned, skipping'.format(label))
+            return
+
+    # A cached id (or an earlier wrong match) whose film contradicts the year in the file's own name
+    # is a cross-link, not a match: drop it and resolve again, now by the file's year.
+    file_year = year_from_path(movie.get('file'))
+    if file_year and details.get('year') and abs(file_year - details['year']) >= 2:
+        log.info('watch_rating_sync: "{0}" -- file name says {1} but Chronicle item {2} is {3}; '
+                 're-resolving'.format(label, file_year, media_item_id, details['year']))
+        cache.pop(key, None)
+        media_item_id = _resolve_movie_id(client, cache, movie)
+        details = client.get_movie_details(media_item_id) if media_item_id else None
+        if not details:
             return
 
     client.report_kodi_id(media_item_id, 'movie', movie['movieid'])

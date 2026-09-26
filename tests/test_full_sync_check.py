@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests.kodi_stubs as kodi_stubs  # noqa: F401 -- side-effect: stubs xbmc before import below
 
 from lib import full_sync_check
-from lib.full_sync_check import diff_movie
+from lib.full_sync_check import diff_movie, year_from_path
 
 
 def _kodi_item(**overrides):
@@ -224,6 +224,50 @@ class TestRunSyncsArtUnconditionally(unittest.TestCase):
             result = full_sync_check.run()
 
         self.assertEqual(result['checked'], 1, "the item is still counted as checked despite the art-sync failure")
+
+
+class TestYearFromPath(unittest.TestCase):
+    """Kodi's own year is only as good as the scrape that set it: "Total Recall (2012).mkv" was
+    scraped as the 1990 film, so Kodi's 1990 would have made the by-file year guard reject the
+    corrected Chronicle record. The file name's year is the independent witness."""
+
+    def test_file_name_year(self):
+        self.assertEqual(year_from_path('smb://n/Movies/Total Recall (2012)/Total Recall (2012).mkv'), 2012)
+        self.assertEqual(year_from_path('smb://n/Movies/X/X [1990].mkv'), 1990)
+
+    def test_falls_back_to_the_folder_then_none(self):
+        self.assertEqual(year_from_path('smb://n/Movies/Total Recall (2012)/movie.mkv'), 2012)
+        self.assertIsNone(year_from_path('smb://n/Movies/Total Recall/Total Recall.mkv'))
+        self.assertIsNone(year_from_path(None))
+
+
+class TestDiffMovieCastAndCompany(unittest.TestCase):
+
+    def test_different_cast_is_replaced_whole_with_order_and_thumbnails(self):
+        kodi = _kodi_item(cast=[{'name': 'Arnold Schwarzenegger', 'role': 'Quaid', 'order': 0}])
+        details = _chronicle_details(cast=[{'name': 'Colin Farrell', 'role': 'Quaid', 'thumbUrl': 'https://t/c.jpg'},
+                                           {'name': 'Kate Beckinsale', 'role': 'Lori'}])
+        updates = diff_movie(kodi, details)
+        self.assertEqual(updates['cast'], [
+            {'name': 'Colin Farrell', 'role': 'Quaid', 'order': 0, 'thumbnail': 'https://t/c.jpg'},
+            {'name': 'Kate Beckinsale', 'role': 'Lori', 'order': 1, 'thumbnail': ''}])
+
+    def test_same_cast_in_a_different_order_is_no_difference(self):
+        kodi = _kodi_item(cast=[{'name': 'B'}, {'name': 'A'}])
+        self.assertNotIn('cast', diff_movie(kodi, _chronicle_details(cast=[{'name': 'a'}, {'name': 'b'}])))
+
+    def test_studio_and_country_are_written_as_lists_only_when_they_differ(self):
+        kodi = _kodi_item(studio=['Carolco Pictures'], country=['United States of America'])
+        details = _chronicle_details(studio='Columbia Pictures', country='United States of America')
+        updates = diff_movie(kodi, details)
+        self.assertEqual(updates['studio'], ['Columbia Pictures'])
+        self.assertNotIn('country', updates)
+
+    def test_nothing_chronicle_has_is_never_blanked(self):
+        kodi = _kodi_item(cast=[{'name': 'A'}], studio=['S'], country=['C'])
+        updates = diff_movie(kodi, _chronicle_details(cast=None, studio=None, country=None))
+        for key in ('cast', 'studio', 'country'):
+            self.assertNotIn(key, updates)
 
 
 if __name__ == '__main__':

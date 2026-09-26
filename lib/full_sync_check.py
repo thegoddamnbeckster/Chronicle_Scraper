@@ -40,6 +40,7 @@ scrape flow -- its own skip-cache is what keeps an unchanged poster cheap, not a
 
 import json
 import posixpath
+import re
 
 import xbmc
 
@@ -51,8 +52,26 @@ log = Logger('full_sync_check')
 
 _MOVIE_PROPERTIES = [
     'file', 'title', 'year', 'plot', 'tagline', 'mpaa', 'genre', 'director',
-    'imdbnumber', 'uniqueid', 'premiered', 'art',
+    'imdbnumber', 'uniqueid', 'premiered', 'art', 'cast', 'studio', 'country',
 ]
+
+_YEAR_IN_NAME = re.compile(r'[\(\[]((?:19|20)\d{2})[\)\]]')
+
+
+def year_from_path(path):
+    """The (YYYY)/[YYYY] year in a movie file's own name, else in its folder's name, else None.
+
+    Kodi's own year for a movie is only as good as the scrape that set it -- confirmed live
+    (2026-09-26): "Total Recall (2012).mkv" was scraped as the 1990 film, so Kodi's year (1990)
+    matched Chronicle's wrong item and even a corrected Chronicle (which now knows the file as the
+    2012 film) would have been rejected by the year guard as a contradiction and never applied. The
+    file name is the independent witness to which film a file is."""
+    parts = (path or '').replace('\\', '/').split('/')
+    for candidate in (parts[-1], parts[-2] if len(parts) > 1 else ''):
+        m = _YEAR_IN_NAME.search(candidate)
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def _get_all_movies():
@@ -108,6 +127,20 @@ def diff_movie(kodi_item, details):
                  if (c.get('job') or '').lower() == 'director']
     if directors and set(kodi_item.get('director') or []) != set(directors):
         updates['director'] = directors
+
+    cast = [c for c in (details.get('cast') or []) if c.get('name')]
+    kodi_cast_names = {(c.get('name') or '').lower() for c in (kodi_item.get('cast') or [])}
+    if cast and kodi_cast_names != {c['name'].lower() for c in cast}:
+        updates['cast'] = [
+            {'name': c['name'], 'role': c.get('role') or '', 'order': i, 'thumbnail': c.get('thumbUrl') or ''}
+            for i, c in enumerate(cast)]
+
+    studio = details.get('studio')
+    if studio and set(kodi_item.get('studio') or []) != {studio}:
+        updates['studio'] = [studio]
+    country = details.get('country')
+    if country and set(kodi_item.get('country') or []) != {country}:
+        updates['country'] = [country]
 
     imdb = (details.get('externalIds') or {}).get('imdb')
     if imdb and kodi_item.get('imdbnumber') != imdb:
@@ -179,7 +212,8 @@ def run(is_cancelled=None, progress_callback=None):
             continue
         file_name = posixpath.basename(file_path)
 
-        details = client.get_movie_details_by_file(file_name, year=movie.get('year'))
+        details = client.get_movie_details_by_file(
+            file_name, year=year_from_path(file_path) or movie.get('year'))
         if not details:
             continue  # nothing unambiguous in Chronicle for this exact file -- nothing to sync
         checked += 1
