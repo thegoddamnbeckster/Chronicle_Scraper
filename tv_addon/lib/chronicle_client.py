@@ -125,7 +125,7 @@ def _call_with_retries(fn, timeout, log_label):
 # search_movie/search_show can trigger Chronicle's resolve-or-create path for a
 # title it's never seen before -- which walks every configured metadata
 # provider SEQUENTIALLY (each individually bounded up to 25s server-side), not
-# in parallel. Confirmed directly (2026-07-30, a full-library NFO rebuild):
+# in parallel. Confirmed directly (2026-07-30, a full-library rescan):
 # 64 distinct titles hit the plain 20s default below and got nothing back even
 # though Chronicle was still working -- not a hang, just legitimately slow
 # multi-provider enrichment for a brand-new title. The everyday lookups
@@ -225,9 +225,8 @@ class ChronicleClient:
     def resolve_show_by_external_id(self, source: str, external_id: str):
         """GET /api/v1/scraper/tv/resolve-by-external-id?source=&externalId= --
         the lookup getartwork() needs that find/getdetails never do, since Kodi
-        passes the show's own default uniqueid (imdb, since Chronicle's own
-        NFOs always mark it default="true") back as a bare string for that one
-        action instead of this addon's own opaque lookup-string format. Never
+        passes the show's own default uniqueid (imdb) back as a bare string for
+        that one action instead of this addon's own opaque lookup-string format. Never
         creates anything, unlike search_show() -- a getartwork call for a show
         Chronicle doesn't already know has nothing to create it FROM (no
         title, no year, just an id)."""
@@ -238,24 +237,6 @@ class ChronicleClient:
         url = '{0}/api/v1/scraper/tv/resolve-by-external-id?source={1}&externalId={2}'.format(
             self._base_url, urllib.parse.quote(source), urllib.parse.quote(external_id))
         return self._get(url, 'resolve_show_by_external_id({0!r}, {1!r})'.format(source, external_id),
-                          full_url=True, timeout=_SEARCH_TIMEOUT_SECONDS)
-
-    def resolve_episode_by_external_id(self, source: str, external_id: str):
-        """GET /api/v1/scraper/tv/resolve-episode-by-external-id?source=&externalId= --
-        the counterpart resolve_show_by_external_id provides for shows, used by
-        nfo_url()'s episode branch: an episode-level NfoUrl call carries no show
-        context at all (see tvshow_scraper._nfo_url_episode's own doc), so the
-        episode's own external id (from its NFO's <uniqueid>) is the only thing
-        available to resolve it by. Never creates anything, same as the show
-        version -- there's no title+year fallback available for a single episode
-        the way find_show()/search_show() has for a show."""
-        if not self._base_url or not self._api_key:
-            log.warning('Chronicle URL or API key not configured — resolve_episode_by_external_id skipped')
-            return None
-
-        url = '{0}/api/v1/scraper/tv/resolve-episode-by-external-id?source={1}&externalId={2}'.format(
-            self._base_url, urllib.parse.quote(source), urllib.parse.quote(external_id))
-        return self._get(url, 'resolve_episode_by_external_id({0!r}, {1!r})'.format(source, external_id),
                           full_url=True, timeout=_SEARCH_TIMEOUT_SECONDS)
 
     def get_show_details(self, media_item_id: int):
@@ -330,13 +311,12 @@ class ChronicleClient:
 
     def report_kodi_id(self, media_item_id: int, kind: str, kodi_id: int):
         """POST /api/v1/scraper/report-kodi-id -- tells Chronicle this device's own internal
-        VideoLibrary id (tvshowid/episodeid) for a MediaItem, so a future NFO update can be
-        pushed straight to this device (see Chronicle's own NfoPushService/KodiRpcClient)
-        instead of waiting for a manual/scheduled rebuild pass or this device's own next scan.
+        VideoLibrary id (tvshowid/episodeid) for a MediaItem, so Chronicle knows which
+        Kodi library entry each item is on this device.
         A no-op server-side (not an error) when this device hasn't registered itself yet, e.g.
         remote control is off in Kodi's own Settings -- see lib/device_registration.py.
         Best-effort: failures are logged and swallowed, same as
-        report_resolved_file()/contribute_metadata()."""
+        report_resolved_file()."""
         if not self._base_url or not self._api_key:
             return
         url = '{0}/api/v1/scraper/report-kodi-id'.format(self._base_url)
@@ -364,11 +344,7 @@ class ChronicleClient:
 
     def report_scan_active(self):
         """POST /api/v1/scraper/scan-active -- heartbeat telling Chronicle "a Kodi device is
-        actively scanning right now," so NfoGenerationService's own 2-minute scheduled sweep
-        pauses itself for the duration instead of contending with the scan for the same server/
-        IO capacity. Root-caused live (2026-09-12): the sweep and an active scan's own live,
-        per-item NFO pushes routinely landed on the same freshly-discovered item within seconds
-        of each other, each independently rebuilding and writing the identical NFO. Called from
+        actively scanning right now" (see IKodiDeviceService.IsScanActiveAsync server-side). Called from
         service.py's own idle loop while Kodi's library scan OR this addon's own scraper-activity
         tail is still running -- the tail matters just as much as Kodi's own directory-walk
         phase, since that's where the actual per-item contention happens. No explicit "finished"
@@ -388,49 +364,6 @@ class ChronicleClient:
             call_with_timeout(_do, 10)
         except Exception as exc:
             log.warning('report_scan_active(): {0}'.format(exc))
-
-    def contribute_metadata(self, media_item_id: int, source: str, metadata: dict):
-        """POST /api/v1/media/{id}/metadata/{source} -- contributes fields
-        harvested from a local source (e.g. a pre-existing NFO another tool
-        wrote, about to be overwritten -- see lib/legacy_nfo.py) into
-        Chronicle's own MetadataContributionService. Lands in its own named
-        partition and only ever fills a field Chronicle doesn't already have
-        from a real provider -- it can't clobber better data. Best-effort:
-        failures are logged and swallowed, same as report_resolved_file() --
-        this is a nice-to-have enrichment, not something the current scrape
-        depends on."""
-        if not self._base_url or not self._api_key or not metadata:
-            return
-        url = '{0}/api/v1/media/{1}/metadata/{2}'.format(
-            self._base_url, media_item_id, urllib.parse.quote(source, safe=''))
-        data = json.dumps({'metadata': metadata}).encode('utf-8')
-        req = self._build_request(url, data=data, method='POST')
-
-        def _do():
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                return resp.status
-
-        try:
-            status = call_with_timeout(_do, 20)
-            if status == 200:
-                log.info('contribute_metadata({0}, {1!r}): {2} field(s) contributed'.format(
-                         media_item_id, source, len(metadata)))
-            else:
-                log.warning('contribute_metadata({0}, {1!r}): unexpected HTTP {2}'.format(
-                            media_item_id, source, status))
-        except urllib.error.HTTPError as exc:
-            log.warning('contribute_metadata({0}, {1!r}): Chronicle returned HTTP {2} ({3})'.format(
-                        media_item_id, source, exc.code, exc.reason))
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            log.warning('contribute_metadata({0}, {1!r}): Chronicle not reachable ({2})'.format(
-                        media_item_id, source, exc))
-        except Exception as exc:
-            log.warning('contribute_metadata({0}, {1!r}): unexpected error: {2}'.format(
-                        media_item_id, source, exc))
-
-    # fetch_show_sidecar()/fetch_episode_sidecar() removed (2026-09-13/2026-09-12) along with
-    # their only callers -- Chronicle no longer writes any local NFO for this addon at all. The
-    # server endpoints they called (GET tv/sidecar, GET tv/episode-sidecar) were removed too.
 
     def push_watched(self, media_item_id: int, timestamp_iso):
         """POST /api/v1/scrobble -- imports Kodi's own local watched status into Chronicle
@@ -503,7 +436,7 @@ class ChronicleClient:
         lib/progress_sync.py's resolve_progress_direction). Reuses the scrobble
         endpoint's own existing "most recent wins" guard server-side rather than
         duplicating it here. Best-effort: failures are logged and swallowed,
-        same as report_resolved_file()/contribute_metadata()."""
+        same as report_resolved_file()."""
         if not self._base_url or not self._api_key:
             return
         url = '{0}/api/v1/scrobble'.format(self._base_url)
@@ -542,7 +475,7 @@ class ChronicleClient:
         """GET /api/v1/scraper/kodi-scan-signal -- true if Chronicle imported new movie/TV
         content since this device last acknowledged (see acknowledge_scan_needed()). This is
         how a brand-new episode file gets discovered by Kodi's own VideoLibrary at all --
-        VideoLibrary.Refresh* (what push_watched/push_resume and any NFO refresh rely on) only
+        VideoLibrary.Refresh* (what push_watched/push_resume rely on) only
         works on an item Kodi already has a library entry for, never a file it hasn't seen yet.
         Chronicle's server never calls this device's JSON-RPC directly for this: this addon
         polls and runs the scan on itself via its own LOCAL xbmc.executeJSONRPC, so nothing here

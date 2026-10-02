@@ -57,7 +57,7 @@ _STATE_PROPERTIES = ['userrating', 'resume', 'playcount', 'lastplayed']
 def lookup_episode_state(tvshowid, season, episode):
     """One VideoLibrary.GetEpisodes properties lookup for resume/playcount/
     lastplayed on this exact (season, episode). Matched in Python, same
-    approach as tvshow_location.get_episode() -- a single show's episode list
+    approach as a per-show lookup -- a single show's episode list
     is never large enough for a JSON-RPC filter to matter. Returns None when
     tvshowid is unknown, the call fails, or this episode isn't in Kodi's
     library yet (a brand-new episode mid-import) -- resolve_progress_direction()

@@ -267,9 +267,9 @@ def _change_chronicle_url():
 def _sync_watch_ratings_now():
     """Manual "Sync Watch History and Ratings Now" action -- runs the same
     watch_rating_sync.run() pass the background service triggers automatically (on load, and on
-    its own interval), immediately and on demand. No confirmation dialog, unlike
-    "Rebuild local NFOs from Chronicle" above: this never touches a local file, only Kodi's own
-    VideoLibrary fields and Chronicle's API, so there's nothing destructive to warn about."""
+    its own interval), immediately and on demand. No confirmation dialog: this never touches a
+    local file, only Kodi's own VideoLibrary fields and Chronicle's API, so there's nothing
+    destructive to warn about."""
     bg = xbmcgui.DialogProgressBG()
     bg.create(ADDON.getLocalizedString(32134))
 
@@ -298,7 +298,7 @@ def _sync_collections_now():
     the background service triggers automatically (on load, and on its own interval),
     immediately and on demand. No confirmation dialog, same reasoning as
     _sync_watch_ratings_now above: sync_collection_art() overwrites local art files inside
-    Kodi's own dedicated "Movie set information folder" (never a video/NFO file), the same
+    Kodi's own dedicated "Movie set information folder" (never a video file), the same
     fill-or-refresh write an ordinary scrape already does for a collection's member movie."""
     bg = xbmcgui.DialogProgressBG()
     bg.create(ADDON.getLocalizedString(32143))

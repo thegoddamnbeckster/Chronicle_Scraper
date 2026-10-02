@@ -8,13 +8,7 @@ available" signal to trigger a library scan when needed. See
 lib/watch_rating_sync.py, lib/collection_art_sync.py, lib/kodi_scan_signal.py
 and lib/device_registration.py for what each of those actually does.
 
-Local NFO writing/rebuilding (write_nfo, auto_rebuild_on_scan) was a
-separate, removed feature -- see git history for lib/nfo_rebuild.py and this
-file's own history if you need the old rationale. Removed per-user direction
-(2026-09-13) after it was suspected of interfering with TV show scanning
-reliability during a heavy rescan session; Chronicle's own API is the
-source of truth Kodi's scraper reads from directly, so a local NFO was never
-required for this addon to work.
+Chronicle's own API is the source of truth Kodi's scraper reads from directly.
 """
 
 import threading
@@ -133,10 +127,8 @@ class ChronicleMonitor(xbmc.Monitor):
         scraper activity tail (activity_tracker -- shared across both addon packages, see that
         module's own doc) is recent enough to still be considered "in progress". Per-user
         decision (2026-09-12): the movie and TV scrapers' own background maintenance tasks must
-        never run at the same time as an active scan/scrape, the same way Chronicle's own
-        server-side NfoGenerationService now pauses itself for the same reason (see
-        IKodiDeviceService.IsScanActiveAsync's server-side doc) -- both are contending for the
-        same limited local (SMB/CPU) or server capacity an active scan needs most. Logged and
+        never run at the same time as an active scan/scrape -- both contend for the same
+        limited local (SMB/CPU) or server capacity an active scan needs most. Logged and
         returned as a simple bool (not raised) so callers can just `if deferred: return`.
         """
         kodi_scanning = xbmc.getCondVisibility('Library.IsScanning')
@@ -568,9 +560,8 @@ def run():
 
         # Covers BOTH content types, even for a user with only this addon installed: the tail
         # this addon's own scraper actions leave behind after Kodi's own directory-walk phase
-        # ends (is_active, computed above from the shared activity_tracker signal file) is
-        # exactly where NfoGenerationService's own scheduled sweep used to contend with an
-        # active scan for the same server/IO capacity -- see report_scan_active()'s own doc.
+        # ends (is_active, computed above from the shared activity_tracker signal file) counts
+        # as active scanning too -- see report_scan_active()'s own doc.
         if (kodi_scanning or is_active) and \
                 time.time() - last_scan_active_heartbeat >= _SCAN_ACTIVE_HEARTBEAT_SECONDS:
             last_scan_active_heartbeat = time.time()

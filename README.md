@@ -65,41 +65,25 @@ scraper also becomes trackable in Chronicle automatically (mirroring how scrobbl
 already auto-creates media items on first watch) — scanning your library with this
 scraper selected is, at the same time, populating your Chronicle library.
 
-## NFO files: local file richness, not just what Kodi asks for
+## Local .nfo files are not supported
 
-Beyond answering Kodi's scraper API calls, this addon writes real NFO files next to
-your movies, shows, and episodes — so the metadata survives independently of Kodi's
-own database, and other tools that read NFOs (or a future Kodi library rebuild) see
-the same richness Chronicle has.
+Chronicle is the only source of what this scraper reports. The addon never reads or
+writes `.nfo` files, and Kodi's `NfoUrl` scraper action is not implemented.
 
-- **Legacy NFO preservation.** If a file already had an NFO before Chronicle ever
-  touched it, anything in that old NFO that Chronicle doesn't itself provide (a
-  hand-written plot tweak, a rare field, local-only tags) is preserved and merged
-  back in rather than silently discarded on the first overwrite.
-- **Streamdetails** (video/audio/subtitle codec, resolution, channels, language) are
-  read live from Kodi via `VideoLibrary`/`Files` JSON-RPC and written into the NFO —
-  gated behind the **Write file metadata (streamdetails)** setting, off by default,
-  since re-probing every file's stream info on every scan is unnecessary on
-  read-only library clients.
-- **Local art enumeration** — any art files already sitting next to a movie/show
-  (posters, fanarts, extrafanart, etc.) are listed in the NFO's own `<art>` block
-  alongside whatever Chronicle supplies, so Kodi doesn't lose track of local-only
-  images on a rebuild.
-- All of the above applies equally to **TV shows and episodes**, not just movies.
+Remove any `.nfo` files from folders scanned with this scraper. Kodi reads a local
+`.nfo` itself before asking any scraper, so a leftover file can override Chronicle's
+data. For TV, an episode-level `.nfo` makes Kodi stop scanning that show at that
+episode, because Kodi never falls back to the scraper's normal episode lookup when
+`NfoUrl` returns nothing.
 
-NFO writing itself is gated behind the **Write NFO files** setting, off by default —
-this addon works purely through Kodi's scraper API without it; NFOs are an optional,
-opt-in richness layer for households running the same library across multiple Kodi
-instances where only one instance should be doing the (slower) write-back work.
+## Background service: watch progress in the corner
 
-## Background service: rebuild NFOs, watch progress in the corner
-
-A background service (`service.py`) adds a **Rebuild NFO Cache** action that deletes
-and regenerates NFOs for the whole library through Chronicle, with a corner progress
-toast (matching Kodi's own file-scan indicator) so you can see it's still working —
-each scraper action (`find`/`getdetails`/`getepisodedetails`/`getartwork`) is a
-separate short-lived Kodi process, so the service polls a small cross-process
-heartbeat file to know something is happening.
+A background service (`service.py`) shows a corner progress toast (matching Kodi's own
+file-scan indicator) while the scrapers are working -- each scraper action
+(`find`/`getdetails`/`getepisodedetails`/`getartwork`) is a separate short-lived Kodi
+process, so the service polls a small cross-process heartbeat file to know something
+is happening. It also runs the periodic watch-history/rating sync, collection art
+sync, and Chronicle's "new content available" scan signal.
 
 ## Setup
 
@@ -117,10 +101,7 @@ heartbeat file to know something is happening.
 |---|---|---|
 | Chronicle URL | _(empty)_ | Required — your server's host/IP (and port, if not behind a reverse proxy) |
 | API Key | _(empty, hidden)_ | Set automatically by the QR device-auth flow |
-| Write NFO files | **On** | Writes/refreshes local NFOs alongside the scraper API responses -- needed for a rebuild pass to actually get episode/rating/progress changes to Kodi at all, see "Background service" below |
-| Automatically rebuild NFOs after every library scan | **On** | Closes the loop so Chronicle-side changes keep reaching an already-scraped library, not just brand-new files |
-| Write file metadata (streamdetails) | Off | Only shown when NFO writing is on; probes and writes stream/codec info per file |
-| Automatically sync watch history and ratings | **On** | Separate, lightweight, non-destructive pass (see "Watch history and ratings sync" below) -- reconciles resume/watched/rating directly via Kodi's own library fields, no NFO writes involved |
+| Automatically sync watch history and ratings | **On** | Separate, lightweight, non-destructive pass (see "Watch history and ratings sync" below) -- reconciles resume/watched/rating directly via Kodi's own library fields |
 | Sync once shortly after Kodi starts | On | |
 | Sync every (minutes) | 120 (2h) | 30-minute increments |
 
@@ -130,7 +111,7 @@ heartbeat file to know something is happening.
 Chronicle_Scraper/
 ├── addon.xml                      # xbmc.metadata.scraper.{movies,tvshows} + xbmc.python.script
 ├── default.py                     # Menu: Test Connection / Connect to Chronicle / Settings
-├── service.py                     # Background service: Rebuild NFO Cache, corner activity indicator
+├── service.py                     # Background service: corner activity indicator, periodic syncs
 ├── icon.png                       # Chronicle's own "C" icon
 ├── LICENSE
 ├── python/
@@ -143,17 +124,10 @@ Chronicle_Scraper/
 │   ├── kodi_settings.py           # Reads Kodi's own live settings via JSON-RPC (never hardcoded)
 │   ├── collection_sync.py         # Fills/overwrites movie-set art and extrafanart in Kodi's local movie-sets folder
 │   ├── movie_art_sync.py          # Local poster/fanart sync + streamdetails lookup for movies
-│   ├── tvshow_location.py         # Locates a show/episode's files on disk
-│   ├── episode_path_cache.py      # Stashes an episode's known file path across nfo_rebuild.py's own RefreshEpisode race
-│   ├── nfo_common.py              # Shared NFO XML-building blocks
-│   ├── nfo_writer.py              # Movie NFO writer
-│   ├── tv_nfo_writer.py           # Show/episode NFO writer
-│   ├── nfo_rebuild.py             # Rebuild action: claims work from Chronicle's cross-device queue, delete + regenerate
 │   ├── progress_sync.py           # Shared resume/watched/rating reconciliation logic (used by scrapes AND the periodic sync)
 │   ├── watch_rating_sync.py       # Periodic non-destructive watch-history/rating sync (own settings category, own timer)
 │   ├── media_id_cache.py          # Persists each item's resolved Chronicle id so watch_rating_sync.py skips re-resolving it
 │   ├── settings_upgrade.py        # One-time migration for settings whose shipped default changed after install
-│   ├── legacy_nfo.py              # Parses and stashes pre-existing NFO data for merge-back
 │   ├── activity_tracker.py        # Cross-process heartbeat file for the corner activity indicator
 │   ├── device_auth.py             # QR device-auth flow (shared design with Chronicle_Scrobbler)
 │   └── qr_dialog.py               # QR code + PIN display UI
@@ -203,8 +177,8 @@ share one library but only one should be doing scraper work.
   same way movies do, but `tv/episodes` only returns episodes Chronicle's own
   file-scanner/import pipeline already knows about. A brand-new show has an empty
   episode list until Chronicle's backend populates it some other way.
-- **NfoUrl and getartwork actions are not implemented** for either scraper, matching
-  v1.0.0's own precedent — Kodi will fall back to its normal find/getdetails flow.
+- **NfoUrl is not implemented** for either scraper -- local `.nfo` files are not
+  supported (see above).
 - **Search matches by title/year only**, mirroring Chronicle's own scrobble
   resolve-or-create logic. No fuzzy/alternate-title matching beyond what Chronicle's
   configured metadata providers already do internally.

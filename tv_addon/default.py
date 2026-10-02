@@ -13,9 +13,7 @@ Deliberately does NOT duplicate the corner status indicator -- that lives in
 the Movies addon's own default.py/service.py (see lib/activity_tracker.py
 there, keyed by a cross-process signal file under
 special://temp/chronicle_scraper/, not by addon id, so it already covers
-both addons). Local NFO writing/rebuilding was a separate feature that
-existed in both addons and has since been removed entirely (2026-09-13) --
-see git history if you need the old rationale.
+both addons).
 
 ## Chronicle URL: one entry point, not two
 

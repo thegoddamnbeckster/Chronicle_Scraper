@@ -81,9 +81,8 @@ log = Logger('library_repair')
 
 ADDON = xbmcaddon.Addon()
 
-# Same cross-process-file location family as lib/rebuild_state.py, though this addon (unlike
-# the movie/TV NFO-rebuild split) has no cross-addon sharing need -- kept under the shared
-# special://temp/chronicle_scraper/ tree purely for consistency with the rest of this codebase.
+# Kept under the shared special://temp/chronicle_scraper/ tree purely for consistency with the
+# rest of this codebase -- this lock has no cross-addon sharing need.
 _LOCK_PATH = 'special://temp/chronicle_scraper/library_repair_active.json'
 
 # Long enough to cover any real repair (even a very large library), short enough that a crashed
@@ -184,9 +183,7 @@ def check_preconditions(db_path):
 
 
 def _is_scanning():
-    """Fails CLOSED (treats an unreadable result as "yes, scanning") -- unlike
-    lib/rebuild_state.py's own is_active(), which fails open because a missed rebuild marker
-    only costs one skipped NFO write. Here, colliding with an active scan is exactly the failure
+    """Fails CLOSED (treats an unreadable result as "yes, scanning"). Colliding with an active scan is exactly the failure
     this check exists to prevent, so an inability to tell must be treated as the unsafe case."""
     try:
         return bool(xbmc.getCondVisibility('Library.IsScanning'))

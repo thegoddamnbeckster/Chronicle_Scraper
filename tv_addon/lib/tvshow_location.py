@@ -22,10 +22,6 @@ is needed for episodes. VideoLibrary.GetEpisodes is the one and only path,
 and the same call doubles as the source for Kodi's own streamdetails for
 that file.
 
-Also duplicated verbatim into the MOVIE addon's own lib/ (same reasoning as
-chronicle_client.py's duplication) -- nfo_rebuild.py lives there and needs
-these same two functions to resolve TV rebuild-queue items. If you fix a bug
-here, fix it in both copies.
 """
 
 import json
@@ -144,7 +140,7 @@ def find_show_location(title, year):
         return folder, None
 
     log.info('No folder found for {0!r} ({1}) via VideoLibrary or source browsing -- '
-             'will not sync local art/NFO this pass'.format(title, year))
+             'will not sync local art this pass'.format(title, year))
     return None, None
 
 
@@ -195,7 +191,7 @@ def _lookup_show(title, year):
     # Same folder-name verification movie_art_sync.py's own fast path added
     # after a real cross-contamination bug (v2.6.0) -- Kodi's title index can
     # point at the wrong entry if that entry's own stored title is itself
-    # wrong (a stale local NFO, an earlier bad match). Verify the folder
+    # wrong (an earlier bad match). Verify the folder
     # actually matches before trusting it.
     folder_name = posixpath.basename(folder.rstrip('/'))
     if not year_tolerant_match(normalize(folder_name), normalize(title), year):
@@ -244,8 +240,3 @@ def _search_sources_for_show(title, year):
     return None
 
 
-# get_episode() removed (2026-09-12) along with its only caller, tvshow_scraper.py's
-# get_episode_details() rebuild-only block -- Chronicle no longer writes per-episode NFOs, so
-# the file-path lookup this fed (purely for the local NFO write + streamdetails splice) no
-# longer serves any purpose. See ScraperController.ResolveEpisodeByExternalId's own doc
-# (Chronicle server repo) for the full reasoning.

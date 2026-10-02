@@ -2,14 +2,9 @@
 """
 Smoke tests for python/scraper.py's get_details()/get_artwork() -- the movie addon's core
 find/getdetails scrape path had no direct test coverage before this file (only
-activity_tracker.py and tvshow_location_cache.py, which it happens to use, were tested).
-
-Added 2026-09-13 alongside the removal of local NFO writing/rebuilding (write_nfo,
-lib/nfo_writer.py, lib/rebuild_state.py) from get_details() -- that removal deleted roughly a
-third of the function's body, so this locks in that the remaining scrape path (art sync, rating/
-resume/watched reconciliation, ListItem population, setResolvedUrl) still runs end to end with
-no exception and, just as importantly, proves no local NFO file is written anymore under any
-settings combination.
+activity_tracker.py, which it happens to use, was tested). Locks in that the scrape path (art
+sync, rating/resume/watched reconciliation, ListItem population, setResolvedUrl) runs end to end
+with no exception.
 """
 import os
 import sys
@@ -47,10 +42,10 @@ class TestGetDetailsSmoke(unittest.TestCase):
         kodi_stubs.reset_vfs()
         scraper.xbmcplugin.setResolvedUrl.reset_mock()
 
-    def _run_get_details(self, write_nfo_setting=True):
+    def _run_get_details(self):
         mock_client = MagicMock()
         mock_client.get_movie_details.return_value = dict(_MOVIE_DETAILS)
-        scraper.ADDON.getSettingBool = MagicMock(return_value=write_nfo_setting)
+        scraper.ADDON.getSettingBool = MagicMock(return_value=True)
         with patch('python.scraper.ChronicleClient', return_value=mock_client), \
              patch('python.scraper.find_movie_location',
                    return_value=('/movies/Dune Part Two (2024)/', 'Dune Part Two (2024)',
@@ -73,25 +68,10 @@ class TestGetDetailsSmoke(unittest.TestCase):
         vtag = listitem.getVideoInfoTag()
         vtag.setTitle.assert_called_once_with('Dune: Part Two')
 
-    def test_get_details_writes_no_local_nfo_even_with_write_nfo_setting_on(self):
-        # write_nfo no longer exists as a real feature -- confirms a stale True value left
-        # over in an existing install's settings.xml can't somehow still trigger a write.
-        self._run_get_details(write_nfo_setting=True)
-        nfo_paths = [p for p in kodi_stubs._FAKE_FILES if p.endswith('.nfo')]
-        self.assertEqual(nfo_paths, [], "no .nfo file should ever be written for a movie")
-
     def test_get_details_returns_false_for_unresolvable_media_item_id(self):
         result, _ = (scraper.get_details(media_item_id=None, handle=1), None)
         self.assertFalse(result)
         scraper.xbmcplugin.setResolvedUrl.assert_not_called()
-
-    def test_nfo_writer_module_no_longer_exists(self):
-        with self.assertRaises(ImportError):
-            import lib.nfo_writer  # noqa: F401
-
-    def test_fetch_movie_sidecar_no_longer_exists_on_the_client(self):
-        from lib.chronicle_client import ChronicleClient
-        self.assertFalse(hasattr(ChronicleClient, 'fetch_movie_sidecar'))
 
 
 class TestGetArtworkSmoke(unittest.TestCase):

@@ -23,7 +23,7 @@ This is the durable, general fix for that whole class of problem, not a one-off.
 Per-user direction: only ever updates a field that actually differs from what Chronicle has --
 "you're only doing this for items that are not the same as what Chronicle has" -- never a blind
 overwrite of everything on every pass. Only ever calls VideoLibrary.SetMovieDetails/writes a
-movie's own local art files, never writes an NFO file and never involves Chronicle's own server
+movie's own local art files, and never involves Chronicle's own server
 calling this device's JSON-RPC -- same pull-only architecture as every other feature in this addon.
 
 Poster/fanart/thumb go through movie_art_sync.sync_movie_art(), not VideoLibrary.SetMovieDetails'

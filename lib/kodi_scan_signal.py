@@ -3,14 +3,13 @@
 this device's own source folder(s) that THIS addon is actually the configured scraper for -- so
 it actually discovers the new episode/movie file.
 
-Why this has to exist at all: VideoLibrary.Refresh* (what NfoPushService and this addon's own
+Why this has to exist at all: VideoLibrary.Refresh* (what this addon's own
 per-edit sync rely on for every other change) only works on an item Kodi's own VideoLibrary
 already has an entry for -- it cannot make Kodi discover a file it doesn't know about yet. Only
 VideoLibrary.Scan can do that.
 
 Deliberately pull, not push: Chronicle's server never calls this device's JSON-RPC-over-HTTP
-endpoint for this (unlike NfoPushService, which does, and needs "Allow remote control via HTTP"
-turned on for it). This module polls Chronicle's own signal flag instead and, if it's newer than
+endpoint for this. This module polls Chronicle's own signal flag instead and, if it's newer than
 this device's last acknowledgement, runs VideoLibrary.Scan via xbmc.executeJSONRPC -- a purely
 local, in-process call this addon always has access to regardless of any Kodi network setting,
 and regardless of whether this device has ever self-registered anywhere (this feature's own

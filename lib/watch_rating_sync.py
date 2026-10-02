@@ -4,23 +4,17 @@ device's own Kodi VideoLibrary -- reconciles resume position, fully-watched stat
 against Chronicle in both directions where applicable (see lib/progress_sync.py for the actual
 direction logic), for movies, TV shows, and episodes, in one combined pass.
 
-Why this exists as its OWN pass, separate from nfo_rebuild.py: reconciliation used to happen
-purely as a side effect of get_details()/get_episode_details() being invoked during a real
-scrape (per-user request, 2026-08-30: "I don't want a separate sync task in Kodi for ratings...
-this needs to happen with the scraper automatically as part of the scrape process"). That held
-up as long as every item's own scrape ran often enough for it to matter. It stopped holding once
-nfo_rebuild.py's 2026-09-06 rework introduced a cross-device rebuild QUEUE that deliberately
-never re-claims an already-completed item (see NfoRebuildQueueItem's own doc) -- rating/resume/
-watched changes made directly in Kodi (not through Chronicle's own API, which already reaches
-Kodi live via NfoPushService) would otherwise never be picked up again after an item's first
-rebuild. Per-user correction (2026-09-06): make this its own automatic, scheduled thing instead.
+Why this exists as its OWN pass: reconciliation used to happen purely as a side effect of
+get_details()/get_episode_details() being invoked during a real scrape (per-user request,
+2026-08-30: "I don't want a separate sync task in Kodi for ratings... this needs to happen with
+the scraper automatically as part of the scrape process"). That only holds while every item's
+own scrape runs often enough for it to matter; rating/resume/watched changes made directly in
+Kodi would otherwise not be picked up again after an item's first scrape. Per-user correction
+(2026-09-06): make this its own automatic, scheduled thing instead.
 
-Deliberately does NOT touch local NFO files, rebuild_state, or the rebuild queue at all --
-resume/rating/watched are set directly via VideoLibrary.Set*Details, a lightweight, purely
-Kodi-database write with no local file I/O and no local-NFO-wins gate to fight. That also means
-this needs no cross-device coordination the way the destructive NFO rebuild does: it's
-idempotent and non-destructive, so every device can run it independently on its own schedule
-without ever racing another device over a shared file.
+Resume/rating/watched are set directly via VideoLibrary.Set*Details, a lightweight, purely
+Kodi-database write with no local file I/O. It's idempotent and non-destructive, so every
+device can run it independently on its own schedule without cross-device coordination.
 
 Resolves each Kodi item to its own Chronicle MediaItemId via the same search_movie()/
 search_show() "resolve or create" calls find()/get_details() already use during an ordinary
@@ -350,8 +344,8 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
                         'skipping it and its episodes (nothing written)'.format(label))
             return 0
 
-    # Lets Chronicle's own NfoPushService push a future show-level update straight to this
-    # device -- same reasoning as the movie/episode report_kodi_id calls below. Confirmed
+    # Reports this device's tvshowid to Chronicle -- same reasoning as the movie/episode
+    # report_kodi_id calls below. Confirmed
     # missing in an earlier draft of this function: a show first resolved through THIS pass
     # (rather than through a real scrape) never got its tvshowid reported at all.
     client.report_kodi_id(show_id, 'tvshow', show['tvshowid'])

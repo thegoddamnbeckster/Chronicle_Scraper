@@ -9,7 +9,7 @@ every single item, every single pass, forever, just to re-derive an id that's
 almost always already stable from the previous pass.
 
 Kept under special://profile/addon_data/{addon_id}/, NOT special://temp/ --
-unlike rebuild_state.py/legacy_nfo.py/episode_path_cache.py (which coordinate
+unlike a handoff file (which would coordinate
 a handoff between two Kodi-triggered scrape invocations a few seconds apart,
 and are deliberately wiped on every Kodi restart), this cache is meant to
 survive restarts: its whole purpose is to make the SECOND-and-later

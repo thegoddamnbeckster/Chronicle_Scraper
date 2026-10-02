@@ -124,7 +124,7 @@ def _call_with_retries(fn, timeout, log_label):
 # search_movie/search_show can trigger Chronicle's resolve-or-create path for a
 # title it's never seen before -- which walks every configured metadata
 # provider SEQUENTIALLY (each individually bounded up to 25s server-side), not
-# in parallel. Confirmed directly (2026-07-30, a full-library NFO rebuild):
+# in parallel. Confirmed directly (2026-07-30, a full-library rescan):
 # 64 distinct titles hit the plain 20s default below and got nothing back even
 # though Chronicle was still working -- not a hang, just legitimately slow
 # multi-provider enrichment for a brand-new title. The everyday lookups
@@ -321,13 +321,11 @@ class ChronicleClient:
 
     def report_kodi_id(self, media_item_id: int, kind: str, kodi_id: int):
         """POST /api/v1/scraper/report-kodi-id -- tells Chronicle this device's own internal
-        VideoLibrary id (movieid/tvshowid/episodeid) for a MediaItem, so a future NFO update
-        can be pushed straight to this device (see Chronicle's own NfoPushService/
-        KodiRpcClient) instead of waiting for a manual/scheduled rebuild pass or this device's
-        own next scan. A no-op server-side (not an error) when this device hasn't registered
+        VideoLibrary id (movieid/tvshowid/episodeid) for a MediaItem, so Chronicle knows which
+        Kodi library entry each item is on this device. A no-op server-side (not an error) when this device hasn't registered
         itself yet, e.g. remote control is off in Kodi's own Settings -- see
         lib/device_registration.py. Best-effort: failures are logged and swallowed, same as
-        report_resolved_file()/contribute_metadata()."""
+        report_resolved_file()."""
         if not self._base_url or not self._api_key:
             return
         url = '{0}/api/v1/scraper/report-kodi-id'.format(self._base_url)
@@ -355,11 +353,7 @@ class ChronicleClient:
 
     def report_scan_active(self):
         """POST /api/v1/scraper/scan-active -- heartbeat telling Chronicle "a Kodi device is
-        actively scanning right now," so NfoGenerationService's own 2-minute scheduled sweep
-        pauses itself for the duration instead of contending with the scan for the same server/
-        IO capacity. Root-caused live (2026-09-12): the sweep and an active scan's own live,
-        per-item NFO pushes routinely landed on the same freshly-discovered item within seconds
-        of each other, each independently rebuilding and writing the identical NFO. Called from
+        actively scanning right now" (see IKodiDeviceService.IsScanActiveAsync server-side). Called from
         service.py's own idle loop while Kodi's library scan OR this addon's own scraper-activity
         tail is still running (see that module's own is_active/kodi_scanning, already computed
         there for the corner-status indicator) -- the tail matters just as much as Kodi's own
@@ -432,45 +426,6 @@ class ChronicleClient:
             '/api/v1/scraper/kodi-refresh-signal?kinds={0}'.format(kinds_param),
             'get_refresh_signal()', timeout=10)
         return (result or {}).get('items') or []
-
-    def contribute_metadata(self, media_item_id: int, source: str, metadata: dict):
-        """POST /api/v1/media/{id}/metadata/{source} -- contributes fields
-        harvested from a local source (e.g. a pre-existing NFO another tool
-        wrote, about to be overwritten -- see lib/legacy_nfo.py) into
-        Chronicle's own MetadataContributionService. Lands in its own named
-        partition and only ever fills a field Chronicle doesn't already have
-        from a real provider -- it can't clobber better data. Best-effort:
-        failures are logged and swallowed, same as report_resolved_file() --
-        this is a nice-to-have enrichment, not something the current scrape
-        depends on."""
-        if not self._base_url or not self._api_key or not metadata:
-            return
-        url = '{0}/api/v1/media/{1}/metadata/{2}'.format(
-            self._base_url, media_item_id, urllib.parse.quote(source, safe=''))
-        data = json.dumps({'metadata': metadata}).encode('utf-8')
-        req = self._build_request(url, data=data, method='POST')
-
-        def _do():
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                return resp.status
-
-        try:
-            status = call_with_timeout(_do, 20)
-            if status == 200:
-                log.info('contribute_metadata({0}, {1!r}): {2} field(s) contributed'.format(
-                         media_item_id, source, len(metadata)))
-            else:
-                log.warning('contribute_metadata({0}, {1!r}): unexpected HTTP {2}'.format(
-                            media_item_id, source, status))
-        except urllib.error.HTTPError as exc:
-            log.warning('contribute_metadata({0}, {1!r}): Chronicle returned HTTP {2} ({3})'.format(
-                        media_item_id, source, exc.code, exc.reason))
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            log.warning('contribute_metadata({0}, {1!r}): Chronicle not reachable ({2})'.format(
-                        media_item_id, source, exc))
-        except Exception as exc:
-            log.warning('contribute_metadata({0}, {1!r}): unexpected error: {2}'.format(
-                        media_item_id, source, exc))
 
     def register_device(self, name: str, host: str, port: int, username, password):
         """POST /api/v1/scraper/devices/kodi/register -- self-registers this Kodi instance's
@@ -552,7 +507,7 @@ class ChronicleClient:
         lib/progress_sync.py's resolve_progress_direction). Reuses the scrobble
         endpoint's own existing "most recent wins" guard server-side rather than
         duplicating it here. Best-effort: failures are logged and swallowed,
-        same as report_resolved_file()/contribute_metadata()."""
+        same as report_resolved_file()."""
         if not self._base_url or not self._api_key:
             return
         url = '{0}/api/v1/scrobble'.format(self._base_url)

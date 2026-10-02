@@ -9,9 +9,8 @@ by TWO different callers with two different triggers:
      request (2026-08-30): "I don't want a separate sync task in Kodi for ratings. this needs
      to happen with the scraper automatically as part of the scrape process."
   2. lib/watch_rating_sync.py's own periodic background pass -- added 2026-09-06 per a
-     follow-up correction, after the original design's assumption stopped holding: once
-     nfo_rebuild.py grew a cross-device rebuild queue that deliberately never re-claims an
-     already-completed item, an item's own scrape (path 1 above) could stop recurring
+     follow-up correction, after the original design's assumption stopped holding: an
+     item's own scrape (path 1 above) could stop recurring
      entirely, with nothing left to reconcile rating/resume/watched changes made directly in
      Kodi. See that module's own docstring for the full history.
 
@@ -23,8 +22,8 @@ Direction logic ported from Chronicle_Scrobbler's lib/sync_engine.py
 (_resolve_progress_direction et al, the 2026-08-30 bidirectional-reconciliation
 feature that mechanism replaces). Chronicle_Scraper is a fully separate Kodi
 addon with no runtime dependency on Chronicle_Scrobbler, so the logic is
-duplicated here rather than imported -- same as chronicle_client.py and
-nfo_common.py are already duplicated between this addon and tv_addon.
+duplicated here rather than imported -- same as chronicle_client.py is
+already duplicated between this addon and tv_addon.
 
 Ratings are NOT reconciled bidirectionally: Kodi exposes no "when was this
 rating set" signal (no lastplayed equivalent for userrating), so there's no

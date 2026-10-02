@@ -207,9 +207,9 @@ def get_details(media_item_id, handle):
     if discovered_via_fallback and full_filename:
         ChronicleClient().report_resolved_file(media_item_id, full_filename)
     if kodi_movie_id is not None:
-        # Lets Chronicle push a future NFO update straight to this device (see
-        # lib/chronicle_client.py's report_kodi_id() and Chronicle's own NfoPushService).
-        # Fired on every ordinary scan, so the mapping stays fresh.
+        # Tells Chronicle which Kodi library entry this item is on this device (see
+        # lib/chronicle_client.py's report_kodi_id()). Fired on every ordinary scan, so the
+        # mapping stays fresh.
         ChronicleClient().report_kodi_id(media_item_id, 'movie', kodi_movie_id)
 
     listitem = xbmcgui.ListItem(details.get('title') or '', offscreen=True)

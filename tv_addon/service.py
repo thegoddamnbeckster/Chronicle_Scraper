@@ -2,7 +2,7 @@
 """script.chronicle.scraper.tv — Background service entry point.
 
 Deliberately minimal: unlike the sibling Chronicle Scraper (Movies) addon's own service.py
-(corner activity status, device registration, NFO-rebuild-on-scan, watch/rating sync -- see
+(corner activity status, device registration, watch/rating sync -- see
 that addon's own default.py doc for why none of those are duplicated here), this addon's
 service exists for exactly one job: periodically polling Chronicle's "new content available"
 signal (see lib/kodi_scan_signal.py) and triggering this device's own local VideoLibrary.Scan
@@ -10,11 +10,8 @@ when due.
 
 Why this has to be a service of its own, not shared with the Movies addon: Kodi runs
 xbmc.service as a per-addon persistent process -- there is no way for one addon's background
-service to run code on behalf of a second, separate addon package. The NFO-rebuild coordination
-the Movies addon's service provides for BOTH content types works around that by writing to
-shared on-disk signal files under special://temp/chronicle_scraper/, which either addon's own
-on-demand scrape (find/getdetails) can read -- but a periodic POLL has nothing to piggyback on
-that way, since nothing about it is triggered by a scrape. The only thing that makes a Kodi
+service to run code on behalf of a second, separate addon package, and a periodic POLL has
+nothing to piggyback on, since nothing about it is triggered by a scrape. The only thing that makes a Kodi
 addon run continuously is its own declared xbmc.service extension. Without this file, the
 scan-signal feature would only ever run for someone who also happened to have the Movies addon
 installed -- silently breaking this addon's own stated promise (see addon.xml) of working
@@ -242,12 +239,9 @@ def run():
                 last_scan_signal_check = now
                 monitor.run_scan_signal_check()
 
-        # Covers this addon's own scraper-activity tail (per-episode find/NfoUrl/
-        # getepisodedetails calls, each its own short-lived process -- see
-        # lib/activity_tracker.py) as well as Kodi's own directory-walk phase, since
-        # NfoGenerationService's scheduled sweep used to contend with an active scan for the
-        # same server/IO capacity for the whole duration of either -- see
-        # ChronicleClient.report_scan_active's own doc.
+        # Covers this addon's own scraper-activity tail (per-episode find/getepisodedetails
+        # calls, each its own short-lived process -- see lib/activity_tracker.py) as well as
+        # Kodi's own directory-walk phase -- see ChronicleClient.report_scan_active's own doc.
         kodi_scanning = xbmc.getCondVisibility('Library.IsScanning')
         activity = activity_tracker.read_activity()
         scraper_active = activity is not None and \

@@ -7,8 +7,7 @@ Why this exists: confirmed by exhaustively reading Kodi's entire Settings API
 for "prefer online artwork" at the video-library level -- only the music
 library has one (musiclibrary.preferonlinealbumart). A movie's own local
 files (e.g. "<Movie Folder>-poster.jpg" sitting next to the video file) are
-used unconditionally, the same way Kodi discovered local NFO files before
-scrapers existed. This is core, un-overridable Kodi behaviour, not a bug in
+used unconditionally. This is core, un-overridable Kodi behaviour, not a bug in
 this addon and not something addAvailableArtwork()/setArt() can beat.
 
 Confirmed twice, directly: a movie's poster reverted to its old local file
@@ -149,7 +148,7 @@ def sync_movie_art(title, year, artwork, location=None):
 
     location, if given, is a pre-resolved (folder, video_basename) tuple --
     pass this when the caller already looked the movie up for another reason
-    (e.g. also writing an NFO) so this doesn't repeat the same VideoLibrary/
+    so this doesn't repeat the same VideoLibrary/
     source-browsing lookup a second time."""
     if not artwork:
         log.warning('sync_movie_art: "{0}" ({1}) -- Chronicle sent no artwork dict at all, '
@@ -202,15 +201,10 @@ def sync_movie_art(title, year, artwork, location=None):
 def find_movie_location(title, year, known_filename=None):
     """Returns (folder, video_basename, full_filename, discovered_via_fallback, kodi_movie_id).
     folder is the movie's own folder path (trailing slash); video_basename is
-    the real video file's own name with its extension stripped -- this is
-    what Kodi actually expects a local NFO to be named to take highest
-    precedence (a bare 'movie.nfo' is also valid but loses to a real
-    <video-name>.nfo that another tool, e.g. tinyMediaManager, may have
-    already left behind under the true video filename), so callers writing an
-    NFO need this, not just the folder name movie_art_sync itself is content
-    with for images. full_filename is the same name WITH its extension, for
-    callers that need to report the exact original filename back (see
-    discovered_via_fallback below) rather than Kodi's NFO-naming convention.
+    the real video file's own name with its extension stripped (what
+    Kodi's own "<video-name>-poster.jpg" art naming is keyed on). full_filename
+    is the same name WITH its extension, for callers that need to report the
+    exact original filename back (see discovered_via_fallback below).
     discovered_via_fallback is True when title/year matching had to be used
     (see below) -- callers can report full_filename back to Chronicle via
     POST .../resolved-file so it becomes a known fact for next time instead
@@ -218,9 +212,7 @@ def find_movie_location(title, year, known_filename=None):
     internal movieid when the VideoLibrary lookup found one (None from the
     source-browsing fallback, since a movie only just discovered on disk
     hasn't been committed to VideoLibrary yet and has no id at all) -- see
-    lib/chronicle_client.py's report_kodi_id(), which callers use to let
-    Chronicle push a future NFO update straight to this device via
-    VideoLibrary.RefreshMovie.
+    lib/chronicle_client.py's report_kodi_id().
 
     known_filename, when given, is the real file's own basename exactly as
     Chronicle already recorded it -- a verified fact, not a re-derived title/
@@ -259,7 +251,7 @@ def find_movie_location(title, year, known_filename=None):
         return folder, stripped, video_name, True, None
 
     log.info('No folder found for {0!r} ({1}) via VideoLibrary or source browsing -- '
-             'will not sync local art/NFO this pass'.format(title, year))
+             'will not sync local art this pass'.format(title, year))
     return None, None, None, False, None
 
 
@@ -319,7 +311,7 @@ def _lookup_movie_file(title, year):
     caused: Kodi's VideoLibrary.GetMovies title filter trusts whatever title
     is CURRENTLY STORED for a library entry, with zero connection to that
     entry's real file/folder. If that stored title is itself wrong (from an
-    earlier bad match, a stale NFO Kodi re-read, or anything else), this
+    earlier bad match or anything else), this
     returns a real file path -- so movie_art_sync writes correct-looking
     Chronicle data into the WRONG movie's folder just as confidently as the
     slow path's old startswith fallback did. The fix mirrors the slow path's:
@@ -568,7 +560,7 @@ def _search_sources_for_movie(title, year):
     happened to start with "alien", and this function returns on the FIRST
     source that yields ANY match without checking whether a later source has
     the real one. Since movie_art_sync overwrites unconditionally, that wrote
-    Alien's poster/fanart/NFO directly over Alien Romulus's own, correct
+    Alien's poster/fanart directly over Alien Romulus's own, correct
     files. A prefix match between two different franchise entries (X / X-Men,
     It / It Follows, Die Hard / Die Hard - With a Vengeance, and many more --
     confirmed via a full-log scan, not a one-off) is common enough that this

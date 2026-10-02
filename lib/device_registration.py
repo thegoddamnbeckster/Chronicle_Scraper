@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Self-registers this Kodi instance's own remote-control (JSON-RPC over HTTP) address with
-Chronicle, so its NfoPushService can push a freshly-changed item's NFO straight here instead
-of waiting for a manual/scheduled rebuild pass or this device's own next library scan. See
+Chronicle. See
 Chronicle's own KodiDevice model for the full design and why this addon -- not the user --
 supplies these details: everything needed (Kodi's own configured webserver enabled/port/
 username/password, and this device's own outbound-facing LAN IP) is only ever known locally,
@@ -10,7 +9,7 @@ inside Kodi's own process; Chronicle's server has no way to discover any of it o
 Read-only against Kodi's own settings -- never changes them. Skips registration (silently,
 once logged at info level) when "Allow remote control via HTTP" is off; there's nothing to
 register in that case, and it's a common, valid configuration -- this addon's other features
-all work fine without it, only server-initiated NFO pushes need it.
+all work fine without it.
 
 Called from default.py right after a successful "Connect to Chronicle" pairing, and
 periodically from service.py's own idle loop, so a changed LAN IP (DHCP lease renewal) or a
@@ -80,8 +79,7 @@ def register():
     enabled = _get_setting_value(_SETTING_ENABLED)
     if not enabled:
         log.info('device_registration: Kodi\'s "Allow remote control via HTTP" is off -- '
-                 'nothing to register (Chronicle cannot push NFO updates straight to this '
-                 'device, but every other feature of this addon works fine without it).')
+                 'nothing to register (every feature of this addon works fine without it).')
         return
 
     port = _get_setting_value(_SETTING_PORT)

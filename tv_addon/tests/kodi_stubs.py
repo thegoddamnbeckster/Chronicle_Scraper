@@ -71,7 +71,7 @@ class _FakeListItem:
     the FIRST positional arg as `spec`: `ListItem(label, offscreen=True)` silently became
     `MagicMock(spec=label, offscreen=True)`, spec'd to whatever `str` has -- so
     getVideoInfoTag() raised AttributeError instead of returning anything, undetected until
-    now because no existing test called a function that reaches getVideoInfoTag() (nfo_url()'s
+    now because no existing test called a function that reaches getVideoInfoTag() (a scrape's
     own ListItem usage never does). getVideoInfoTag() returns a fresh, unconstrained MagicMock
     -- tests that care what got set on it should capture and assert against that return value,
     not construct their own."""
