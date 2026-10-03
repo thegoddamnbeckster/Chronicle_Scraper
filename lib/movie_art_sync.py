@@ -94,7 +94,20 @@ _LISTDIR_TIMEOUT_SECONDS = 8
 # special://temp/chronicle_scraper/ shared-file pattern used elsewhere in this
 # codebase for exactly that reason.
 _SOURCE_LISTING_CACHE_PATH = 'special://temp/chronicle_scraper/movie_source_listing_cache.json'
-_SOURCE_LISTING_CACHE_TTL_SECONDS = 60
+# How long a source's listing is trusted for a normal lookup. A real library scan scrapes hundreds
+# of movies back to back, and re-listing every source every minute (the original 60s window) still
+# cost ~40s of network listing per minute on a library this size. The listing only needs to be
+# FRESH when a lookup misses (a folder added since it was listed) -- see _search_sources_for_movie's
+# own miss handling, which refreshes anything older than _SOURCE_LISTING_FRESH_SECONDS before
+# giving up -- so the long window is safe for hits and a miss still sees new folders.
+_SOURCE_LISTING_CACHE_TTL_SECONDS = 600
+_SOURCE_LISTING_FRESH_SECONDS = 60
+# A source whose listing timed out (a share that has gone unresponsive) is not retried for this
+# long. Previously a timeout was deliberately never remembered, so EVERY movie paid the full
+# _LISTDIR_TIMEOUT_SECONDS for that share again -- confirmed live (2026-10-02): an unresponsive
+# smb://10.0.0.161/Videos_D/Bad_Movies/ made find + getdetails take ~57s per new movie. Short, so
+# a share that comes back is picked up again within a couple of minutes.
+_SOURCE_FAILURE_BACKOFF_SECONDS = 120
 
 # Confirmed live (2026-09-18): sync_movie_art unconditionally re-downloads poster+fanart from
 # their remote CDN URLs (FanartTV/TMDB, up to a 20s timeout each) on EVERY single movie, EVERY
@@ -198,7 +211,7 @@ def sync_movie_art(title, year, artwork, location=None):
             log.info('Synced local {0} for "{1}" from Chronicle'.format(dest_art_type, title))
 
 
-def find_movie_location(title, year, known_filename=None):
+def find_movie_location(title, year, known_filename=None, library_retries=None):
     """Returns (folder, video_basename, full_filename, discovered_via_fallback, kodi_movie_id).
     folder is the movie's own folder path (trailing slash); video_basename is
     the real video file's own name with its extension stripped (what
@@ -230,7 +243,12 @@ def find_movie_location(title, year, known_filename=None):
     given but not found (movie not yet committed to VideoLibrary) -- falls
     back to the VideoLibrary fast path, then to browsing Kodi's own configured
     video sources directly. See module docstring for why both of those exist
-    and why the source-browsing fallback is the one that's actually reliable."""
+    and why the source-browsing fallback is the one that's actually reliable.
+
+    library_retries overrides how many VideoLibrary attempts are made (default
+    _LOOKUP_RETRIES, with a pause between them). A caller that knows the movie cannot be in the
+    library yet -- the scraper's `find` pre-check, or a quick scan of brand-new items -- passes 1,
+    since the retry exists only for a commit race that (per the module docstring) it never won."""
     if known_filename:
         file_path, movie_id = _lookup_by_known_filename(known_filename)
         if file_path:
@@ -238,7 +256,7 @@ def find_movie_location(title, year, known_filename=None):
             basename = posixpath.basename(file_path)
             return folder, strip_video_ext(basename), basename, False, movie_id
 
-    file_path, movie_id = _lookup_via_video_library(title, year)
+    file_path, movie_id = _lookup_via_video_library(title, year, retries=library_retries)
     if file_path:
         folder = posixpath.dirname(file_path) + '/'
         basename = posixpath.basename(file_path)
@@ -293,12 +311,13 @@ def strip_video_ext(filename):
     return filename
 
 
-def _lookup_via_video_library(title, year):
-    for attempt in range(1, _LOOKUP_RETRIES + 1):
+def _lookup_via_video_library(title, year, retries=None):
+    attempts = _LOOKUP_RETRIES if retries is None else max(1, retries)
+    for attempt in range(1, attempts + 1):
         file_path, movie_id = _lookup_movie_file(title, year)
         if file_path:
             return file_path, movie_id
-        if attempt < _LOOKUP_RETRIES:
+        if attempt < attempts:
             time.sleep(_LOOKUP_RETRY_DELAY_SECONDS)
     return None, None
 
@@ -526,21 +545,31 @@ def _write_source_listing_cache(cache):
         log.warning("Couldn't write source-listing cache: {0}".format(exc))
 
 
-def list_source_dirs_cached(source):
+def list_source_dirs_cached(source, max_age=None):
     """Same (dirs, files) shape as listdir_with_timeout(), but only actually hits
-    the network once per source per _SOURCE_LISTING_CACHE_TTL_SECONDS window --
-    see this module's own top-of-file note on why this cache exists at all."""
+    the network once per source per cache window -- see this module's own top-of-file
+    note on why this cache exists at all.
+
+    max_age (seconds) overrides how old a cached listing may be and still be reused; the default is
+    _SOURCE_LISTING_CACHE_TTL_SECONDS. A source that timed out is remembered for
+    _SOURCE_FAILURE_BACKOFF_SECONDS and answered with [] straight away, regardless of max_age."""
     cache = _read_source_listing_cache()
     entry = cache.get(source)
     now = time.time()
-    if entry is not None and (now - entry.get('timestamp', 0)) < _SOURCE_LISTING_CACHE_TTL_SECONDS:
-        return entry.get('dirs') or []
+    if entry is not None:
+        age = now - entry.get('timestamp', 0)
+        if entry.get('failed'):
+            if age < _SOURCE_FAILURE_BACKOFF_SECONDS:
+                return []
+        elif age < (_SOURCE_LISTING_CACHE_TTL_SECONDS if max_age is None else max_age):
+            return entry.get('dirs') or []
 
     dirs, _files = listdir_with_timeout(source)
     if dirs is None:
-        # Don't cache a timeout/error as if it were a real (empty) listing --
-        # the next movie that needs this source deserves its own fresh attempt,
-        # not to be stuck reusing a failure for the rest of the TTL window.
+        # Remember the failure briefly instead of letting every following movie pay the full
+        # timeout for the same dead share -- but as a failure, never as a real (empty) listing.
+        cache[source] = {'timestamp': now, 'failed': True}
+        _write_source_listing_cache(cache)
         return []
 
     cache[source] = {'timestamp': now, 'dirs': dirs}
@@ -600,13 +629,27 @@ def _search_sources_for_movie(title, year):
     target = normalize(title)
     if not target:
         return None
-    target_with_year = target + str(year) if year else None
 
-    listings = []
-    for source in get_video_sources():
-        dirs = list_source_dirs_cached(source)
-        if dirs:
-            listings.append((source, dirs))
+    # Trust long-cached listings first (a hit is by far the common case during a scan); if nothing
+    # matches, re-list whatever is older than _SOURCE_LISTING_FRESH_SECONDS and look once more, so
+    # a folder added since the last listing is still found. list_source_dirs_cached's own reuse
+    # window means a run of misses re-lists at most once a minute, not once per movie.
+    for max_age in (None, _SOURCE_LISTING_FRESH_SECONDS):
+        listings = []
+        for source in get_video_sources():
+            dirs = list_source_dirs_cached(source, max_age=max_age)
+            if dirs:
+                listings.append((source, dirs))
+        result = _match_in_listings(listings, target, year)
+        if result:
+            return result
+    return None
+
+
+def _match_in_listings(listings, target, year):
+    """The three exact-match tiers described in _search_sources_for_movie's docstring, over
+    already-fetched (source, dirs) listings."""
+    target_with_year = target + str(year) if year else None
 
     if target_with_year:
         for source, dirs in listings:

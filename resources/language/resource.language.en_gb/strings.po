@@ -248,3 +248,15 @@ msgstr ""
 msgctxt "#32153"
 msgid "Waiting for the library scan to finish before {0}"
 msgstr ""
+
+msgctxt "#32154"
+msgid "Scanning"
+msgstr ""
+
+msgctxt "#32155"
+msgid "Quick scan: add movies first, fill in details afterwards"
+msgstr ""
+
+msgctxt "#32156"
+msgid "While Kodi scans, only adds each movie with Chronicle's text details (title, plot, cast, ratings, artwork links). Writing poster/fanart files next to the movies, collection art, and the watched/rating/resume sync are skipped during the scan and done by the passes that already run right after it (the post-scan check and the History and ratings sync). Makes scanning a large number of new movies many times faster. On by default."
+msgstr ""

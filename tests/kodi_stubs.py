@@ -44,7 +44,20 @@ class _FakeXbmcVfsFile:
         return True
 
     def readBytes(self, num_bytes=0):
-        return bytearray(self._buffer)
+        # num_bytes=0 (the default every existing caller uses) reads everything from the current
+        # position; a positive count reads that many bytes, like the real xbmcvfs.File.
+        pos = getattr(self, '_pos', 0)
+        end = len(self._buffer) if not num_bytes else pos + num_bytes
+        data = self._buffer[pos:end]
+        self._pos = pos + len(data)
+        return bytearray(data)
+
+    def seek(self, offset, whence=0):
+        self._pos = offset
+        return offset
+
+    def size(self):
+        return len(self._buffer)
 
     def close(self):
         pass

@@ -45,7 +45,8 @@ class TestGetDetailsSmoke(unittest.TestCase):
     def _run_get_details(self):
         mock_client = MagicMock()
         mock_client.get_movie_details.return_value = dict(_MOVIE_DETAILS)
-        scraper.ADDON.getSettingBool = MagicMock(return_value=True)
+        # The full (non-quick) path: quick scan skips the art/watch work this test locks in.
+        scraper.ADDON.getSettingBool = MagicMock(side_effect=lambda key: key != 'quick_scan')
         with patch('python.scraper.ChronicleClient', return_value=mock_client), \
              patch('python.scraper.find_movie_location',
                    return_value=('/movies/Dune Part Two (2024)/', 'Dune Part Two (2024)',

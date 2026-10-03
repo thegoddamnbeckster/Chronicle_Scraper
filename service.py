@@ -24,6 +24,7 @@ from lib import collection_art_sync
 from lib import device_registration
 from lib import full_sync_check
 from lib import install_marker
+from lib import scan_progress
 from lib import status_display
 from lib import kodi_scan_signal
 from lib import watch_rating_sync
@@ -79,6 +80,9 @@ _STARTUP_SCAN_FOLLOWUP_DELAY_SECONDS = 10
 # longer than the 3s idle-loop tick so this isn't a Chronicle POST on every single tick.
 _SCAN_ACTIVE_HEARTBEAT_SECONDS = 60
 
+# How often to log "where is the scan" while Kodi scans the video library (lib/scan_progress.py).
+_SCAN_PROGRESS_INTERVAL_SECONDS = 60
+
 # onScanFinished fires the instant a scan ends, which is exactly when this addon's own
 # just-finished per-item scraper activity is still inside _ACTIVITY_IDLE_TIMEOUT_SECONDS -- see
 # run_full_sync_check's own doc. Bounded so a genuinely stuck/long-running scrape can't wait
@@ -132,6 +136,21 @@ class ChronicleMonitor(xbmc.Monitor):
         returned as a simple bool (not raised) so callers can just `if deferred: return`.
         """
         kodi_scanning = xbmc.getCondVisibility('Library.IsScanning')
+
+        # "Where is the scan": one log line a minute while Kodi scans, and one when it ends. Runs on
+        # its own daemon thread (a cold source listing can take a while) and reads only what Kodi
+        # appended to its log since the last line -- see lib/scan_progress.py.
+        if kodi_scanning and not was_scanning:
+            scan_progress.begin(backfill=was_scanning is None)
+            last_scan_progress = 0.0
+        if kodi_scanning and time.time() - last_scan_progress >= _SCAN_PROGRESS_INTERVAL_SECONDS:
+            last_scan_progress = time.time()
+            threading.Thread(target=scan_progress.tick, name='chronicle-scan-progress',
+                              daemon=True).start()
+        if was_scanning and not kodi_scanning:
+            threading.Thread(target=scan_progress.tick, kwargs={'final': True},
+                              name='chronicle-scan-progress-final', daemon=True).start()
+        was_scanning = kodi_scanning
         scraper_active = activity_tracker.is_recently_active(_ACTIVITY_IDLE_TIMEOUT_SECONDS)
         if kodi_scanning or scraper_active:
             log.info('service: {0} deferred -- {1} still in progress'.format(
@@ -447,6 +466,8 @@ def run():
         last_scan_signal_check = time.time()
 
     last_scan_active_heartbeat = 0.0  # forces an immediate first heartbeat once scanning starts
+    last_scan_progress = 0.0
+    was_scanning = None  # None until the first loop pass: lets a service that comes up mid-scan backfill
 
     # Standard Kodi service idle loop: sleep in short increments so
     # abortRequested() (set on Kodi shutdown) is noticed promptly instead of

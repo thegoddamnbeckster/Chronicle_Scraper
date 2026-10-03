@@ -89,6 +89,21 @@ def parse_lookup_string(value):
         return None
 
 
+def quick_scan_enabled():
+    """True when scrapes should defer everything that is not needed to ADD the movie to Kodi's
+    library: its local poster/fanart files, its collection's art files, and the watched/rating/
+    resume reconciliation. Per-user request (2026-10-02): getting ~900 missing movies in took
+    ~57s each -- hours -- almost all of it that deferrable work, so "a minimal scan first to get
+    the movies in and then a secondary scan to populate." The secondary pass already exists and
+    runs after every scan: full_sync_check (text fields, art files, cast/set) and the
+    watch/rating sync (Kodi ids, watched state, ratings, resume). On by default (the setting's
+    own default); an unreadable setting is treated as on."""
+    try:
+        return bool(ADDON.getSettingBool('quick_scan'))
+    except Exception:
+        return True
+
+
 def search_for_movie(title, year, handle):
     log.info('find: title={0!r} year={1!r}'.format(title, year))
     activity_tracker.mark_active(title)
@@ -105,7 +120,9 @@ def search_for_movie(title, year, handle):
     # early, so Chronicle can check "does this exact file already belong to
     # some other item" before ever considering creating a new one.
     try:
-        _, _, full_filename, _, _ = find_movie_location(title, year)
+        # library_retries=1: a movie being found for the first time is not in the VideoLibrary
+        # yet, so the retry pause (meant for a commit race) would only add a second per movie.
+        _, _, full_filename, _, _ = find_movie_location(title, year, library_retries=1)
     except Exception as exc:
         log.warning('find: filename pre-check failed for {0!r} ({1}) -- continuing by title only'.format(
                     title, exc))
@@ -185,6 +202,7 @@ def get_details(media_item_id, handle):
     # (not a temporary debug aid), so any future slowdown is directly diagnosable from kodi.log
     # instead of requiring another round of log archaeology.
     t_start = time.time()
+    quick = quick_scan_enabled()
 
     details = ChronicleClient().get_movie_details(media_item_id)
     t_chronicle = time.time()
@@ -201,7 +219,8 @@ def get_details(media_item_id, handle):
     # title/year matching anyway, report the discovered filename back so the
     # NEXT scrape gets to use the fast path too.
     folder, video_basename, full_filename, discovered_via_fallback, kodi_movie_id = find_movie_location(
-        details.get('title'), details.get('year'), known_filename=details.get('knownFileName'))
+        details.get('title'), details.get('year'), known_filename=details.get('knownFileName'),
+        library_retries=1 if quick else None)
     t_location = time.time()
     location = (folder, video_basename)
     if discovered_via_fallback and full_filename:
@@ -247,7 +266,8 @@ def get_details(media_item_id, handle):
             vtag.addAvailableArtwork(collection['posterUrl'], 'set.poster')
         if collection.get('backdropUrl'):
             vtag.addAvailableArtwork(collection['backdropUrl'], 'set.fanart')
-        sync_collection_art(collection)
+        if not quick:
+            sync_collection_art(collection)
     t_collection_art = time.time()
 
     apply_ratings(vtag, details.get('ratings'))
@@ -263,36 +283,39 @@ def get_details(media_item_id, handle):
     if details.get('userRating'):
         vtag.setUserRating(details['userRating'])
 
-    kodi_state = progress_sync.lookup_movie_state(details.get('title'), details.get('year'))
-    direction, value = progress_sync.resolve_progress_direction(
-        details.get('resumePositionPercent'), details.get('resumeUpdatedAt'), kodi_state)
-    if direction == 'push':
-        progress_sync.apply_resume_push(vtag, value, details.get('runtimeMinutes'))
-    elif direction == 'pull':
-        ChronicleClient().push_resume(
-            media_item_id, value, progress_sync.kodi_lastplayed_to_iso(kodi_state.get('lastplayed')))
+    # Quick scan defers this to the post-scan watch/rating sync (see quick_scan_enabled).
+    if not quick:
+        kodi_state = progress_sync.lookup_movie_state(details.get('title'), details.get('year'))
+        direction, value = progress_sync.resolve_progress_direction(
+            details.get('resumePositionPercent'), details.get('resumeUpdatedAt'), kodi_state)
+        if direction == 'push':
+            progress_sync.apply_resume_push(vtag, value, details.get('runtimeMinutes'))
+        elif direction == 'pull':
+            ChronicleClient().push_resume(
+                media_item_id, value, progress_sync.kodi_lastplayed_to_iso(kodi_state.get('lastplayed')))
 
-    # Fully-watched reconciliation -- separate from resume above on purpose. Chronicle clears
-    # resumePositionPercent/resumeUpdatedAt to null the moment an item is marked watched
-    # (nothing left to "resume"), so a completed item gives resolve_progress_direction nothing
-    # to compare and it correctly no-ops. isWatched/lastWatchedAt are never cleared, so this
-    # is the only path that can ever sync a finished watch onto a Kodi instance that's never
-    # played the item. Confirmed live (2026-09-05): a movie completed on one Shield stayed
-    # permanently unwatched on another with no error, since nothing was actually wrong --
-    # nothing was trying to reconcile watched status at all.
-    watched_direction, watched_value = progress_sync.resolve_watched_direction(
-        details.get('isWatched'), details.get('lastWatchedAt'), kodi_state,
-        chronicle_reset_at=details.get('watchResetAt'))
-    if watched_direction == 'push':
-        progress_sync.apply_watched_push(vtag, watched_value)
-    elif watched_direction == 'reset':
-        progress_sync.apply_watched_reset(vtag)
-    elif watched_direction == 'pull':
-        ChronicleClient().push_watched(
-            media_item_id, progress_sync.kodi_lastplayed_to_iso(watched_value))
+        # Fully-watched reconciliation -- separate from resume above on purpose. Chronicle clears
+        # resumePositionPercent/resumeUpdatedAt to null the moment an item is marked watched
+        # (nothing left to "resume"), so a completed item gives resolve_progress_direction nothing
+        # to compare and it correctly no-ops. isWatched/lastWatchedAt are never cleared, so this
+        # is the only path that can ever sync a finished watch onto a Kodi instance that's never
+        # played the item. Confirmed live (2026-09-05): a movie completed on one Shield stayed
+        # permanently unwatched on another with no error, since nothing was actually wrong --
+        # nothing was trying to reconcile watched status at all.
+        watched_direction, watched_value = progress_sync.resolve_watched_direction(
+            details.get('isWatched'), details.get('lastWatchedAt'), kodi_state,
+            chronicle_reset_at=details.get('watchResetAt'))
+        if watched_direction == 'push':
+            progress_sync.apply_watched_push(vtag, watched_value)
+        elif watched_direction == 'reset':
+            progress_sync.apply_watched_reset(vtag)
+        elif watched_direction == 'pull':
+            ChronicleClient().push_watched(
+                media_item_id, progress_sync.kodi_lastplayed_to_iso(watched_value))
     t_progress_sync = time.time()
 
-    sync_movie_art(details.get('title'), details.get('year'), details.get('artwork'), location=location)
+    if not quick:
+        sync_movie_art(details.get('title'), details.get('year'), details.get('artwork'), location=location)
     t_movie_art = time.time()
 
     if details.get('cast'):
@@ -309,14 +332,15 @@ def get_details(media_item_id, handle):
     log.info(
         'getdetails: "{0}" timing -- chronicle api: {1:.2f}s, find location: {2:.2f}s, '
         'collection art: {3:.2f}s, progress/rating sync: {4:.2f}s, movie art: {5:.2f}s, '
-        'total: {6:.2f}s'.format(
+        'total: {6:.2f}s{7}'.format(
             details.get('title'),
             t_chronicle - t_start,
             t_location - t_chronicle,
             t_collection_art - t_location,
             t_progress_sync - t_collection_art,
             t_movie_art - t_progress_sync,
-            time.time() - t_start))
+            time.time() - t_start,
+            ' (quick scan: art files and watch sync deferred to the post-scan pass)' if quick else ''))
     return True
 
 
