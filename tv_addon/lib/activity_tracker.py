@@ -63,6 +63,22 @@ def read_activity():
     return _read()
 
 
+def is_recently_active(idle_timeout_seconds, now=None):
+    """True if some scraper action -- from EITHER addon, see this module's own doc on why the
+    signal is shared -- was recorded within the last idle_timeout_seconds. Factored out
+    (2026-09-12) so both addons' periodic background tasks (collection_art_sync,
+    watch_rating_sync) can defer to an active scan/scrape instead of contending with it for the
+    same server/IO capacity -- see collection_art_sync.py's own doc and
+    IKodiDeviceService.IsScanActiveAsync's server-side equivalent for the identical reasoning
+    applied there. now is injectable for tests; defaults to the real current time."""
+    activity = _read()
+    if activity is None:
+        return False
+    if now is None:
+        now = time.time()
+    return (now - activity.get('timestamp', 0)) < idle_timeout_seconds
+
+
 def reset():
     """Clears the activity record -- call once, after deciding activity has
     gone idle and hiding the corner indicator, so a stale old count doesn't
