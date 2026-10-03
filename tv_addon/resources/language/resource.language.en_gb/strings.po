@@ -286,3 +286,27 @@ msgstr ""
 msgctxt "#32185"
 msgid "\n\nRestored watched status on {0} episode(s)."
 msgstr ""
+
+msgctxt "#32186"
+msgid "Verifying episodes against Chronicle…"
+msgstr ""
+
+msgctxt "#32187"
+msgid "Starting -- the screen may refresh while Chronicle checks your library"
+msgstr ""
+
+msgctxt "#32188"
+msgid "Checked {0} episode(s), corrected {1}{2}"
+msgstr ""
+
+msgctxt "#32189"
+msgid "Stopped early because a scan or scrape started. It runs again after the next scan."
+msgstr ""
+
+msgctxt "#32190"
+msgid "Could not check your episodes -- {0}"
+msgstr ""
+
+msgctxt "#32191"
+msgid " -- {0} error(s), see kodi.log"
+msgstr ""

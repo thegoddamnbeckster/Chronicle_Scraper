@@ -260,3 +260,23 @@ msgstr ""
 msgctxt "#32156"
 msgid "While Kodi scans, only adds each movie with Chronicle's text details (title, plot, cast, ratings, artwork links). Writing poster/fanart files next to the movies, collection art, and the watched/rating/resume sync are skipped during the scan and done by the passes that already run right after it (the post-scan check and the History and ratings sync). Makes scanning a large number of new movies many times faster. On by default."
 msgstr ""
+
+msgctxt "#32157"
+msgid "Starting -- the screen may refresh while Chronicle checks your library"
+msgstr ""
+
+msgctxt "#32158"
+msgid "Verifying movies against Chronicle…"
+msgstr ""
+
+msgctxt "#32159"
+msgid "Checked {0} movie(s), corrected {1}{2}"
+msgstr ""
+
+msgctxt "#32160"
+msgid "Stopped early because a scan or scrape started. It runs again after the next scan."
+msgstr ""
+
+msgctxt "#32161"
+msgid "Could not check your movies -- {0}"
+msgstr ""

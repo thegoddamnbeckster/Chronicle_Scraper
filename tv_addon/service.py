@@ -23,10 +23,12 @@ import time
 
 import xbmc
 import xbmcaddon
+import xbmcgui
 
 from lib import activity_tracker
 from lib import full_sync_check
 from lib import kodi_scan_signal
+from lib import pass_progress
 from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
 
@@ -147,12 +149,23 @@ class ChronicleTVMonitor(xbmc.Monitor):
                         return
 
                 log.info('service: starting full sync-check ({0})'.format(trigger_label))
-                # Also stops the sweep if a fresh scan/scrape starts mid-pass -- see the Movies
-                # addon's own identical comment for why.
-                result = full_sync_check.run(is_cancelled=lambda: self.abortRequested() or
-                    self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)))
+                # This pass writes corrections into the library, which makes Kodi's screens refresh;
+                # the corner progress says so from the first moment (lib/pass_progress.py).
+                progress = pass_progress.PassProgress(
+                    ADDON.getLocalizedString(32186), ADDON.getLocalizedString(32187), log)
+                progress.start()
+                try:
+                    # Also stops the sweep if a fresh scan/scrape starts mid-pass -- see the Movies
+                    # addon's own identical comment for why.
+                    result = full_sync_check.run(
+                        is_cancelled=lambda: self.abortRequested() or
+                            self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)),
+                        progress_callback=progress.update)
+                finally:
+                    progress.finish()
                 log.info('service: full sync-check ({0}) complete -- {1}'.format(
                          trigger_label, result))
+                self._notify_full_sync_check_result(result)
                 self._full_sync_check_last_completed_at = time.time()
             except Exception as exc:
                 log.error('service: full sync-check ({0}) failed: {1}'.format(trigger_label, exc))
@@ -160,6 +173,26 @@ class ChronicleTVMonitor(xbmc.Monitor):
                 self._full_sync_check_lock.release()
 
         threading.Thread(target=_do, name='chronicle-tv-full-sync-check', daemon=True).start()
+
+    def _notify_full_sync_check_result(self, result):
+        """Says how the post-scan check ended, so a pass that ran (and refreshed the screens) never ends
+        silently. Best-effort: a notification problem must not look like a failed check."""
+        try:
+            icon = xbmcgui.NOTIFICATION_INFO
+            if result.get('aborted'):
+                icon = xbmcgui.NOTIFICATION_WARNING
+                message = ADDON.getLocalizedString(32190).format(result['aborted'])
+            elif result.get('cancelled'):
+                message = ADDON.getLocalizedString(32189)
+            else:
+                if result.get('errors'):
+                    icon = xbmcgui.NOTIFICATION_WARNING
+                message = ADDON.getLocalizedString(32188).format(
+                    result.get('checked', 0), result.get('updated', 0),
+                    ADDON.getLocalizedString(32191).format(result['errors']) if result.get('errors') else '')
+            xbmcgui.Dialog().notification(ADDON.getLocalizedString(32000), message, icon=icon, time=8000)
+        except Exception as exc:
+            log.warning('service: could not show the full sync-check result: {0}'.format(exc))
 
     def run_scan_signal_check(self):
         if not self._scan_signal_lock.acquire(False):

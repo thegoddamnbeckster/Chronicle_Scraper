@@ -24,6 +24,7 @@ from lib import collection_art_sync
 from lib import device_registration
 from lib import full_sync_check
 from lib import install_marker
+from lib import pass_progress
 from lib import scan_progress
 from lib import status_display
 from lib import kodi_scan_signal
@@ -172,19 +173,16 @@ class ChronicleMonitor(xbmc.Monitor):
             return
 
         def _do():
-            bg = None
+            # Opened the moment the pass starts and kept up to date through it (see lib/pass_progress.py):
+            # this pass writes into the library, which makes Kodi's screens refresh, and that must never
+            # happen without something on screen saying why.
+            progress = pass_progress.PassProgress(
+                ADDON.getLocalizedString(32134), ADDON.getLocalizedString(32157), log)
             try:
                 log.info('service: starting watch/rating sync ({0})'.format(trigger_label))
+                progress.start()
 
-                def on_progress(index, total, label):
-                    nonlocal bg
-                    if bg is None:
-                        bg = xbmcgui.DialogProgressBG()
-                        bg.create(ADDON.getLocalizedString(32134))
-                    percent = min(100, int(index * 100 / total)) if total else 0
-                    bg.update(percent, message=label)
-
-                result = watch_rating_sync.run(is_cancelled=self.abortRequested, progress_callback=on_progress)
+                result = watch_rating_sync.run(is_cancelled=self.abortRequested, progress_callback=progress.update)
                 log.info(
                     'service: watch/rating sync ({0}) complete -- {1} movie(s), {2} show(s), '
                     '{3} episode(s) visited, {4} error(s){5}'.format(
@@ -204,8 +202,7 @@ class ChronicleMonitor(xbmc.Monitor):
             except Exception as exc:
                 log.error('service: watch/rating sync ({0}) failed: {1}'.format(trigger_label, exc))
             finally:
-                if bg is not None:
-                    bg.close()
+                progress.finish()
                 self._watch_rating_lock.release()
 
         threading.Thread(target=_do, name='chronicle-watch-rating-sync', daemon=True).start()
@@ -320,17 +317,28 @@ class ChronicleMonitor(xbmc.Monitor):
                         return
 
                 log.info('service: starting full sync-check ({0})'.format(trigger_label))
-                # Also stops the sweep if a fresh scan/scrape starts mid-pass -- the wait loop
-                # above only guarantees nothing else was active at the START; without this, a
-                # pass already underway would keep hammering Chronicle/JSON-RPC for its entire
-                # remaining duration in parallel with new scan activity, exactly what
-                # _should_defer_for_active_scan exists to prevent. Checked per item (see
-                # full_sync_check.run()'s own loop), not continuously, so this only adds one
-                # cheap local check per item, not a background poll.
-                result = full_sync_check.run(is_cancelled=lambda: self.abortRequested() or
-                    self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)))
+                # This pass writes corrections into the library, which makes Kodi's screens refresh;
+                # the corner progress says so from the first moment (lib/pass_progress.py).
+                progress = pass_progress.PassProgress(
+                    ADDON.getLocalizedString(32158), ADDON.getLocalizedString(32157), log)
+                progress.start()
+                try:
+                    # Also stops the sweep if a fresh scan/scrape starts mid-pass -- the wait loop
+                    # above only guarantees nothing else was active at the START; without this, a
+                    # pass already underway would keep hammering Chronicle/JSON-RPC for its entire
+                    # remaining duration in parallel with new scan activity, exactly what
+                    # _should_defer_for_active_scan exists to prevent. Checked per item (see
+                    # full_sync_check.run()'s own loop), not continuously, so this only adds one
+                    # cheap local check per item, not a background poll.
+                    result = full_sync_check.run(
+                        is_cancelled=lambda: self.abortRequested() or
+                            self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)),
+                        progress_callback=progress.update)
+                finally:
+                    progress.finish()
                 log.info('service: full sync-check ({0}) complete -- {1}'.format(
                          trigger_label, result))
+                self._notify_full_sync_check_result(result)
                 # Marks completion regardless of a mid-run cancel -- a cancelled/aborted pass
                 # still did real (if partial) work and real Chronicle/JSON-RPC traffic, exactly
                 # what the cooldown exists to space out; only the "gave up waiting" early
@@ -342,6 +350,26 @@ class ChronicleMonitor(xbmc.Monitor):
                 self._full_sync_check_lock.release()
 
         threading.Thread(target=_do, name='chronicle-full-sync-check', daemon=True).start()
+
+    def _notify_full_sync_check_result(self, result):
+        """Says how the post-scan check ended, so a pass that ran (and refreshed the screens) never ends
+        silently. Best-effort: a notification problem must not look like a failed check."""
+        try:
+            icon = xbmcgui.NOTIFICATION_INFO
+            if result.get('aborted'):
+                icon = xbmcgui.NOTIFICATION_WARNING
+                message = ADDON.getLocalizedString(32161).format(result['aborted'])
+            elif result.get('cancelled'):
+                message = ADDON.getLocalizedString(32160)
+            else:
+                if result.get('errors'):
+                    icon = xbmcgui.NOTIFICATION_WARNING
+                message = ADDON.getLocalizedString(32159).format(
+                    result.get('checked', 0), result.get('updated', 0),
+                    ADDON.getLocalizedString(32136).format(result['errors']) if result.get('errors') else '')
+            xbmcgui.Dialog().notification(ADDON.getLocalizedString(32000), message, icon=icon, time=8000)
+        except Exception as exc:
+            log.warning('service: could not show the full sync-check result: {0}'.format(exc))
 
     def run_scan_signal_check(self):
         """Runs one kodi_scan_signal.check_and_scan() pass on a background thread -- see that

@@ -134,6 +134,7 @@ $movieZip = Build-ChronicleAddon -AddonRoot $repoRoot -RootFiles @("addon.xml", 
 $tvZip    = Build-ChronicleAddon -AddonRoot (Join-Path $repoRoot "tv_addon") -RootFiles @("addon.xml", "default.py", "service.py", "icon.png", "LICENSE") -SharedFiles @{
     "lib\device_auth.py"      = Join-Path $repoRoot "lib\device_auth.py"
     "lib\kodi_scan_signal.py" = Join-Path $repoRoot "lib\kodi_scan_signal.py"
+    "lib\pass_progress.py"    = Join-Path $repoRoot "lib\pass_progress.py"
 }
 
 Write-Host "======================================"
