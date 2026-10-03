@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.19.1"
+       version="3.19.2"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,9 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.19.1 - While Kodi scans, the add-on now writes one line a minute to kodi.log showing where the scan is: folders examined out of the total (overall and per source), the full path of the folder Kodi is on, how many movies/shows/episodes the library has and how many were added since the scan began, and how many scraper calls were handled. Folder figures need Kodi's debug logging on (Kodi only names the folder it is scanning at debug level); the library and scraper figures do not. Costs one small read of the new part of the log a minute, on a background thread.
+    <news>v3.19.2 - IMPORTANT fix for v3.19.1, which crashed this add-on's background service at startup (Kodi showed an error notification; the log said "cannot access local variable 'was_scanning'"). The new scan-progress code had been placed in the wrong function, so every background task that first checks whether a scan is running -- including the startup watch/rating sync -- failed. It is now in the service's main loop, and new tests call that check, confirm where the progress code lives, and run pyflakes over service.py so a mistake like this fails the tests. Install this over v3.19.1.
+
+v3.19.1 - While Kodi scans, the add-on now writes one line a minute to kodi.log showing where the scan is: folders examined out of the total (overall and per source), the full path of the folder Kodi is on, how many movies/shows/episodes the library has and how many were added since the scan began, and how many scraper calls were handled. Folder figures need Kodi's debug logging on (Kodi only names the folder it is scanning at debug level); the library and scraper figures do not. Costs one small read of the new part of the log a minute, on a background thread.
 
 v3.19.0 - Much faster scanning of a large number of new movies. A new "Quick scan" setting (on by default) makes the scraper add each movie with just Chronicle's text details during the scan and leave the slow work -- poster/fanart files, collection art, watched/rating/resume sync -- to the passes that already run right after every scan (the post-scan check and the History and ratings sync). The folder lookup the scraper does per movie no longer waits on a share that has stopped responding (it is skipped for two minutes after one timeout, and listings are reused for ten minutes, re-listed only when a lookup misses), and no longer pauses a second for a VideoLibrary retry that a brand-new movie cannot satisfy. Was about a minute per new movie, almost all of it waiting on an unresponsive share.
 
