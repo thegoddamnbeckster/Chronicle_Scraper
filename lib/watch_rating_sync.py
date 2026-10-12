@@ -454,7 +454,7 @@ def _build_state_updates(details, kodi_item, client, media_item_id, log_label):
         chronicle_reset_at=details.get('watchResetAt'))
     if watched_direction == 'push' and watched_value:
         updates['playcount'] = 1
-        updates['lastplayed'] = watched_value.replace('T', ' ')[:19]
+        updates['lastplayed'] = progress_sync.timeutil.chronicle_iso_to_kodi(watched_value)
         # Explicitly zero the resume point -- see progress_sync.apply_watched_push's own doc
         # for the full root-cause writeup (2026-09-09): a device with its own stale local
         # resume point kept it forever once the resume direction above started returning

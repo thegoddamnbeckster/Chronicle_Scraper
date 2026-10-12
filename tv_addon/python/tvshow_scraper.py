@@ -292,6 +292,10 @@ def get_episode_details(encoded_ids, handle):
     elif watched_direction == 'pull':
         ChronicleClient().push_watched(
             episode_id, progress_sync.kodi_lastplayed_to_iso(watched_value))
+    # A leftover resume bookmark on an episode Chronicle has finished (see progress_sync.has_stale_resume).
+    if watched_direction != 'push' and progress_sync.has_stale_resume(
+            details.get('isWatched'), details.get('lastWatchedAt'), details.get('resumePositionPercent'), kodi_state):
+        vtag.setResumePoint(0, 0)
 
     if details.get('cast'):
         vtag.setCast([

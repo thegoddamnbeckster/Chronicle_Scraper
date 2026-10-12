@@ -15,10 +15,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tests.kodi_stubs as kodi_stubs  # noqa: F401 -- side-effect: stubs xbmc & friends
 
 from lib import progress_sync, watch_rating_sync
+from tests.test_timeutil import zone, _us_mountain
 
-# Real F9 values.
-F9_FINISHED = '2026-09-03T19:34:48'
+# Real F9 values as they sat in the database: the finish stored as 19:34:48 (a local clock reading stored as if it were
+# UTC by the old add-on) and the other Shield's lastplayed 01:34:43 (the real UTC finish, written into Kodi as if it
+# were local). Six hours apart for the same moment; the time zone fix stops new ones, this repairs the existing ones.
+F9_FINISHED = '2026-09-03T19:34:48Z'
 F9_KODI = {'playcount': 1, 'lastplayed': '2026-09-04 01:34:43', 'resume': {'position': 3278.0, 'total': 8995.0}}
+
+
+def setUpModule():
+    global _zone
+    _zone = zone(_us_mountain)
+    _zone.__enter__()
+
+
+def tearDownModule():
+    _zone.__exit__(None, None, None)
 
 
 class TestHasStaleResume(unittest.TestCase):

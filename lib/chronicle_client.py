@@ -16,6 +16,7 @@ import urllib.error
 import urllib.parse
 import xbmcaddon
 
+from lib import timeutil
 from lib.logger import Logger
 
 ADDON = xbmcaddon.Addon()
@@ -656,5 +657,7 @@ class ChronicleClient:
             'Content-Type': 'application/json',
             'X-Api-Key':    self._api_key,
             'User-Agent':   _USER_AGENT,
+            # Which time zone this device is in: Chronicle answers in it and reads offset-less timestamps in it.
+            timeutil.TIMEZONE_HEADER: timeutil.device_timezone(),
         }
         return urllib.request.Request(url, data=data, headers=headers, method=method)

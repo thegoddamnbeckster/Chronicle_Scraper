@@ -65,8 +65,8 @@ class TestResetStampTimezone(unittest.TestCase):
         import time
         now = time.time()
         utc_iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(now))
-        expected_local = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(int(now)))
-        self.assertEqual(progress_sync._utc_iso_to_local_naive(utc_iso), expected_local)
+        expected_local = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(int(now)))
+        self.assertEqual(progress_sync.timeutil.chronicle_iso_to_kodi(utc_iso), expected_local)
 
     def test_kodi_watch_a_minute_before_reset_is_cleared_in_any_timezone(self):
         import time

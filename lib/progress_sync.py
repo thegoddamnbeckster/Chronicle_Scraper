@@ -40,6 +40,7 @@ from datetime import datetime, timedelta
 
 import xbmc
 
+from lib import timeutil
 from lib.logger import Logger
 
 log = Logger('progress_sync')
@@ -185,8 +186,7 @@ def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item
     if not has_kodi and not has_chronicle:
         return None, None
     if has_kodi and not has_chronicle:
-        reset_local = _utc_iso_to_local_naive(chronicle_reset_at)
-        if reset_local and not _kodi_lastplayed_is_newer(kodi_lastplayed, reset_local):
+        if chronicle_reset_at and not _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_reset_at):
             return 'reset', None
         return 'pull', kodi_lastplayed
     if has_chronicle and not has_kodi:
@@ -217,7 +217,7 @@ def apply_watched_push(vtag, watched_at_iso):
     if not watched_at_iso:
         return
     vtag.setPlaycount(1)
-    vtag.setLastPlayed(watched_at_iso.replace('T', ' ')[:19])
+    vtag.setLastPlayed(timeutil.chronicle_iso_to_kodi(watched_at_iso))
     vtag.setResumePoint(0, 0)
 
 
@@ -253,19 +253,6 @@ def apply_resume_push(vtag, resume_pct, runtime_minutes):
     vtag.setResumePoint(position, total)
 
 
-def _utc_iso_to_local_naive(iso):
-    """Server timestamps are UTC; Kodi's lastplayed is naive LOCAL time. Convert the server's UTC
-    ISO string to the same naive local 'YYYY-MM-DD HH:MM:SS' form before comparing them."""
-    if not iso:
-        return None
-    try:
-        utc = datetime.strptime(iso[:19], '%Y-%m-%dT%H:%M:%S')
-    except ValueError:
-        return None
-    local = time.localtime(calendar.timegm(utc.timetuple()))
-    return time.strftime('%Y-%m-%dT%H:%M:%S', local)
-
-
 def apply_watched_reset(vtag):
     """Clears Kodi's playcount/lastplayed/resume via InfoTagVideo -- the counterpart of
     apply_watched_push for a Chronicle-side "rewatch" reset (see resolve_watched_direction)."""
@@ -275,28 +262,20 @@ def apply_watched_reset(vtag):
 
 
 def kodi_lastplayed_to_iso(kodi_lastplayed):
-    """'YYYY-MM-DD HH:MM:SS' -> ISO-8601 'YYYY-MM-DDTHH:MM:SS' for the scrobble payload."""
-    if not kodi_lastplayed:
-        return None
-    return kodi_lastplayed.replace(' ', 'T')
+    """Kodi's naive local 'YYYY-MM-DD HH:MM:SS' -> ISO-8601 carrying this device's UTC offset for the scrobble
+    payload (see lib/timeutil.py: sent without one, Chronicle would have to guess the zone)."""
+    return timeutil.kodi_local_to_iso(kodi_lastplayed)
 
 
 def _parse_kodi_time(s):
-    if not s:
-        return datetime.min
-    try:
-        return datetime.strptime(s, '%Y-%m-%d %H:%M:%S')
-    except ValueError:
-        return datetime.min
+    return timeutil.parse_naive(s) or datetime.min
 
 
 def _parse_iso_time(s):
-    if not s:
-        return datetime.min
-    try:
-        return datetime.strptime(s[:19], '%Y-%m-%dT%H:%M:%S')
-    except ValueError:
-        return datetime.min
+    """Chronicle's timestamp as a naive LOCAL datetime -- the same clock Kodi's lastplayed is on. Chronicle sends an
+    instant (UTC 'Z', or in this device's zone with its offset); comparing its digits to Kodi's local digits
+    directly was the six-hour error described in lib/timeutil.py."""
+    return timeutil.chronicle_iso_to_local(s) or datetime.min
 
 
 def _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_last_iso):
@@ -305,11 +284,10 @@ def _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_last_iso):
     return _parse_kodi_time(kodi_lastplayed) > _parse_iso_time(chronicle_last_iso)
 
 
-# The two clocks being compared are not the same clock: Kodi's lastplayed is naive LOCAL time, Chronicle's
-# watched time came from a Kodi device or the server, and a value pushed from one to the other was never converted.
-# Real data (F9, 2026-10-11): Chronicle says it was finished at 2026-09-03 19:34:48, the upstairs Kodi says it was last
-# played 2026-09-04 01:34:43 -- the same moment, six hours apart. So a plain "which is newer" always read the Kodi side
-# as newer, and a time difference smaller than any plausible zone offset cannot be trusted either way.
+# Timestamps already in Chronicle and in Kodi were written before the time zone fix (lib/timeutil.py): a local clock
+# reading stored as if it were UTC, and a UTC value written into Kodi as if it were local, so the same play sits hours
+# apart on the two sides (F9, 2026-10-11: 19:34:48 in Chronicle, 01:34:43 next day in Kodi). A difference smaller
+# than any plausible zone offset therefore cannot be read as "Kodi played it again".
 _SAME_PLAYBACK_MARGIN = timedelta(hours=24)
 
 
