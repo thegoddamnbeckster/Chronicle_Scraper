@@ -50,6 +50,7 @@ from lib import activity_tracker
 from lib.chronicle_client import ChronicleClient
 from lib.kodi_video_info import apply_common_video_info, apply_ratings, apply_artwork
 from lib.tvshow_location import find_show_location
+from lib.show_art_repair import remove_local_show_posters
 from lib import progress_sync
 
 log = Logger('tvshow_scraper')
@@ -138,6 +139,8 @@ def get_details(show_id, handle):
 
     apply_ratings(vtag, details.get('ratings'))
     apply_artwork(listitem, details.get('artwork'))
+    # A poster file in the show's own folder would override the art just pinned above -- see lib/show_art_repair.py.
+    remove_local_show_posters(details.get('title'), details.get('year'), details.get('artwork'))
 
     # Rating reconciliation, inline with this same scrape -- per-user request
     # (2026-08-30): "I don't want a separate sync task in Kodi for ratings."

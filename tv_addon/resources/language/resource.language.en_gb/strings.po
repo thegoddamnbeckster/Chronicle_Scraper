@@ -310,3 +310,11 @@ msgstr ""
 msgctxt "#32191"
 msgid " -- {0} error(s), see kodi.log"
 msgstr ""
+
+msgctxt "#32192"
+msgid "Use Chronicle's poster instead of a poster file in the show's folder"
+msgstr ""
+
+msgctxt "#32193"
+msgid "Kodi always prefers a poster.jpg sitting in a show's folder over any scraper's art, so a wrong one left there by some other tool comes back after every refresh. When Chronicle has a poster for the show, the show's own poster.jpg / folder.jpg is deleted so Chronicle's is what Kodi shows. Only the show's own folder is touched. On by default."
+msgstr ""
