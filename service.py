@@ -57,6 +57,22 @@ _WATCH_RATING_STARTUP_DELAY_SECONDS = 60
 # Checked against sync_interval_minutes (a user setting, read fresh each time -- see the main
 # loop below) to decide when the next periodic pass is due.
 _WATCH_RATING_CHECK_INTERVAL_SECONDS = 60
+# How soon a periodic pass that was DEFERRED (a scan or scraper activity was in progress when its turn came) tries
+# again. The pass used to restart its full interval the moment it was merely attempted, so on a device that scans
+# often (every scan, rebuild and post-scan check counts as activity) every attempt could land in a busy moment and
+# the pass would go many hours without running -- a rating or watched status set elsewhere reached this device only
+# when a tick happened to fall in a quiet gap. (Reported 2026-10-11: a movie rated 6 downstairs was still unrated
+# upstairs after several scans; its last full pass had been 38 hours earlier.)
+_DEFERRED_RETRY_SECONDS = 5 * 60
+
+
+def _anchor_after_attempt(now, interval_seconds, started):
+    """The value to store as a periodic task's "last ran" time after trying it. A pass that started (or that another
+    pass is already covering) restarts the full interval from now; a pass that was deferred behind a scan is due
+    again in _DEFERRED_RETRY_SECONDS, not a whole interval later."""
+    if started:
+        return now
+    return now - interval_seconds + min(_DEFERRED_RETRY_SECONDS, interval_seconds)
 
 # Chronicle's "new content available" flag (lib/kodi_scan_signal.py) is always checked once
 # after Kodi starts, regardless of the scan_signal_enabled setting -- most imports land via
@@ -164,13 +180,16 @@ class ChronicleMonitor(xbmc.Monitor):
         cross-process lock -- watch_rating_sync.run() only ever calls VideoLibrary.Set*Details
         and Chronicle's own API, no local file I/O, so the worst case of this service's own pass
         and a manual one overlapping is some redundant, wasted work, never corrupted state.
+
+        Returns False only when the pass was DEFERRED behind a scan/scrape (the caller should try again soon);
+        True when it started or another pass is already running.
         """
         if self._should_defer_for_active_scan('watch/rating sync ({0})'.format(trigger_label)):
-            return
+            return False
         if not self._watch_rating_lock.acquire(False):
             log.info('service: watch/rating sync ({0}) skipped -- another pass is already '
                      'running'.format(trigger_label))
-            return
+            return True
 
         def _do():
             # Opened the moment the pass starts and kept up to date through it (see lib/pass_progress.py):
@@ -206,6 +225,7 @@ class ChronicleMonitor(xbmc.Monitor):
                 self._watch_rating_lock.release()
 
         threading.Thread(target=_do, name='chronicle-watch-rating-sync', daemon=True).start()
+        return True
 
     def run_collection_art_sync(self, trigger_label):
         """Runs one collection_art_sync.run() pass -- see that module's own doc for why this
@@ -215,11 +235,11 @@ class ChronicleMonitor(xbmc.Monitor):
         "Sync Now") can't overlap each other.
         """
         if self._should_defer_for_active_scan('collection art sync ({0})'.format(trigger_label)):
-            return
+            return False
         if not self._collection_art_lock.acquire(False):
             log.info('service: collection art sync ({0}) skipped -- another pass is already '
                      'running'.format(trigger_label))
-            return
+            return True
 
         def _do():
             bg = None
@@ -259,6 +279,7 @@ class ChronicleMonitor(xbmc.Monitor):
                 self._collection_art_lock.release()
 
         threading.Thread(target=_do, name='chronicle-collection-art-sync', daemon=True).start()
+        return True
 
     def onCleanStarted(self, library):
         if library == 'video':
@@ -513,13 +534,14 @@ def run():
                 if not startup_sync_done and now - service_started_at >= _WATCH_RATING_STARTUP_DELAY_SECONDS:
                     startup_sync_done = True
                     if ADDON.getSettingBool('sync_on_kodi_start'):
-                        last_watch_rating_sync = now
-                        monitor.run_watch_rating_sync('startup')
+                        interval_seconds = max(30, ADDON.getSettingInt('sync_interval_minutes')) * 60
+                        last_watch_rating_sync = _anchor_after_attempt(
+                            now, interval_seconds, monitor.run_watch_rating_sync('startup'))
                 if startup_sync_done:
                     interval_seconds = max(30, ADDON.getSettingInt('sync_interval_minutes')) * 60
                     if now - last_watch_rating_sync >= interval_seconds:
-                        last_watch_rating_sync = now
-                        monitor.run_watch_rating_sync('scheduled')
+                        last_watch_rating_sync = _anchor_after_attempt(
+                            now, interval_seconds, monitor.run_watch_rating_sync('scheduled'))
             else:
                 # Keeps the anchor from drifting into the past while the master switch is off,
                 # so re-enabling it doesn't immediately fire a sync that "should have" run
@@ -543,13 +565,14 @@ def run():
                         now - collection_art_started_at >= _WATCH_RATING_STARTUP_DELAY_SECONDS:
                     collection_art_startup_done = True
                     if ADDON.getSettingBool('sync_collections_on_kodi_start'):
-                        last_collection_art_sync = now
-                        monitor.run_collection_art_sync('startup')
+                        interval_seconds = max(30, ADDON.getSettingInt('sync_collections_interval_minutes')) * 60
+                        last_collection_art_sync = _anchor_after_attempt(
+                            now, interval_seconds, monitor.run_collection_art_sync('startup'))
                 if collection_art_startup_done:
                     interval_seconds = max(30, ADDON.getSettingInt('sync_collections_interval_minutes')) * 60
                     if now - last_collection_art_sync >= interval_seconds:
-                        last_collection_art_sync = now
-                        monitor.run_collection_art_sync('scheduled')
+                        last_collection_art_sync = _anchor_after_attempt(
+                            now, interval_seconds, monitor.run_collection_art_sync('scheduled'))
             else:
                 last_collection_art_sync = now
 
