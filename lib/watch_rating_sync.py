@@ -474,6 +474,13 @@ def _build_state_updates(details, kodi_item, client, media_item_id, log_label):
     elif watched_direction == 'pull':
         client.push_watched(media_item_id, progress_sync.kodi_lastplayed_to_iso(kodi_lastplayed))
 
+    # A finished item with a leftover resume bookmark stays under "In progress" forever on a device where the
+    # watched-push above never fires -- see progress_sync.has_stale_resume.
+    if 'resume' not in updates and progress_sync.has_stale_resume(
+            details.get('isWatched'), details.get('lastWatchedAt'), details.get('resumePositionPercent'), kodi_item):
+        updates['resume'] = {'position': 0, 'total': 0}
+        log.info('watch_rating_sync: "{0}" -- cleared a stale resume bookmark on an item Chronicle has finished'.format(log_label))
+
     return updates
 
 

@@ -36,7 +36,7 @@ lookup needed, so it isn't in this module at all.
 import json
 import calendar
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import xbmc
 
@@ -281,24 +281,59 @@ def kodi_lastplayed_to_iso(kodi_lastplayed):
     return kodi_lastplayed.replace(' ', 'T')
 
 
+def _parse_kodi_time(s):
+    if not s:
+        return datetime.min
+    try:
+        return datetime.strptime(s, '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return datetime.min
+
+
+def _parse_iso_time(s):
+    if not s:
+        return datetime.min
+    try:
+        return datetime.strptime(s[:19], '%Y-%m-%dT%H:%M:%S')
+    except ValueError:
+        return datetime.min
+
+
 def _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_last_iso):
     """True if Kodi's lastplayed is strictly more recent than Chronicle's.
     A missing value on either side counts as "epoch" (always older)."""
+    return _parse_kodi_time(kodi_lastplayed) > _parse_iso_time(chronicle_last_iso)
 
-    def _parse_kodi(s):
-        if not s:
-            return datetime.min
-        try:
-            return datetime.strptime(s, '%Y-%m-%d %H:%M:%S')
-        except ValueError:
-            return datetime.min
 
-    def _parse_iso(s):
-        if not s:
-            return datetime.min
-        try:
-            return datetime.strptime(s[:19], '%Y-%m-%dT%H:%M:%S')
-        except ValueError:
-            return datetime.min
+# The two clocks being compared are not the same clock: Kodi's lastplayed is naive LOCAL time, Chronicle's
+# watched time came from a Kodi device or the server, and a value pushed from one to the other was never converted.
+# Real data (F9, 2026-10-11): Chronicle says it was finished at 2026-09-03 19:34:48, the upstairs Kodi says it was last
+# played 2026-09-04 01:34:43 -- the same moment, six hours apart. So a plain "which is newer" always read the Kodi side
+# as newer, and a time difference smaller than any plausible zone offset cannot be trusted either way.
+_SAME_PLAYBACK_MARGIN = timedelta(hours=24)
 
-    return _parse_kodi(kodi_lastplayed) > _parse_iso(chronicle_last_iso)
+
+def has_stale_resume(chronicle_watched, chronicle_watched_at, chronicle_resume_pct, kodi_item):
+    """True when Kodi still holds a resume bookmark on an item Chronicle has FINISHED, and nothing newer explains it.
+
+    Such a bookmark is left over from partial playback before the finish was synced (or from a device that never saw
+    it end) and makes Kodi list a watched film under "In progress" for good: a bookmark is cleared only by the 'push'
+    branch of resolve_watched_direction, and that branch is never taken once Kodi's lastplayed reads as newer than
+    Chronicle's -- which the clock mismatch above guarantees for hours. (Reported 2026-10-11: F9, finished and rated
+    on another Shield weeks earlier, still sat at 36% in "In progress movies" upstairs.)
+
+    A genuine newer playback (a rewatch started, then stopped, on this device) is left alone: its lastplayed is more
+    than _SAME_PLAYBACK_MARGIN after Chronicle's finish. Kodi items that were never played (playcount 0) are excluded:
+    the normal watched-push already zeroes their bookmark.
+    """
+    if not chronicle_watched or chronicle_resume_pct or kodi_item is None:
+        return False
+    if (kodi_item.get('playcount') or 0) <= 0:
+        return False
+    resume = kodi_item.get('resume') or {}
+    if (resume.get('position') or 0) <= 0:
+        return False
+    finished_at = _parse_iso_time(chronicle_watched_at)
+    if finished_at == datetime.min:
+        return False   # no finish time to compare against: leave it alone
+    return _parse_kodi_time(kodi_item.get('lastplayed')) <= finished_at + _SAME_PLAYBACK_MARGIN

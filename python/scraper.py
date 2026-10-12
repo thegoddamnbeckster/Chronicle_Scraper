@@ -312,6 +312,10 @@ def get_details(media_item_id, handle):
         elif watched_direction == 'pull':
             ChronicleClient().push_watched(
                 media_item_id, progress_sync.kodi_lastplayed_to_iso(watched_value))
+        # A leftover resume bookmark on an item Chronicle has finished (see progress_sync.has_stale_resume).
+        if watched_direction != 'push' and progress_sync.has_stale_resume(
+                details.get('isWatched'), details.get('lastWatchedAt'), details.get('resumePositionPercent'), kodi_state):
+            vtag.setResumePoint(0, 0)
     t_progress_sync = time.time()
 
     if not quick:
