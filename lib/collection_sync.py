@@ -53,6 +53,7 @@ import xbmcgui
 import xbmcvfs
 
 from lib.logger import Logger
+from lib.redact import redact_credentials
 from lib.kodi_settings import get_setting_value
 
 log = Logger('collection_sync')
@@ -420,7 +421,8 @@ def _notify_unreachable(base_folder):
 
     xbmcgui.Dialog().notification(
         'Chronicle Scraper',
-        'Movie collections folder not reachable: {0}'.format(base_folder),
+        # Never show the login a source path may carry (smb://user:password@host/...).
+        'Movie collections folder not reachable: {0}'.format(redact_credentials(base_folder)),
         xbmcgui.NOTIFICATION_WARNING,
         7000,
     )

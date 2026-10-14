@@ -13,6 +13,8 @@ Connect-flow bug report (2026-08-27).
 
 import xbmc
 
+from lib.redact import redact_credentials
+
 _PREFIX = '[ChronicleScraperMovie]'
 
 
@@ -24,13 +26,13 @@ class Logger:
         self._tag = _PREFIX + tag
 
     def debug(self, msg: str) -> None:
-        xbmc.log('{0} {1}'.format(self._tag, msg), xbmc.LOGDEBUG)
+        xbmc.log('{0} {1}'.format(self._tag, redact_credentials(msg)), xbmc.LOGDEBUG)
 
     def info(self, msg: str) -> None:
-        xbmc.log('{0} {1}'.format(self._tag, msg), xbmc.LOGINFO)
+        xbmc.log('{0} {1}'.format(self._tag, redact_credentials(msg)), xbmc.LOGINFO)
 
     def warning(self, msg: str) -> None:
-        xbmc.log('{0} {1}'.format(self._tag, msg), xbmc.LOGWARNING)
+        xbmc.log('{0} {1}'.format(self._tag, redact_credentials(msg)), xbmc.LOGWARNING)
 
     def error(self, msg: str) -> None:
-        xbmc.log('{0} {1}'.format(self._tag, msg), xbmc.LOGERROR)
+        xbmc.log('{0} {1}'.format(self._tag, redact_credentials(msg)), xbmc.LOGERROR)
