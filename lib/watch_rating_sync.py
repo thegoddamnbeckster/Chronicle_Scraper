@@ -60,6 +60,24 @@ _EPISODE_STATE_PROPERTIES = (['season', 'episode', 'file', 'title', 'plot', 'fir
                              + progress_sync.STATE_PROPERTIES)
 
 
+def describe_result(result, get_string):
+    """The one-line notification for a finished pass, or None when there is nothing worth saying:
+    only what CHANGED is reported (never how many items were merely checked), and a pass that
+    changed nothing and hit no errors is silent. get_string(id) is xbmcaddon's getLocalizedString.
+    String ids: 32135 "Updated {0}", 32162-32164 the per-kind counts, 32166 the errors-only line,
+    32136 the errors suffix."""
+    parts = []
+    for key, string_id in (('movies_changed', 32162), ('shows_changed', 32163), ('episodes_changed', 32164)):
+        if result.get(key):
+            parts.append(get_string(string_id).format(result[key]))
+    errors = result.get('errors') or 0
+    if parts:
+        return get_string(32135).format(', '.join(parts)) + (get_string(32136).format(errors) if errors else '')
+    if errors:
+        return get_string(32166).format(errors)
+    return None
+
+
 def run(is_cancelled=None, progress_callback=None):
     """Runs one full pass over every movie, show, and episode already in this device's own
     Kodi VideoLibrary. progress_callback(index, total, label), if given, is called once per
@@ -67,10 +85,11 @@ def run(is_cancelled=None, progress_callback=None):
     interrupt at any point, since every item's own reconciliation is a single, self-contained
     JSON-RPC round trip with no multi-step local state to leave half-finished.
 
-    Returns a dict: {'movies': N, 'shows': N, 'episodes': N, 'errors': N, 'cancelled': bool} --
-    counts are "items visited", not "items changed" (most items reconcile to a no-op, which
-    isn't separately worth counting here; see kodi.log for what actually changed on any given
-    item).
+    Returns a dict: {'movies': N, 'shows': N, 'episodes': N, 'errors': N, 'cancelled': bool,
+    'movies_changed': N, 'shows_changed': N, 'episodes_changed': N}. The first three are "items
+    visited" (most reconcile to a no-op); the *_changed counts are the items where something was
+    actually written, which is all a person reading the result needs -- see kodi.log for what
+    changed on any given item.
     """
     client = ChronicleClient()
     cache = media_id_cache.load()
@@ -80,7 +99,8 @@ def run(is_cancelled=None, progress_callback=None):
     log.info('watch_rating_sync: starting -- {0} movie(s), {1} show(s) in this device\'s own '
              'VideoLibrary'.format(len(movies), len(shows)))
 
-    counts = {'movies': 0, 'shows': 0, 'episodes': 0, 'errors': 0}
+    counts = {'movies': 0, 'shows': 0, 'episodes': 0, 'errors': 0,
+              'movies_changed': 0, 'shows_changed': 0, 'episodes_changed': 0}
     processed = 0
     cancelled = False
 
@@ -92,7 +112,8 @@ def run(is_cancelled=None, progress_callback=None):
         if progress_callback is not None:
             progress_callback(processed, total, label)
         try:
-            _sync_one_movie(client, cache, movie)
+            if _sync_one_movie(client, cache, movie):
+                counts['movies_changed'] += 1
             counts['movies'] += 1
         except Exception as exc:
             counts['errors'] += 1
@@ -109,10 +130,12 @@ def run(is_cancelled=None, progress_callback=None):
             if progress_callback is not None:
                 progress_callback(processed, total, label)
             try:
-                episode_count = _sync_one_show(
+                episode_count, show_changed, episodes_changed = _sync_one_show(
                     client, cache, show, is_cancelled, progress_callback, processed, total)
                 counts['shows'] += 1
                 counts['episodes'] += episode_count
+                counts['shows_changed'] += 1 if show_changed else 0
+                counts['episodes_changed'] += episodes_changed
             except Exception as exc:
                 counts['errors'] += 1
                 log.warning('watch_rating_sync: show "{0}" failed: {1}'.format(label, exc))
@@ -122,10 +145,11 @@ def run(is_cancelled=None, progress_callback=None):
     media_id_cache.save(cache)
 
     log.info(
-        'watch_rating_sync: done -- {0} movie(s), {1} show(s), {2} episode(s) visited, '
-        '{3} error(s){4}'.format(
-            counts['movies'], counts['shows'], counts['episodes'], counts['errors'],
-            ' (cancelled)' if cancelled else ''))
+        'watch_rating_sync: done -- {0} movie(s), {1} show(s), {2} episode(s) visited; changed '
+        '{3} movie(s), {4} show(s), {5} episode(s); {6} error(s){7}'.format(
+            counts['movies'], counts['shows'], counts['episodes'],
+            counts['movies_changed'], counts['shows_changed'], counts['episodes_changed'],
+            counts['errors'], ' (cancelled)' if cancelled else ''))
     counts['cancelled'] = cancelled
     return counts
 
@@ -162,6 +186,7 @@ def _contradicts(path_years, year):
 
 
 def _sync_one_movie(client, cache, movie):
+    """Returns True when this pass wrote anything for the movie (a field, its art, or a re-scrape)."""
     title = movie.get('title')
     year = movie.get('year')
     label = '{0} ({1})'.format(title, year)
@@ -231,12 +256,13 @@ def _sync_one_movie(client, cache, movie):
     # data was corrected or enriched after that check ran (Total Recall, 2026-09-26) stayed wrong on
     # the device until some later library scan happened to re-run it.
     file_path = movie.get('file')
+    art_changed = False
     if file_path:
         try:
-            movie_art_sync.sync_movie_art(
+            art_changed = bool(movie_art_sync.sync_movie_art(
                 details.get('title'), details.get('year'), details.get('artwork'),
                 location=(posixpath.dirname(file_path) + '/',
-                          movie_art_sync.strip_video_ext(posixpath.basename(file_path))))
+                          movie_art_sync.strip_video_ext(posixpath.basename(file_path)))))
         except Exception as exc:
             log.warning('watch_rating_sync: art sync failed for "{0}": {1}'.format(label, exc))
     text_updates = diff_movie(movie, details)
@@ -256,6 +282,7 @@ def _sync_one_movie(client, cache, movie):
         refresh_movie(movie['movieid'])
         log.info('watch_rating_sync: "{0}" -- re-scraping (cast/collection differs from Chronicle)'.format(label))
         log.info('watch_rating_sync: "{0}" -- applied {1}'.format(label, ', '.join(sorted(updates.keys()))))
+    return bool(updates) or refresh or art_changed
 
 
 def _show_external_ids(show):
@@ -303,7 +330,9 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
     updates the progress dialog's message per-episode (e.g. "Lanterns - S1E5") instead of
     appearing frozen on the show's own label for however long its whole episode list takes.
     The percentage itself intentionally doesn't advance mid-show (episodes aren't part of the
-    movies+shows `total` denominator at all -- see run()'s own doc) -- only the label does."""
+    movies+shows `total` denominator at all -- see run()'s own doc) -- only the label does.
+
+    Returns (episodes_visited, show_changed, episodes_changed)."""
     title = show.get('title')
     year = show.get('year')
     label = '{0} ({1})'.format(title, year)
@@ -313,7 +342,7 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
     if show_id is None:
         log.info('watch_rating_sync: "{0}" -- Chronicle could not resolve this show, '
                  'skipping episodes too'.format(label))
-        return 0
+        return 0, False, 0
 
     show_details = client.get_show_details(show_id)
     if not show_details:
@@ -326,7 +355,7 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
         if not show_details:
             log.info('watch_rating_sync: "{0}" -- no details returned, skipping episodes '
                      'too'.format(label))
-            return 0
+            return 0, False, 0
 
     # Same guard as _sync_one_movie: a cached show id keyed by Kodi's own (reassignable) tvshowid can
     # name a different show, and everything below would then write THAT show's text, ratings and
@@ -342,7 +371,7 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
             cache.pop(key, None)
             log.warning('watch_rating_sync: "{0}" -- no Chronicle show with a matching title; '
                         'skipping it and its episodes (nothing written)'.format(label))
-            return 0
+            return 0, False, 0
 
     # Reports this device's tvshowid to Chronicle -- same reasoning as the movie/episode
     # report_kodi_id calls below. Confirmed
@@ -350,9 +379,11 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
     # (rather than through a real scrape) never got its tvshowid reported at all.
     client.report_kodi_id(show_id, 'tvshow', show['tvshowid'])
 
+    show_changed = False
     if show_details.get('userRating'):
         kodi_rating = show.get('userrating') or 0
         if kodi_rating != show_details['userRating']:
+            show_changed = True
             _set_tvshow_rating(show['tvshowid'], show_details['userRating'])
             log.info('watch_rating_sync: "{0}" -- rating updated to {1}'.format(
                      label, show_details['userRating']))
@@ -363,12 +394,13 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
     # differs is ever written.
     text_updates = diff_show_text(show, show_details)
     if text_updates:
+        show_changed = True
         _set_tvshow_details(show['tvshowid'], text_updates)
         log.info('watch_rating_sync: "{0}" -- corrected {1}'.format(label, ', '.join(sorted(text_updates))))
 
     chronicle_episodes = client.get_episode_list(show_id) or []
     if not chronicle_episodes:
-        return 0
+        return 0, show_changed, 0
     chronicle_by_key = {}
     for e in chronicle_episodes:
         ep_key = (e.get('season'), e.get('episode'))
@@ -380,6 +412,7 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
 
     kodi_episodes = _get_episodes_for_show(show['tvshowid'])
     synced = 0
+    changed = 0
     for kodi_ep in kodi_episodes:
         if is_cancelled is not None and is_cancelled():
             break
@@ -398,20 +431,22 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
         if progress_callback is not None:
             progress_callback(processed, total, '{0} S{1}E{2}'.format(title, ep_key[0], ep_key[1]))
         try:
-            _sync_one_episode(client, show, kodi_ep, episode_id)
+            if _sync_one_episode(client, show, kodi_ep, episode_id):
+                changed += 1
             synced += 1
         except Exception as exc:
             log.warning('watch_rating_sync: "{0}" S{1}E{2} failed: {3}'.format(
                         title, ep_key[0], ep_key[1], exc))
         xbmc.sleep(int(_MIN_ITEM_SPACING_SECONDS * 1000))
-    return synced
+    return synced, show_changed, changed
 
 
 def _sync_one_episode(client, show, kodi_ep, episode_id):
+    """Returns True when something was written for the episode."""
     label = '{0} S{1}E{2}'.format(show.get('title'), kodi_ep.get('season'), kodi_ep.get('episode'))
     details = client.get_episode_details(episode_id)
     if not details:
-        return
+        return False
 
     client.report_kodi_id(episode_id, 'episode', kodi_ep['episodeid'])
 
@@ -420,6 +455,7 @@ def _sync_one_episode(client, show, kodi_ep, episode_id):
     if updates:
         _set_episode_details(kodi_ep['episodeid'], updates)
         log.info('watch_rating_sync: "{0}" -- applied {1}'.format(label, ', '.join(sorted(updates.keys()))))
+    return bool(updates)
 
 
 def _build_state_updates(details, kodi_item, client, media_item_id, log_label):

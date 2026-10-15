@@ -162,7 +162,10 @@ def sync_movie_art(title, year, artwork, location=None):
     location, if given, is a pre-resolved (folder, video_basename) tuple --
     pass this when the caller already looked the movie up for another reason
     so this doesn't repeat the same VideoLibrary/
-    source-browsing lookup a second time."""
+    source-browsing lookup a second time.
+
+    Returns True when at least one local art file was written, so a caller can tell a pass that
+    changed something from one that only checked."""
     if not artwork:
         log.warning('sync_movie_art: "{0}" ({1}) -- Chronicle sent no artwork dict at all, '
                     'nothing to sync'.format(title, year))
@@ -181,6 +184,7 @@ def sync_movie_art(title, year, artwork, location=None):
                     'skipping'.format(title, year, folder))
         return
 
+    wrote_any = False
     for dest_art_type, ext, source_art_type in _ART_FILES:
         candidates = artwork.get(source_art_type)
         if not candidates:
@@ -208,7 +212,9 @@ def sync_movie_art(title, year, artwork, location=None):
                 # the old picture keeps rendering until then (see collection_sync.py's
                 # own copy of this exact fix for the full explanation).
                 _invalidate_texture(dest)
+            wrote_any = True
             log.info('Synced local {0} for "{1}" from Chronicle'.format(dest_art_type, title))
+    return wrote_any
 
 
 def find_movie_location(title, year, known_filename=None, library_retries=None):

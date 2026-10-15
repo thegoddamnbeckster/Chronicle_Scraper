@@ -282,9 +282,9 @@ def _sync_watch_ratings_now():
     finally:
         bg.close()
 
-    message = ADDON.getLocalizedString(32135).format(
-        result['movies'], result['shows'], result['episodes'],
-        ADDON.getLocalizedString(32136).format(result['errors']) if result['errors'] else '')
+    # A button press expects an answer, so a pass that changed nothing says so (the background pass stays silent).
+    message = (watch_rating_sync.describe_result(result, ADDON.getLocalizedString)
+               or ADDON.getLocalizedString(32165))
     xbmcgui.Dialog().notification(
         ADDON.getLocalizedString(32134),
         message,

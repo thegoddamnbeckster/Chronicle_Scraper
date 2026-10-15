@@ -174,7 +174,7 @@ msgid "Syncing watch history and ratings…"
 msgstr ""
 
 msgctxt "#32135"
-msgid "Synced {0} movie(s), {1} show(s), {2} episode(s){3}"
+msgid "Updated {0}"
 msgstr ""
 
 msgctxt "#32136"
@@ -270,7 +270,7 @@ msgid "Verifying movies against Chronicle…"
 msgstr ""
 
 msgctxt "#32159"
-msgid "Checked {0} movie(s), corrected {1}{2}"
+msgid "Corrected {0} movie(s){1}"
 msgstr ""
 
 msgctxt "#32160"
@@ -279,4 +279,24 @@ msgstr ""
 
 msgctxt "#32161"
 msgid "Could not check your movies -- {0}"
+msgstr ""
+
+msgctxt "#32162"
+msgid "{0} movie(s)"
+msgstr ""
+
+msgctxt "#32163"
+msgid "{0} show(s)"
+msgstr ""
+
+msgctxt "#32164"
+msgid "{0} episode(s)"
+msgstr ""
+
+msgctxt "#32165"
+msgid "Everything was already up to date"
+msgstr ""
+
+msgctxt "#32166"
+msgid "Watch and rating sync hit {0} error(s), see kodi.log"
 msgstr ""

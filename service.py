@@ -204,14 +204,16 @@ class ChronicleMonitor(xbmc.Monitor):
                 result = watch_rating_sync.run(is_cancelled=self.abortRequested, progress_callback=progress.update)
                 log.info(
                     'service: watch/rating sync ({0}) complete -- {1} movie(s), {2} show(s), '
-                    '{3} episode(s) visited, {4} error(s){5}'.format(
+                    '{3} episode(s) visited; changed {4} movie(s), {5} show(s), {6} episode(s); '
+                    '{7} error(s){8}'.format(
                         trigger_label, result['movies'], result['shows'], result['episodes'],
+                        result['movies_changed'], result['shows_changed'], result['episodes_changed'],
                         result['errors'], ' (cancelled)' if result['cancelled'] else ''))
 
-                if not result['cancelled']:
-                    message = ADDON.getLocalizedString(32135).format(
-                        result['movies'], result['shows'], result['episodes'],
-                        ADDON.getLocalizedString(32136).format(result['errors']) if result['errors'] else '')
+                # Only what changed is worth a notification; a pass that found nothing to do stays silent.
+                message = None if result['cancelled'] else watch_rating_sync.describe_result(
+                    result, ADDON.getLocalizedString)
+                if message:
                     xbmcgui.Dialog().notification(
                         ADDON.getLocalizedString(32134),
                         message,
@@ -382,12 +384,16 @@ class ChronicleMonitor(xbmc.Monitor):
                 message = ADDON.getLocalizedString(32161).format(result['aborted'])
             elif result.get('cancelled'):
                 message = ADDON.getLocalizedString(32160)
-            else:
+            elif result.get('updated') or result.get('errors'):
+                # Only what was corrected is reported -- how many were merely checked is noise, and a
+                # check that found everything already right says nothing at all.
                 if result.get('errors'):
                     icon = xbmcgui.NOTIFICATION_WARNING
                 message = ADDON.getLocalizedString(32159).format(
-                    result.get('checked', 0), result.get('updated', 0),
+                    result.get('updated', 0),
                     ADDON.getLocalizedString(32136).format(result['errors']) if result.get('errors') else '')
+            else:
+                return
             xbmcgui.Dialog().notification(ADDON.getLocalizedString(32000), message, icon=icon, time=8000)
         except Exception as exc:
             log.warning('service: could not show the full sync-check result: {0}'.format(exc))

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.20.1"
+       version="3.20.2"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,9 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.20.1 - SECURITY FIX: the add-on no longer shows or logs a source's username and password. A Kodi source path can carry a login (smb://user:password@host/...); when the movie collections folder could not be reached, the notification ("Movie collections folder not reachable: ...") displayed that full path, login included, and the same path was written to kodi.log. Logins are now replaced by *** in that notification and in every line the add-on logs, keeping the host and folder so the message is still useful (also for logins inside multipath:// sources). Lines already written to an existing kodi.log are not rewritten: it is replaced as Kodi restarts, and anyone who shared an old log should treat the password as exposed.
+    <news>v3.20.2 - QUIETER REPORTS: the notification after a watch-and-rating sync, and the one after the post-scan check, now say only what changed (for example "Updated 3 movie(s), 12 episode(s)") instead of how many items were looked at, and show nothing at all when nothing changed and nothing failed. Errors, and a pass cut short by a scan, are still reported. The "Sync Watch History and Ratings Now" button still answers when pressed ("Everything was already up to date").
+
+v3.20.1 - SECURITY FIX: the add-on no longer shows or logs a source's username and password. A Kodi source path can carry a login (smb://user:password@host/...); when the movie collections folder could not be reached, the notification ("Movie collections folder not reachable: ...") displayed that full path, login included, and the same path was written to kodi.log. Logins are now replaced by *** in that notification and in every line the add-on logs, keeping the host and folder so the message is still useful (also for logins inside multipath:// sources). Lines already written to an existing kodi.log are not rewritten: it is replaced as Kodi restarts, and anyone who shared an old log should treat the password as exposed.
 
 v3.20.0 - FIX: watched dates and resume times now respect your time zone. Chronicle keeps every time in UTC while Kodi shows local time, and the add-on compared and copied the two as if they were the same clock, so they were always wrong by your UTC offset (six hours in Mountain time). That is why a film finished on one device could look as if the other device had watched it more recently, and its old half-way bookmark was kept (F9). Now this add-on tells Chronicle which time zone the device is in, sends every time with its offset, and converts what Chronicle sends back to local time before comparing or writing it into Kodi. Nothing about any zone is built in; it follows the device. Dates already recorded with the old error are tolerated, and a leftover bookmark on a finished film is still cleared.
 
