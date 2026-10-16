@@ -140,7 +140,7 @@ foreach ($f in Get-ChildItem -Path $sharedDir -Filter "*.py" -File) {
 
 # Modules that live in the movie add-on's own lib\ but must be byte-identical in the TV add-on (one copy, same reasoning).
 $tvShared = $shared.Clone()
-foreach ($name in @("kodi_scan_signal.py", "pass_progress.py")) {
+foreach ($name in @("kodi_scan_signal.py", "pass_progress.py", "movie_art_sync.py", "install_marker.py")) {
     $tvShared["lib\$name"] = Join-Path $repoRoot "lib\$name"
 }
 

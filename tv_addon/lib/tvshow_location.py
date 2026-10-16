@@ -34,7 +34,7 @@ import xbmcvfs
 
 from lib.logger import Logger
 from lib.movie_art_sync import get_video_sources, normalize, year_tolerant_match
-from lib.movie_art_sync import list_source_dirs_cached
+from lib.movie_art_sync import _SOURCE_LISTING_FRESH_SECONDS, list_source_dirs_cached
 
 log = Logger('tvshow_location')
 
@@ -212,13 +212,25 @@ def _search_sources_for_show(title, year):
     target = normalize(title)
     if not target:
         return None
-    target_with_year = target + str(year) if year else None
 
-    listings = []
-    for source in get_video_sources():
-        dirs = list_source_dirs_cached(source)
-        if dirs:
-            listings.append((source, dirs))
+    # Trust long-cached source listings first (a hit is the common case during a scan); if nothing matches, re-list whatever is older
+    # than _SOURCE_LISTING_FRESH_SECONDS and look once more, so a show folder added since the last listing is still found. Same
+    # two-pass lookup as movie_art_sync._search_sources_for_movie, which owns the listing cache both add-ons share.
+    for max_age in (None, _SOURCE_LISTING_FRESH_SECONDS):
+        listings = []
+        for source in get_video_sources():
+            dirs = list_source_dirs_cached(source, max_age=max_age)
+            if dirs:
+                listings.append((source, dirs))
+        folder = _match_show_in_listings(listings, target, year)
+        if folder:
+            return folder
+    return None
+
+
+def _match_show_in_listings(listings, target, year):
+    """The three exact-match tiers over already-fetched (source, dirs) listings."""
+    target_with_year = target + str(year) if year else None
 
     if target_with_year:
         for source, dirs in listings:
@@ -238,5 +250,3 @@ def _search_sources_for_show(title, year):
                     return source.rstrip('/') + '/' + name + '/'
 
     return None
-
-

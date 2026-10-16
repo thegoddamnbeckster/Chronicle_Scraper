@@ -719,11 +719,17 @@ def _write_remote_file(dest_path, url):
     try:
         f = xbmcvfs.File(dest_path, 'w')
         try:
-            f.write(bytearray(data))
+            written = f.write(bytearray(data))
         finally:
             f.close()
     except Exception as exc:
         log.warning("Couldn't write {0}: {1}".format(dest_path, exc))
+        return None
+
+    # xbmcvfs.File.write() does not raise on most VFS failures (permission denied, unreachable share): it returns a falsy value.
+    # Reporting that as success would record the file as synced and skip it from then on.
+    if written is not None and not written:
+        log.warning('xbmcvfs.File.write() returned falsy for {0} (no exception raised)'.format(dest_path))
         return None
 
     return len(data)

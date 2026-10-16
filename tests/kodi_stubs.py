@@ -126,7 +126,29 @@ def _install():
     xbmc.LOGERROR = 4
     xbmc.log = MagicMock()
     xbmc.sleep = MagicMock()
-    xbmc.Monitor = MagicMock
+
+
+    class _Monitor:
+        """Base of the services' monitors: never aborts unless a test sets .aborted; waitForAbort returns at once."""
+        aborted = False
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def abortRequested(self):
+            return self.aborted
+
+        def waitForAbort(self, timeout=0):
+            return self.aborted
+
+    xbmc.Monitor = _Monitor
+
+    class _Actor:
+        """Stands in for xbmc.Actor: keeps what the scraper passed so a test can read it back."""
+        def __init__(self, name='', role='', order=0, thumbnail=''):
+            self.name, self.role, self.order, self.thumbnail = name, role, order, thumbnail
+
+    xbmc.Actor = _Actor
     xbmc.executeJSONRPC = MagicMock(return_value='{"result": {}}')
     xbmc.getCondVisibility = MagicMock(return_value=False)
     xbmc.getInfoLabel = MagicMock(return_value='')
@@ -141,6 +163,8 @@ def _install():
     xbmcgui = types.ModuleType('xbmcgui')
     xbmcgui.ListItem = _FakeListItem
     xbmcgui.Dialog = MagicMock
+    xbmcgui.DialogProgressBG = MagicMock
+    xbmcgui.DialogProgress = MagicMock
 
     class _WindowDialog:
         """Base of the QR window: every control/window method is a recorded no-op."""
@@ -185,15 +209,22 @@ _install()
 
 
 def _extend_lib_path():
-    """Makes the modules in shared/ importable as lib.<name>, as they are inside the built add-on (the build copies them into lib/)."""
+    """Makes the modules the build copies into lib/ importable as lib.<name>: everything in shared/, and (TV add-on) the few modules that
+    live in the movie add-on's lib/ and are copied into the TV add-on's lib/ by build.ps1. The TV add-on's own lib/ wins on a name clash."""
     import os
     import lib
     here = os.path.dirname(os.path.abspath(__file__))
-    shared = os.path.normpath(os.path.join(here, '..', 'shared'))
-    if os.path.basename(os.path.dirname(here)) == 'tv_addon':
-        shared = os.path.normpath(os.path.join(here, '..', '..', 'shared'))
-    if shared not in lib.__path__:
-        lib.__path__.append(shared)
+    repo = os.path.dirname(here)
+    is_tv = os.path.basename(repo) == 'tv_addon'
+    if is_tv:
+        repo = os.path.dirname(repo)
+    extra = [os.path.join(repo, 'shared')]
+    if is_tv:
+        extra.append(os.path.join(repo, 'lib'))
+    for path in extra:
+        path = os.path.normpath(path)
+        if path not in lib.__path__:
+            lib.__path__.append(path)
 
 
 _extend_lib_path()

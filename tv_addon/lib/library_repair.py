@@ -627,7 +627,11 @@ def _verify_backup(backup_path):
         raise LibraryRepairError(
             'backup_verify_failed', "Couldn't verify the safety backup ({0}) -- no changes made.".format(exc))
     try:
-        result = conn.execute('PRAGMA integrity_check').fetchone()
+        try:
+            result = conn.execute('PRAGMA integrity_check').fetchone()
+        except sqlite3.DatabaseError:
+            # A file that is not a database at all fails here, not in the check's own answer.
+            result = None
         if not result or result[0] != 'ok':
             raise LibraryRepairError(
                 'backup_corrupt', 'The safety backup failed an integrity check -- no changes made.')

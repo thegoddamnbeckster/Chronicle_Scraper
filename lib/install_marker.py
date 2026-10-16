@@ -8,19 +8,24 @@ that one start; they run again on the next normal Kodi start (Chronicle's new-co
 unacknowledged, so nothing is lost).
 """
 
+import xbmcaddon
 import xbmcvfs
 
 from lib.logger import Logger
 
 log = Logger('install_marker')
 
-_MARKER_PATH = 'special://profile/addon_data/script.chronicle.scraper.movie/installed_version.txt'
+
+def _marker_path():
+    """Under the add-on's own data folder, so the movie and TV scrapers each track their own installs."""
+    return 'special://profile/addon_data/{0}/installed_version.txt'.format(xbmcaddon.Addon().getAddonInfo('id'))
 
 
-def is_first_start_of_version(version, path=_MARKER_PATH):
+def is_first_start_of_version(version, path=None):
     """True the first time this exact version's service starts (records it); False afterwards.
     Any failure to read/write the marker counts as "not fresh" -- never suppress on a guess."""
     try:
+        path = path or _marker_path()
         previous = None
         if xbmcvfs.exists(path):
             handle = xbmcvfs.File(path, 'r')

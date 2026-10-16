@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.tv"
        name="Chronicle Scraper (TV)"
-       version="1.18.0"
+       version="1.18.1"
        provider-name="Michael Beck">
 
   <requires>
@@ -58,7 +58,9 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (TV)</summary>
     <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. The corner status indicator lives in the Movies addon and covers both movies and TV shows together; this addon doesn't duplicate it. Neither addon writes a local NFO file of any kind -- Chronicle's own API is the source of truth both scrapers read from directly. It does have its own small background service that keeps Kodi's library in sync with newly-imported content, independent of the Movies addon -- see this version's changelog.</description>
-    <news>v1.18.0 - CLEAN-UP: The connection screens (Edit Connection, Change URL, Test Connection, the "Connected as" status), the Chronicle HTTP client basics and the log tags are now one shared implementation across all the Chronicle add-ons, so a fix reaches every add-on at once. A server address that is not http:// or https:// (or has a malformed port) is now refused.
+    <news>v1.18.1 - FIXES: (1) Installing or upgrading this add-on no longer starts a library scan on its own. The movie add-on has always skipped its start-up scan checks on the first start after an install; the TV add-on did not, so every upgrade triggered a scan about a minute later. They now resume on the next normal Kodi start. (2) Finding a show's folder now shares the movie add-on's source-listing code, which remembers a share that has gone unresponsive for a couple of minutes instead of waiting the full time-out for every show, and which lists a source again once when a new folder is not found in the remembered listing.
+
+v1.18.0 - CLEAN-UP: The connection screens (Edit Connection, Change URL, Test Connection, the "Connected as" status), the Chronicle HTTP client basics and the log tags are now one shared implementation across all the Chronicle add-ons, so a fix reaches every add-on at once. A server address that is not http:// or https:// (or has a malformed port) is now refused.
 
 v1.17.1 - SECURITY FIX: the add-on no longer writes a source's username and password to kodi.log. A Kodi source path can carry a login (smb://user:password@host/...), and paths are logged in several messages. Logins are now replaced by *** in every line the add-on logs, keeping the host and folder so the messages are still useful (also for logins inside multipath:// sources). Lines already written to an existing kodi.log are not rewritten: it is replaced as Kodi restarts, and anyone who shared an old log should treat the password as exposed.
 

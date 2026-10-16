@@ -27,6 +27,7 @@ import xbmcgui
 
 from lib import activity_tracker
 from lib import full_sync_check
+from lib import install_marker
 from lib import kodi_scan_signal
 from lib import pass_progress
 from lib.chronicle_client import ChronicleClient
@@ -244,6 +245,15 @@ def run():
     startup_followup_done = False
     last_scan_signal_check = 0.0  # only consulted once scan_signal_enabled is on
     last_scan_active_heartbeat = 0.0  # forces an immediate first heartbeat once scanning starts
+
+    # Never start a library scan just because the add-on was installed or upgraded (every install restarts this service): skip both
+    # startup scan checks for this one start, as the movie add-on does. They resume on the next normal Kodi start.
+    if install_marker.is_first_start_of_version(ADDON.getAddonInfo('version')):
+        log.info('service: first start of this add-on version -- not starting a library scan; the '
+                 'startup scan checks resume on the next normal Kodi start')
+        startup_done = True
+        startup_followup_done = True
+        last_scan_signal_check = time.time()
 
     # Standard Kodi service idle loop: sleep in short increments so abortRequested() (set on
     # Kodi shutdown) is noticed promptly instead of blocking in one long sleep.
