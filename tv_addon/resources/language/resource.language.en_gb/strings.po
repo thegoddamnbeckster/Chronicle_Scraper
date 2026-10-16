@@ -271,14 +271,6 @@ msgctxt "#32181"
 msgid "After any video library scan finishes -- Kodi's own automatic one, your own manual \"Update Library\", or this addon's own new-content detection above -- checks every episode Kodi already has against Chronicle's current data (matched by the exact video file, not by title/season/episode) and corrects only whatever actually disagrees. Fixes cases where a file was scraped with the wrong data at some point and never corrected since. On by default."
 msgstr ""
 
-msgctxt "#32182"
-msgid "\n\n{0} episode(s) across {1} show(s) are marked watched with an identical watch time. That can be a one-time history sync of real viewing, so Repair lets you pick which shows to reset -- nothing is reset automatically."
-msgstr ""
-
-msgctxt "#32183"
-msgid "\n\nReset {0} fake watched mark(s) ({1} skipped -- run Repair again to retry)."
-msgstr ""
-
 msgctxt "#32184"
 msgid "\n\nAlso restores watched status on {0} episode(s) reset by the last repair."
 msgstr ""

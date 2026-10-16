@@ -1115,8 +1115,8 @@ def preview(progress_callback=None):
         # times also mark genuinely watched shows (a one-time history sync), so it cannot decide
         # on its own and asking the user to pick from dozens of shows was rejected. The durable
         # answer is Chronicle's rewatch reset (episode/season/show), which stamps a reset time
-        # that Kodi devices honour on their next sync. detect_fabricated_watched() and the undo
-        # path stay for manifests written by 1.14.8/1.14.9.
+        # that Kodi devices honour on their next sync. The undo path
+        # (undo_fabricated_watched) stays for manifests written by 1.14.8/1.14.9.
         return report
     finally:
         _release_lock()
@@ -1147,8 +1147,8 @@ def prepare_repair(progress_callback=None):
         # times also mark genuinely watched shows (a one-time history sync), so it cannot decide
         # on its own and asking the user to pick from dozens of shows was rejected. The durable
         # answer is Chronicle's rewatch reset (episode/season/show), which stamps a reset time
-        # that Kodi devices honour on their next sync. detect_fabricated_watched() and the undo
-        # path stay for manifests written by 1.14.8/1.14.9.
+        # that Kodi devices honour on their next sync. The undo path
+        # (undo_fabricated_watched) stays for manifests written by 1.14.8/1.14.9.
     except Exception:
         _release_lock()
         raise
@@ -1183,15 +1183,6 @@ def finish_repair(db_path, report, execute, progress_callback=None):
             result['deleted_stuck_files'] = 0
             result['stuck_files_aborted'] = False
 
-        fabricated = report.get('fabricated_watched') or {'episodes': []}
-        result['fabricated_watched'] = {'cleared': 0, 'chronicle_reset': 0, 'skipped': 0}
-        result['fabricated_watched_error'] = None
-        if not result['aborted'] and fabricated.get('episodes'):
-            try:
-                result['fabricated_watched'] = repair_fabricated_watched(
-                    fabricated, _backup_dir(), progress_callback=progress_callback)
-            except LibraryRepairError as exc:
-                result['fabricated_watched_error'] = exc.user_message
         return result
     finally:
         _release_lock()
@@ -1242,7 +1233,6 @@ def run_undo():
 # A group this size CAN also be a genuine "mark season watched" click, which is why this only
 # ever acts after the user has seen it in Preview/the confirmation dialog and said yes.
 
-_FABRICATED_WATCHED_MIN_GROUP = 3
 _FABRICATED_MANIFEST_NAME = 'fabricated_watched_manifest.json'
 
 
@@ -1257,39 +1247,6 @@ def _jsonrpc(method, params):
         log.warning('{0} rejected: {1}'.format(method, response['error']))
         return None
     return response.get('result') or {}
-
-
-def detect_fabricated_watched():
-    """Read-only. Returns {'episodes': [...], 'groups': [...]}: every watched episode that shares
-    its exact lastplayed with at least _FABRICATED_WATCHED_MIN_GROUP-1 other watched episodes of
-    the same show, and a per-(show, timestamp) summary for the dialogs."""
-    shows = (_jsonrpc('VideoLibrary.GetTVShows', {'properties': ['title']}) or {}).get('tvshows') or []
-    episodes = []
-    groups = []
-    for show in shows:
-        if show.get('tvshowid') is None:
-            continue
-        result = _jsonrpc('VideoLibrary.GetEpisodes', {
-            'tvshowid': show['tvshowid'],
-            'properties': ['title', 'season', 'episode', 'playcount', 'lastplayed', 'file'],
-        })
-        by_timestamp = {}
-        for ep in (result or {}).get('episodes') or []:
-            if (ep.get('playcount') or 0) > 0 and ep.get('lastplayed'):
-                by_timestamp.setdefault(ep['lastplayed'], []).append(ep)
-        for timestamp, group in by_timestamp.items():
-            if len(group) < _FABRICATED_WATCHED_MIN_GROUP:
-                continue
-            groups.append({'show_name': show.get('title'), 'count': len(group), 'lastplayed': timestamp})
-            for ep in group:
-                episodes.append({
-                    'episodeid': ep['episodeid'], 'show_name': show.get('title'),
-                    'title': ep.get('title'), 'season': ep.get('season'), 'episode': ep.get('episode'),
-                    'playcount': ep.get('playcount'), 'lastplayed': ep.get('lastplayed'),
-                    'file': ep.get('file'),
-                })
-    groups.sort(key=lambda g: -g['count'])
-    return {'episodes': episodes, 'groups': groups}
 
 
 def _fabricated_manifest_path(backup_dir):
@@ -1307,72 +1264,6 @@ def peek_fabricated_manifest():
     except Exception as exc:
         log.warning("Couldn't read fabricated-watched manifest ({0})".format(exc))
         return None
-
-
-def repair_fabricated_watched(report, backup_dir, client=None, progress_callback=None):
-    """Resets each flagged episode to unwatched in Chronicle FIRST, then in Kodi -- in that order
-    on purpose: if Chronicle's own reset failed and Kodi's were cleared anyway, the next
-    reconciliation would push Chronicle's still-watched state straight back into Kodi. An episode
-    whose Chronicle reset fails is left completely untouched and counted in 'skipped' (re-running
-    Repair retries it). An episode Chronicle has no record of at all needs no Chronicle reset.
-
-    Writes the undo manifest (prior playcount/lastplayed for every flagged episode) BEFORE
-    changing anything, and aborts if that can't be written. Returns
-    {'cleared', 'chronicle_reset', 'skipped'}."""
-    flagged = report.get('episodes') or []
-    result = {'cleared': 0, 'chronicle_reset': 0, 'skipped': 0}
-    if not flagged:
-        return result
-
-    if _is_scanning():
-        raise LibraryRepairError(
-            'scanning', 'A library scan is currently running on this device -- try again once it finishes.')
-
-    if client is None:
-        from lib.chronicle_client import ChronicleClient
-        client = ChronicleClient()
-    reachable, message = client.test_connection()
-    if not reachable:
-        raise LibraryRepairError(
-            'chronicle_unreachable',
-            "Chronicle can't be reached ({0}) -- this repair resets watched status there too, so "
-            'it will not run without it. No changes made.'.format(message))
-
-    _ensure_dir(backup_dir)
-    manifest = {
-        'created_at': time.time(),
-        'episodes': [{'episodeid': e['episodeid'], 'playcount': e['playcount'],
-                      'lastplayed': e['lastplayed']} for e in flagged],
-    }
-    try:
-        with open(_fabricated_manifest_path(backup_dir), 'w', encoding='utf-8') as f:
-            json.dump(manifest, f)
-    except Exception as exc:
-        raise LibraryRepairError(
-            'manifest_write_failed',
-            "Couldn't save the undo record ({0}) -- no changes made.".format(exc))
-
-    for index, ep in enumerate(flagged):
-        _report(progress_callback, 'Resetting watched status ({0}/{1})...'.format(index + 1, len(flagged)))
-        file_path = ep.get('file') or ''
-        details = None
-        if file_path:
-            details = client.get_episode_details_by_file(
-                file_path.replace('\\', '/').rsplit('/', 1)[-1],
-                season=ep.get('season'), episode=ep.get('episode'))
-        media_item_id = (details or {}).get('mediaItemId')
-        if media_item_id:
-            if not client.reset_watch_progress(media_item_id):
-                result['skipped'] += 1
-                continue
-            result['chronicle_reset'] += 1
-
-        if _jsonrpc('VideoLibrary.SetEpisodeDetails',
-                    {'episodeid': ep['episodeid'], 'playcount': 0, 'lastplayed': ''}) is None:
-            result['skipped'] += 1
-        else:
-            result['cleared'] += 1
-    return result
 
 
 def undo_fabricated_watched(backup_dir=None):

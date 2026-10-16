@@ -15,9 +15,9 @@ class _Text(str):
         return str(self) + ''.join(' ' + str(a) for a in args)
 
 
-def _report(episodes=0, groups=0, stale=(), stuck=(), fabricated=0):
+def _report(episodes=0, groups=0, stale=(), stuck=()):
     return {'total_episodes': episodes, 'groups': [{'show_name': 'S{0}'.format(i)} for i in range(groups)], 'stale_shows': list(stale),
-            'stuck_files': {'file_ids': list(stuck)}, 'fabricated_watched': {'episodes': list(range(fabricated)), 'groups': [{'show_name': 'X'}] * bool(fabricated)}}
+            'stuck_files': {'file_ids': list(stuck)}}
 
 
 class _Base(unittest.TestCase):
@@ -92,9 +92,9 @@ class TestPreview(_Base):
         self.addon.setSetting.assert_called_with('library_repair_last_result', 'S32163')
 
     def test_counts_and_notes_are_appended(self):
-        self._preview(_report(episodes=5, groups=2, stale=['a'], stuck=[1, 2], fabricated=3))
+        self._preview(_report(episodes=5, groups=2, stale=['a'], stuck=[1, 2]))
         message = self._last_message()
-        for expected in ('S32171 5 2', 'S32174 1', 'S32178 2', 'S32182 3 1'):
+        for expected in ('S32171 5 2', 'S32174 1', 'S32178 2'):
             self.assertIn(expected, message)
         self.bg.close.assert_called_once()
 
@@ -151,18 +151,12 @@ class TestRepair(_Base):
 
     def test_extra_results_are_appended(self):
         finish = mock.Mock(return_value={'aborted': False, 'deleted_episodes': 0, 'backup_path': None, 'repaired_stale_shows': [1, 2],
-                                         'deleted_stuck_files': 4, 'fabricated_watched': {'cleared': 3, 'skipped': 1}})
+                                         'deleted_stuck_files': 4})
         self._repair({'return_value': ('/db', _report(stale=['a']))}, finish=finish)
         message = self._last_message()
         self.assertTrue(message.startswith('S32176'))
-        for expected in ('S32175 2', 'S32179 4', 'S32183 3 1'):
+        for expected in ('S32175 2', 'S32179 4'):
             self.assertIn(expected, message)
-
-    def test_a_watched_clear_error_is_shown(self):
-        finish = mock.Mock(return_value={'aborted': False, 'deleted_episodes': 1, 'backup_path': '/b', 'repaired_stale_shows': [],
-                                         'fabricated_watched_error': 'Could not clear the marks'})
-        self._repair({'return_value': ('/db', _report(episodes=1, groups=1))}, finish=finish)
-        self.assertIn('Could not clear the marks', self._last_message())
 
     def test_an_aborted_run_names_the_backup_when_there_is_one(self):
         finish = mock.Mock(return_value={'aborted': True, 'abort_reason': 'locked', 'backup_path': '/b'})

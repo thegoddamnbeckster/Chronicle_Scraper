@@ -234,14 +234,6 @@ class TestOrchestration(_Db):
         stuck.assert_not_called()
         self.assertEqual((result['repaired_stale_shows'], result['deleted_stuck_files']), ([], 0))
 
-    def test_fabricated_watched_failures_are_reported_not_raised(self):
-        db_path, report = lr.prepare_repair()
-        report['fabricated_watched'] = {'episodes': [{'episodeid': 1}]}
-        with mock.patch.object(lr, 'run_repair', return_value={'aborted': False}), mock.patch.object(lr, 'repair_stale_shows', return_value=[]), \
-                mock.patch.object(lr, 'repair_fabricated_watched', side_effect=lr.LibraryRepairError('chronicle_unreachable', 'Chronicle is down')):
-            result = lr.finish_repair(db_path, report, execute=True)
-        self.assertEqual(result['fabricated_watched_error'], 'Chronicle is down')
-
     def test_undo_restores_orphans_and_watched_marks(self):
         with mock.patch.object(lr, '_read_manifest', return_value={'episode_ids': [1]}), \
                 mock.patch.object(lr, 'undo_last_repair', return_value={'aborted': False, 'restored_episodes': 1}) as undo, \
@@ -266,27 +258,12 @@ class TestOrchestration(_Db):
         lr._acquire_lock()
 
 
-class TestFabricatedWatched(_Db):
+class TestUndoFabricatedWatched(_Db):
     def setUp(self):
         super().setUp()
         p = mock.patch.object(lr, '_backup_dir', return_value=self.backups)
         p.start()
         self.addCleanup(p.stop)
-
-    def _episodes(self):
-        stamp = '2026-01-01 10:00:00'
-        return [{'episodeid': i, 'title': 'E{0}'.format(i), 'season': 1, 'episode': i, 'playcount': 1, 'lastplayed': stamp, 'file': '/tv/S01E0{0}.mkv'.format(i)}
-                for i in (1, 2, 3)] + [{'episodeid': 4, 'playcount': 1, 'lastplayed': '2026-02-02 10:00:00'}, {'episodeid': 5, 'playcount': 0, 'lastplayed': ''}]
-
-    def test_detection_groups_identical_timestamps_of_one_show(self):
-        def rpc(method, params):
-            if method == 'VideoLibrary.GetTVShows':
-                return {'tvshows': [{'tvshowid': 1, 'title': 'Show'}, {'title': 'No id'}]}
-            return {'episodes': self._episodes()}
-        with mock.patch.object(lr, '_jsonrpc', side_effect=rpc):
-            report = lr.detect_fabricated_watched()
-        self.assertEqual([e['episodeid'] for e in report['episodes']], [1, 2, 3])
-        self.assertEqual(report['groups'], [{'show_name': 'Show', 'count': 3, 'lastplayed': '2026-01-01 10:00:00'}])
 
     def test_jsonrpc_helper(self):
         with mock.patch.object(xbmc, 'executeJSONRPC', return_value=json.dumps({'result': 'OK'})):
@@ -295,55 +272,6 @@ class TestFabricatedWatched(_Db):
             self.assertIsNone(lr._jsonrpc('X', {}))
         with mock.patch.object(xbmc, 'executeJSONRPC', side_effect=RuntimeError('x')):
             self.assertIsNone(lr._jsonrpc('X', {}))
-
-    def _client(self, reachable=True, resets=True):
-        client = mock.MagicMock()
-        client.test_connection.return_value = (reachable, '' if reachable else 'refused')
-        client.get_episode_details_by_file.side_effect = lambda name, season=None, episode=None: {'mediaItemId': 100 + episode}
-        client.reset_watch_progress.return_value = resets
-        return client
-
-    def _flagged(self):
-        return {'episodes': [{'episodeid': e['episodeid'], 'playcount': 1, 'lastplayed': e['lastplayed'], 'file': e.get('file'),
-                              'season': 1, 'episode': e['episodeid']} for e in self._episodes()[:3]]}
-
-    def test_chronicle_is_reset_first_then_kodi_and_the_undo_record_is_written_first(self):
-        client = self._client()
-        order = []
-        client.reset_watch_progress.side_effect = lambda i: order.append(('chronicle', i)) or True
-        with mock.patch.object(lr, '_is_scanning', return_value=False), \
-                mock.patch.object(lr, '_jsonrpc', side_effect=lambda m, p: order.append(('kodi', p['episodeid'])) or {}):
-            result = lr.repair_fabricated_watched(self._flagged(), self.backups, client=client)
-        self.assertEqual(result, {'cleared': 3, 'chronicle_reset': 3, 'skipped': 0})
-        self.assertEqual(order[:2], [('chronicle', 101), ('kodi', 1)])
-        self.assertTrue(os.path.exists(lr._fabricated_manifest_path(self.backups)))
-
-    def test_an_episode_whose_chronicle_reset_fails_is_left_untouched(self):
-        client = self._client(resets=False)
-        with mock.patch.object(lr, '_is_scanning', return_value=False), mock.patch.object(lr, '_jsonrpc', return_value={}) as rpc:
-            result = lr.repair_fabricated_watched(self._flagged(), self.backups, client=client)
-        self.assertEqual(result, {'cleared': 0, 'chronicle_reset': 0, 'skipped': 3})
-        rpc.assert_not_called()
-
-    def test_an_episode_chronicle_has_no_record_of_needs_no_chronicle_reset(self):
-        client = self._client()
-        client.get_episode_details_by_file.side_effect = lambda *a, **k: None
-        with mock.patch.object(lr, '_is_scanning', return_value=False), mock.patch.object(lr, '_jsonrpc', return_value={}):
-            result = lr.repair_fabricated_watched(self._flagged(), self.backups, client=client)
-        self.assertEqual(result, {'cleared': 3, 'chronicle_reset': 0, 'skipped': 0})
-
-    def test_refusals_change_nothing(self):
-        self.assertEqual(lr.repair_fabricated_watched({'episodes': []}, self.backups), {'cleared': 0, 'chronicle_reset': 0, 'skipped': 0})
-        with mock.patch.object(lr, '_is_scanning', return_value=True), self.assertRaises(lr.LibraryRepairError) as ctx:
-            lr.repair_fabricated_watched(self._flagged(), self.backups, client=self._client())
-        self.assertEqual(ctx.exception.reason_code, 'scanning')
-        with mock.patch.object(lr, '_is_scanning', return_value=False), self.assertRaises(lr.LibraryRepairError) as ctx:
-            lr.repair_fabricated_watched(self._flagged(), self.backups, client=self._client(reachable=False))
-        self.assertEqual(ctx.exception.reason_code, 'chronicle_unreachable')
-        with mock.patch.object(lr, '_is_scanning', return_value=False), mock.patch('builtins.open', side_effect=OSError('read-only')), \
-                self.assertRaises(lr.LibraryRepairError) as ctx:
-            lr.repair_fabricated_watched(self._flagged(), self.backups, client=self._client())
-        self.assertEqual(ctx.exception.reason_code, 'manifest_write_failed')
 
     def test_undo_restores_marks_and_removes_the_manifest_only_when_everything_restored(self):
         os.makedirs(self.backups)
