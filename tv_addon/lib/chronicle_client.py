@@ -9,118 +9,25 @@ device-auth flow as Chronicle_Scrobbler).
 """
 
 import json
-import threading
-import time
 import urllib.request
 import urllib.error
 import urllib.parse
 import xbmcaddon
 
 from lib import timeutil
+from lib.http_core import (
+    call_with_retries, call_with_timeout, find_shared_chronicle_url as _find_shared_url, normalize_base_url, user_agent)
 from lib.logger import Logger
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('client')
 
-_USER_AGENT = 'Kodi/Chronicle-Scraper/1.0'
-
-# Every OTHER Chronicle addon that independently asks the user for its own
-# chronicle_url -- used by find_shared_chronicle_url() below. Chronicle_Rating is
-# deliberately NOT here: it already reuses Chronicle_Scrobbler's saved connection
-# outright rather than asking for a URL of its own at all.
-_SIBLING_CHRONICLE_ADDON_IDS = (
-    'script.chronicle.scraper.movie',
-    'script.chronicle.scraper.tv',
-    'service.chronicle.scrobbler',
-)
+_USER_AGENT = user_agent(ADDON.getAddonInfo('id'))
 
 
 def find_shared_chronicle_url():
-    """Per-user request (2026-08-29): "each of the add-ons could check each other
-    for the chronicle URL and just copy it in from another working add-on... save
-    the typing." Checks every OTHER installed sibling Chronicle addon's own
-    chronicle_url setting (read-only from here -- this never writes to another
-    addon's settings, only reads) and returns the first non-blank one found, so
-    the "Edit Connection" URL prompt can be pre-filled instead of starting blank.
-    A sibling with nothing set of its own (fresh install, never configured) is
-    silently skipped, not treated as "the shared URL is blank" -- only a REAL,
-    already-working URL from another addon is ever offered. Returns None if no
-    sibling is installed, or none of the installed ones have a URL set yet.
-    """
-    this_id = ADDON.getAddonInfo('id')
-    for addon_id in _SIBLING_CHRONICLE_ADDON_IDS:
-        if addon_id == this_id:
-            continue
-        try:
-            other = xbmcaddon.Addon(addon_id)
-        except RuntimeError:
-            continue  # not installed on this device
-        url = (other.getSetting('chronicle_url') or '').strip()
-        if url:
-            log.info('find_shared_chronicle_url: found {0!r} from {1}'.format(url, addon_id))
-            return url
-    return None
-
-# urlopen(timeout=N) only bounds the socket once it exists -- the DNS lookup
-# (getaddrinfo) that happens before that is NOT covered by that timeout on
-# any platform. A dead/unreachable DNS server or a stale hostname can hang
-# a "timed" call forever, well past whatever timeout= was passed in, which
-# is exactly what "Chronicle is unreachable and the scraper just hangs"
-# turned out to be -- not a missing timeout, but one that doesn't cover the
-# step that actually hung. call_with_timeout() is the backstop: it runs the
-# call on a daemon thread and gives up after timeout + _WATCHDOG_GRACE_SECONDS
-# even if that thread never returns, leaving the runaway thread to die on
-# its own (daemon=True means it can't block Kodi from exiting).
-_WATCHDOG_GRACE_SECONDS = 5
-
-
-def call_with_timeout(fn, timeout):
-    result = {}
-
-    def _target():
-        try:
-            result['value'] = fn()
-        except BaseException as exc:
-            result['error'] = exc
-
-    t = threading.Thread(target=_target, daemon=True)
-    t.start()
-    t.join(timeout + _WATCHDOG_GRACE_SECONDS)
-    if t.is_alive():
-        raise TimeoutError('no response within {0}s (DNS/network hang)'.format(
-            timeout + _WATCHDOG_GRACE_SECONDS))
-    if 'error' in result:
-        raise result['error']
-    return result.get('value')
-
-
-# Root-caused 2026-09-06: a full "reset TV shows" library rescan fires a burst of concurrent
-# get_show_details()/search_show() calls against Chronicle all at once, and unlike movies (which
-# have movie_art_sync.py's local-folder art as a fallback if a scrape never lands), TV has no
-# local-file backstop at all -- apply_artwork() only ever gets called if this HTTP round-trip
-# succeeds. A single transient timeout during that burst permanently leaves a show with zero
-# artwork candidates until something re-triggers a fresh scrape (confirmed live 2026-09-06:
-# "Lucky" had fully-resolved poster data server-side the whole time; nothing was ever wrong with
-# Chronicle's own data). Retrying a couple of times with a short backoff absorbs exactly that
-# kind of transient contention without masking a genuinely-down Chronicle (which will still fail
-# every retry and return None same as before). Deliberately NOT applied to HTTPError -- a 4xx/5xx
-# is a real response from a reachable server, not the "request never landed" shape this targets,
-# and retrying e.g. a 401 immediately would just be noise.
-_RETRY_BACKOFF_SECONDS = (1, 3)
-
-
-def _call_with_retries(fn, timeout, log_label):
-    attempts = len(_RETRY_BACKOFF_SECONDS) + 1
-    for attempt in range(attempts):
-        try:
-            return call_with_timeout(fn, timeout)
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            if attempt >= attempts - 1:
-                raise
-            delay = _RETRY_BACKOFF_SECONDS[attempt]
-            log.warning('{0}: attempt {1}/{2} failed ({3}) -- retrying in {4}s'.format(
-                        log_label, attempt + 1, attempts, exc, delay))
-            time.sleep(delay)
+    """Another installed Chronicle add-on's saved server address, to pre-fill the "Edit Connection" prompt (see http_core)."""
+    return _find_shared_url(ADDON.getAddonInfo('id'), log)
 
 
 # search_movie/search_show can trigger Chronicle's resolve-or-create path for a
@@ -139,7 +46,7 @@ class ChronicleClient:
     """Talks to Chronicle's scraper-facing endpoints (api/v1/scraper/movies/*)."""
 
     def __init__(self):
-        self._base_url = ADDON.getSetting('chronicle_url').rstrip('/')
+        self._base_url = normalize_base_url(ADDON.getSetting('chronicle_url'))
         self._api_key  = ADDON.getSetting('api_key')
 
     def refresh_settings(self):
@@ -148,7 +55,7 @@ class ChronicleClient:
         Call this after a device-auth flow completes so the client picks up
         the newly saved API key without needing to be reconstructed.
         """
-        self._base_url = ADDON.getSetting('chronicle_url').rstrip('/')
+        self._base_url = normalize_base_url(ADDON.getSetting('chronicle_url'))
         self._api_key  = ADDON.getSetting('api_key')
 
     # ── scraper endpoints ────────────────────────────────────────────────────
@@ -574,7 +481,7 @@ class ChronicleClient:
                 return body.get('data')
 
         try:
-            return _call_with_retries(_do, timeout, log_label)
+            return call_with_retries(_do, timeout, log_label, log)
         except urllib.error.HTTPError as exc:
             # Chronicle is reachable but returned an error status (e.g. 500 from an
             # unrelated request being canceled server-side, 401 from a stale API

@@ -13,7 +13,6 @@ worked out there):
   6. When denied/expired, show error and close
 """
 
-import socket
 import threading
 import json
 import urllib.request
@@ -24,11 +23,13 @@ import xbmcgui
 import xbmcaddon
 
 from lib.logger import Logger
-from lib.chronicle_client import call_with_timeout, _USER_AGENT
+from lib.device_name import get_device_name
+from lib.http_core import call_with_timeout, normalize_base_url, user_agent
 from lib.qr_dialog import QRDialog
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('device_auth')
+_USER_AGENT = user_agent(ADDON.getAddonInfo('id'))
 
 _POLL_INTERVAL = 5      # seconds between polls
 
@@ -160,14 +161,17 @@ class DeviceAuthManager:
         belt-and-suspenders case for any other future caller, not the normal
         path.
         """
-        base_url = (self._base_url or ADDON.getSetting('chronicle_url')).rstrip('/')
+        typed_url = self._base_url or ADDON.getSetting('chronicle_url')
+        base_url = normalize_base_url(typed_url)
         log.info('_initiate(): using base_url = {0!r}'.format(base_url))
 
         if not base_url:
-            self._last_error = ADDON.getLocalizedString(32085)  # "Chronicle URL is not set."
+            # Nothing typed, or something that is not an http(s) address: two different fixes for the user.
+            self._last_error = ('The Chronicle address "{0}" is not a valid http:// or https:// address.'.format(typed_url.strip())
+                                if (typed_url or '').strip() else ADDON.getLocalizedString(32085))  # "Chronicle URL is not set."
             return None
 
-        device_name = self._get_device_name()
+        device_name = get_device_name()
 
         try:
             url     = '{0}/api/v1/auth/device'.format(base_url)
@@ -213,30 +217,6 @@ class DeviceAuthManager:
             self._last_error = str(exc)
             return None
 
-    @staticmethod
-    def _get_device_name() -> str:
-        """Prefer the machine's actual DNS name over Kodi's own FriendlyName setting --
-        FriendlyName is just an arbitrary label the user can set to anything, while a
-        real DNS name is a verifiable identifier for the physical device, which matters
-        more on a screen that's asking "is this really my device connecting?".
-
-        socket.getfqdn() tries a genuine reverse-DNS/hosts lookup and upgrades to a
-        dotted name when that succeeds, but on a typical home LAN there's usually no
-        such record -- it then falls back to the plain OS hostname, which is still a
-        real, meaningful identifier (often mDNS-resolvable as "<hostname>.local") and
-        clearly better than an arbitrary Kodi settings label. Only the degenerate
-        "localhost" non-answer is treated as "no usable name".
-        """
-        try:
-            fqdn = socket.getfqdn().strip()
-            if fqdn and fqdn.lower() not in ('localhost', 'localhost.localdomain'):
-                return fqdn
-        except Exception as exc:
-            log.debug('DNS name lookup failed: {0}'.format(exc))
-
-        friendly_name = xbmcgui.Window(10000).getProperty('System.FriendlyName')
-        return 'Kodi — {0}'.format(friendly_name or 'Kodi')
-
     def _download_qr(self, qr_url: str, code: str) -> str:
         """Download QR PNG to a temp file unique to this code, return its special:// VFS
         path (or '' on failure).
@@ -247,7 +227,7 @@ class DeviceAuthManager:
         never sees the file. Confirmed via Chronicle_Scrobbler's own live debugging
         of this exact QR-rendering path.
         """
-        vfs_path = 'special://temp/chronicle_scraper_qr_{0}.png'.format(code[:16])
+        vfs_path = 'special://temp/chronicle_qr_{0}.png'.format(code[:16])
         try:
             req = urllib.request.Request(
                 qr_url,
@@ -283,7 +263,7 @@ class DeviceAuthManager:
         QR code and _initiate()'s own POST (already using self._base_url by
         then) had worked correctly moments earlier.
         """
-        base_url = (self._base_url or ADDON.getSetting('chronicle_url')).rstrip('/')
+        base_url = normalize_base_url(self._base_url or ADDON.getSetting('chronicle_url'))
         url      = '{0}/api/v1/auth/device/{1}/poll'.format(base_url, code)
 
         while not stop_event.is_set():

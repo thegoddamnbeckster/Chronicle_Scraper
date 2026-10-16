@@ -192,6 +192,7 @@ def _sync_one_movie(client, cache, movie):
     label = '{0} ({1})'.format(title, year)
     key = media_id_cache.movie_key(movie['movieid'])
 
+    was_cached = key in cache
     media_item_id = _resolve_movie_id(client, cache, movie)
     if media_item_id is None:
         log.info('watch_rating_sync: "{0}" -- Chronicle could not resolve this movie, '
@@ -200,10 +201,11 @@ def _sync_one_movie(client, cache, movie):
 
     details = client.get_movie_details(media_item_id)
     if not details:
-        # Cached id no longer resolves (deleted/merged in Chronicle since it was cached) --
+        # A CACHED id that no longer resolves (deleted/merged in Chronicle since it was cached) --
         # drop it and retry once via a fresh search, same self-healing reasoning as
-        # media_id_cache.py's own doc describes.
-        if cache.pop(key, None) is not None:
+        # media_id_cache.py's own doc describes. An id the search just returned is not retried: searching
+        # again (up to 90 s) would only give the same answer.
+        if was_cached and cache.pop(key, None) is not None:
             log.info('watch_rating_sync: "{0}" -- cached id {1} no longer resolves, '
                      're-resolving'.format(label, media_item_id))
             media_item_id = _resolve_movie_id(client, cache, movie)
@@ -278,10 +280,10 @@ def _sync_one_movie(client, cache, movie):
 
     if updates:
         _set_movie_details(movie['movieid'], updates)
+        log.info('watch_rating_sync: "{0}" -- applied {1}'.format(label, ', '.join(sorted(updates.keys()))))
     if refresh:
         refresh_movie(movie['movieid'])
         log.info('watch_rating_sync: "{0}" -- re-scraping (cast/collection differs from Chronicle)'.format(label))
-        log.info('watch_rating_sync: "{0}" -- applied {1}'.format(label, ', '.join(sorted(updates.keys()))))
     return bool(updates) or refresh or art_changed
 
 
@@ -338,6 +340,7 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
     label = '{0} ({1})'.format(title, year)
     key = media_id_cache.tvshow_key(show['tvshowid'])
 
+    was_cached = key in cache
     show_id = _resolve_show_id(client, cache, show)
     if show_id is None:
         log.info('watch_rating_sync: "{0}" -- Chronicle could not resolve this show, '
@@ -347,7 +350,7 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
     show_details = client.get_show_details(show_id)
     if not show_details:
         # Same cached-id self-heal as _sync_one_movie -- see that function's own comment.
-        if cache.pop(key, None) is not None:
+        if was_cached and cache.pop(key, None) is not None:
             log.info('watch_rating_sync: "{0}" -- cached id {1} no longer resolves, '
                      're-resolving'.format(label, show_id))
             show_id = _resolve_show_id(client, cache, show)

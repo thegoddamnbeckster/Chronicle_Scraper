@@ -83,8 +83,12 @@ def register():
         return
 
     port = _get_setting_value(_SETTING_PORT)
-    if not port:
-        log.warning('device_registration: remote control is on but no port setting was returned -- skipping.')
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        port = 0
+    if port <= 0:
+        log.warning('device_registration: remote control is on but no usable port setting was returned -- skipping.')
         return
 
     host = _local_ip()
@@ -95,4 +99,4 @@ def register():
     password = _get_setting_value(_SETTING_PASSWORD) or None
     device_name = xbmc.getInfoLabel('System.FriendlyName') or 'Kodi'
 
-    ChronicleClient().register_device(device_name, host, int(port), username, password)
+    ChronicleClient().register_device(device_name, host, port, username, password)

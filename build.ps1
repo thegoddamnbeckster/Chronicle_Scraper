@@ -84,7 +84,7 @@ function Build-ChronicleAddon {
         $destPath = Join-Path $sourcePath $destRel
         New-Item -ItemType Directory -Path (Split-Path $destPath -Parent) -Force | Out-Null
         Copy-Item $SharedFiles[$destRel] $destPath -Force
-        Write-Host "  Synced from movie addon: $destRel"
+        Write-Host "  Shared module: $destRel"
     }
 
     Write-Host "  build_temp ready."
@@ -130,12 +130,22 @@ function Build-ChronicleAddon {
     return $outputZip
 }
 
-$movieZip = Build-ChronicleAddon -AddonRoot $repoRoot -RootFiles @("addon.xml", "default.py", "service.py", "icon.png", "LICENSE")
-$tvZip    = Build-ChronicleAddon -AddonRoot (Join-Path $repoRoot "tv_addon") -RootFiles @("addon.xml", "default.py", "service.py", "icon.png", "LICENSE") -SharedFiles @{
-    "lib\device_auth.py"      = Join-Path $repoRoot "lib\device_auth.py"
-    "lib\kodi_scan_signal.py" = Join-Path $repoRoot "lib\kodi_scan_signal.py"
-    "lib\pass_progress.py"    = Join-Path $repoRoot "lib\pass_progress.py"
+# shared\ holds the modules every Chronicle Kodi add-on uses unchanged (logger, http_core, device_auth, qr_dialog, connection_ui, ...):
+# ONE checked-in copy, copied into each add-on's lib\ at build time. (The scrobbler and rating add-ons' build scripts copy from here too.)
+$sharedDir = Join-Path $repoRoot "shared"
+$shared = @{}
+foreach ($f in Get-ChildItem -Path $sharedDir -Filter "*.py" -File) {
+    $shared["lib\$($f.Name)"] = $f.FullName
 }
+
+# Modules that live in the movie add-on's own lib\ but must be byte-identical in the TV add-on (one copy, same reasoning).
+$tvShared = $shared.Clone()
+foreach ($name in @("kodi_scan_signal.py", "pass_progress.py")) {
+    $tvShared["lib\$name"] = Join-Path $repoRoot "lib\$name"
+}
+
+$movieZip = Build-ChronicleAddon -AddonRoot $repoRoot -RootFiles @("addon.xml", "default.py", "service.py", "icon.png", "LICENSE") -SharedFiles $shared
+$tvZip    = Build-ChronicleAddon -AddonRoot (Join-Path $repoRoot "tv_addon") -RootFiles @("addon.xml", "default.py", "service.py", "icon.png", "LICENSE") -SharedFiles $tvShared
 
 Write-Host "======================================"
 Write-Host " ALL BUILDS COMPLETE"

@@ -33,7 +33,7 @@ def reset_vfs():
 
 
 class _FakeXbmcVfsFile:
-    def __init__(self, path, mode):
+    def __init__(self, path, mode='r'):
         self._path = path
         self._mode = mode
         self._buffer = _FAKE_FILES.get(path, b'') if 'r' in mode else b''
@@ -42,6 +42,9 @@ class _FakeXbmcVfsFile:
         self._buffer += bytes(data)
         _FAKE_FILES[self._path] = self._buffer
         return True
+
+    def read(self, num_bytes=0):
+        return bytes(self.readBytes(num_bytes)).decode('utf-8')
 
     def readBytes(self, num_bytes=0):
         # num_bytes=0 (the default every existing caller uses) reads everything from the current
@@ -126,6 +129,7 @@ def _install():
     xbmc.Monitor = MagicMock
     xbmc.executeJSONRPC = MagicMock(return_value='{"result": {}}')
     xbmc.getCondVisibility = MagicMock(return_value=False)
+    xbmc.getInfoLabel = MagicMock(return_value='')
 
     xbmcaddon = types.ModuleType('xbmcaddon')
     _addon = MagicMock()
@@ -137,6 +141,22 @@ def _install():
     xbmcgui = types.ModuleType('xbmcgui')
     xbmcgui.ListItem = _FakeListItem
     xbmcgui.Dialog = MagicMock
+
+    class _WindowDialog:
+        """Base of the QR window: every control/window method is a recorded no-op."""
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __getattr__(self, name):
+            if name.startswith('__'):
+                raise AttributeError(name)
+            return MagicMock(name=name)
+
+    xbmcgui.WindowDialog = _WindowDialog
+    for _control in ('ControlImage', 'ControlLabel', 'ControlButton', 'ControlProgress', 'ControlTextBox'):
+        setattr(xbmcgui, _control, MagicMock(name=_control))
+    xbmcgui.ACTION_PREVIOUS_MENU = 10
+    xbmcgui.ACTION_NAV_BACK = 92
     xbmcgui.NOTIFICATION_INFO = 0
     xbmcgui.NOTIFICATION_WARNING = 1
     xbmcgui.NOTIFICATION_ERROR = 2
@@ -162,3 +182,18 @@ def _install():
 
 
 _install()
+
+
+def _extend_lib_path():
+    """Makes the modules in shared/ importable as lib.<name>, as they are inside the built add-on (the build copies them into lib/)."""
+    import os
+    import lib
+    here = os.path.dirname(os.path.abspath(__file__))
+    shared = os.path.normpath(os.path.join(here, '..', 'shared'))
+    if os.path.basename(os.path.dirname(here)) == 'tv_addon':
+        shared = os.path.normpath(os.path.join(here, '..', '..', 'shared'))
+    if shared not in lib.__path__:
+        lib.__path__.append(shared)
+
+
+_extend_lib_path()
