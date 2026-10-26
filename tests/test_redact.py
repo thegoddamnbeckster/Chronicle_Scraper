@@ -65,6 +65,27 @@ class TestRedaction(unittest.TestCase):
         self.assertEqual(5, redact_credentials(5))
 
 
+class TestApiKeyIsHidden(unittest.TestCase):
+    def test_json_and_its_repr_never_show_the_key(self):
+        for text in ('{"api_key":"chr_live_S3CRET","a":1}', '{"apiKey": "chr_live_S3CRET"}', "{'api_key': 'chr_live_S3CRET'}",
+                     'x {\\"api_key\\":\\"chr_live_S3CRET\\",\\"u\\":1}'):
+            out = redact_credentials(text)
+            self.assertNotIn('S3CRET', out, text)
+            self.assertIn('***', out, text)
+
+    def test_the_rest_of_the_line_is_kept(self):
+        self.assertEqual('{"api_key":"***","url":"http://nas:7979"}',
+                         redact_credentials('{"api_key":"chr_live_S3CRET","url":"http://nas:7979"}'))
+
+    def test_the_word_api_alone_changes_nothing(self):
+        self.assertEqual('the api is up', redact_credentials('the api is up'))
+
+    def test_the_logger_hides_it_too(self):
+        with patch.object(logger.xbmc, 'log') as xlog:
+            logger.Logger('t').info('settings {"api_key":"chr_live_S3CRET"}')
+        self.assertNotIn('S3CRET', xlog.call_args[0][0])
+
+
 class TestLoggerNeverWritesALogin(unittest.TestCase):
 
     def test_every_level_is_redacted(self):

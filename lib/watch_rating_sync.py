@@ -40,6 +40,7 @@ from lib.full_sync_check import _MOVIE_PROPERTIES as _MOVIE_TEXT_PROPERTIES
 from lib.full_sync_check import diff_movie, needs_cast_refresh, refresh_movie, set_differs, year_from_path, years_in_path
 from lib import progress_sync
 from lib import recent_play
+from lib.kodi_art import kodi_art_url
 from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
 
@@ -634,7 +635,7 @@ def diff_episode_text(kodi_ep, details):
     if aired and kodi_ep.get('firstaired') != aired[:10]:
         updates['firstaired'] = aired[:10]
     thumb = details.get('thumbUrl')
-    if thumb and (kodi_ep.get('art') or {}).get('thumb') != thumb:
+    if thumb and kodi_art_url((kodi_ep.get('art') or {}).get('thumb')) != thumb:
         art = dict(kodi_ep.get('art') or {})
         art['thumb'] = thumb
         updates['art'] = art

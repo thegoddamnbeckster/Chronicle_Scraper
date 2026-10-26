@@ -381,8 +381,10 @@ def run():
     params = get_params(sys.argv[1:])
 
     action = params.get('action')
+    # pathSettings is this add-on's own settings as JSON, API key included: log that it was sent, never what it holds.
     log.info('run: dispatching action={0!r} handle={1!r} params={2!r}'.format(
-             action, params.get('handle'), {k: v for k, v in params.items() if k != 'handle'}))
+             action, params.get('handle'),
+             {k: ('<hidden>' if k == 'pathSettings' else v) for k, v in params.items() if k != 'handle'}))
 
     if action == 'find' and 'title' in params:
         find_show(params['title'], params.get('year'), params['handle'])

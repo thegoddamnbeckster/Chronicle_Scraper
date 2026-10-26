@@ -28,6 +28,7 @@ import posixpath
 import xbmc
 
 from lib.chronicle_client import ChronicleClient
+from lib.kodi_art import kodi_art_url
 from lib.logger import Logger
 
 log = Logger('full_sync_check')
@@ -88,7 +89,7 @@ def diff_episode(kodi_item, details):
 
     thumb = details.get('thumbUrl')
     kodi_thumb = (kodi_item.get('art') or {}).get('thumb')
-    if thumb and kodi_thumb != thumb:
+    if thumb and kodi_art_url(kodi_thumb) != thumb:
         art = dict(kodi_item.get('art') or {})
         art['thumb'] = thumb
         updates['art'] = art

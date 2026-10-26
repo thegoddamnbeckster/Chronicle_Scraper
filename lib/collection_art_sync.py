@@ -31,6 +31,7 @@ import xbmcaddon
 import xbmcvfs
 
 from lib.chronicle_client import ChronicleClient
+from lib.kodi_art import kodi_art_url
 from lib.logger import Logger
 
 log = Logger('collection_art_sync')
@@ -48,15 +49,6 @@ _ART_FIELDS = (
     ('discUrl',     'discart'),
     ('thumbUrl',    'thumb'),
 )
-
-
-def kodi_art_url(value):
-    """The plain URL behind an art value as Kodi reports it. Kodi wraps what it stores as
-    image://<url-encoded location>/, whether that is a web address or a file."""
-    value = value or ''
-    if not value.startswith('image://'):
-        return value
-    return urllib.parse.unquote(value[len('image://'):].rstrip('/'))
 
 
 def desired_art(collection):

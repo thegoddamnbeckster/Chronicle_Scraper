@@ -93,5 +93,31 @@ class TestDiffEpisode(unittest.TestCase):
         self.assertEqual(updates['art']['fanart'], 'https://keep.example/fanart.jpg')
 
 
+
+class TestThumbComparisonUnwrapsKodisForm(unittest.TestCase):
+    """Kodi reports a stored thumb as image://<escaped url>/; comparing that to Chronicle's plain URL rewrote ~3,000 episodes every pass (2026-10-26)."""
+    URL = 'https://image.tmdb.org/t/p/w500/abc.jpg'
+
+    @staticmethod
+    def _wrapped(url):
+        from urllib.parse import quote
+        return 'image://{0}/'.format(quote(url, safe=''))
+
+    def _diff(self, kodi_thumb, chronicle_thumb=URL):
+        return diff_episode({'art': {'thumb': kodi_thumb}}, {'thumbUrl': chronicle_thumb})
+
+    def test_the_wrapped_form_of_the_same_address_is_not_a_difference(self):
+        self.assertEqual(self._diff(self._wrapped(self.URL)), {})
+
+    def test_a_plain_equal_address_is_not_a_difference(self):
+        self.assertEqual(self._diff(self.URL), {})
+
+    def test_a_different_address_is_written(self):
+        self.assertEqual(self._diff(self._wrapped('https://x/old.jpg'))['art']['thumb'], self.URL)
+
+    def test_chronicle_having_no_thumb_changes_nothing(self):
+        self.assertEqual(self._diff(self._wrapped(self.URL), None), {})
+
+
 if __name__ == '__main__':
     unittest.main()

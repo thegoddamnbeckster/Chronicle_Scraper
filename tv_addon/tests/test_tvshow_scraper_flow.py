@@ -238,6 +238,16 @@ class TestRun(_Base):
         with mock.patch.object(ts.sys, 'argv', ['plugin', '3', query]):
             ts.run()
 
+    def test_the_dispatch_log_line_never_carries_the_add_ons_settings(self):
+        settings = json.dumps({'api_key': 'chr_live_S3CRET', 'chronicle_url': 'http://nas:7979'})
+        query = '?action=nothing&pathSettings=' + __import__('urllib.parse').parse.quote(settings)
+        with mock.patch.object(ts.log, 'info') as info:
+            self._run(query)
+        logged = ' '.join(str(c) for c in info.call_args_list)
+        self.assertIn('dispatching', logged)
+        self.assertNotIn('S3CRET', logged)
+        self.assertNotIn('7979', logged)
+
     def test_each_action_is_dispatched_and_the_directory_always_ended(self):
         with mock.patch.object(ts, 'find_show') as find, mock.patch.object(ts, 'get_details') as details, \
                 mock.patch.object(ts, 'get_episode_list') as episodes, mock.patch.object(ts, 'get_episode_details') as episode, \
