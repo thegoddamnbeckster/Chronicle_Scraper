@@ -139,7 +139,7 @@ class TestWatchRatingSync(_Base):
 class TestCollectionArtSync(_Base):
     def setUp(self):
         super().setUp()
-        p = mock.patch.object(service.collection_art_sync, 'run', return_value={'collections': 3, 'errors': 0, 'cancelled': False})
+        p = mock.patch.object(service.collection_art_sync, 'run', return_value={'collections': 3, 'changed': 3, 'errors': 0, 'cancelled': False})
         self.run = p.start()
         self.addCleanup(p.stop)
         q = mock.patch.object(service.xbmcgui, 'DialogProgressBG')
@@ -159,111 +159,133 @@ class TestCollectionArtSync(_Base):
     def test_progress_opens_lazily_and_closes(self):
         def run(is_cancelled=None, progress_callback=None):
             progress_callback(1, 4, 'Heat Collection')
-            return {'collections': 1, 'errors': 0, 'cancelled': False}
+            return {'collections': 1, 'changed': 1, 'errors': 0, 'cancelled': False}
         self.run.side_effect = run
         self.monitor.run_collection_art_sync('scheduled')
         self.bg.update.assert_called_once_with(25, message='Heat Collection')
         self.bg.close.assert_called_once()
 
+    def test_a_pass_that_changed_nothing_is_silent(self):
+        self.run.return_value = {'collections': 3, 'changed': 0, 'errors': 0, 'cancelled': False}
+        self.monitor.run_collection_art_sync('scheduled')
+        self.dialog.notification.assert_not_called()
+
+    def test_errors_warn(self):
+        self.run.return_value = {'collections': 3, 'changed': 0, 'errors': 2, 'cancelled': False}
+        self.monitor.run_collection_art_sync('scheduled')
+        self.assertEqual(self.dialog.notification.call_args[1]['icon'], service.xbmcgui.NOTIFICATION_WARNING)
+
     def test_a_cancelled_pass_is_silent_and_the_lock_is_released(self):
-        self.run.return_value = {'collections': 1, 'errors': 0, 'cancelled': True}
+        self.run.return_value = {'collections': 1, 'changed': 1, 'errors': 0, 'cancelled': True}
         self.monitor.run_collection_art_sync('scheduled')
         self.dialog.notification.assert_not_called()
         self.assertTrue(self.monitor._collection_art_lock.acquire(False))
 
 
-class TestFullSyncCheck(_Base):
+class TestPostScanPass(_Base):
+    WATCH = {'movies': 1, 'shows': 0, 'episodes': 0, 'errors': 0, 'cancelled': False,
+             'movies_changed': 0, 'shows_changed': 0, 'episodes_changed': 0}
+    COLLECTIONS = {'collections': 0, 'changed': 0, 'errors': 0, 'cancelled': False}
+
     def setUp(self):
         super().setUp()
+        self.order = []
         self.progress = mock.MagicMock()
-        for target, new in (('run', mock.Mock(return_value={'checked': 5, 'updated': 2, 'errors': 0, 'cancelled': False, 'aborted': None})),):
-            p = mock.patch.object(service.full_sync_check, target, new)
-            setattr(self, target, p.start())
+        self.watch = mock.Mock(side_effect=lambda **kw: self.order.append('watch') or dict(self.WATCH))
+        self.collections = mock.Mock(side_effect=lambda **kw: self.order.append('collections') or dict(self.COLLECTIONS))
+        for obj, name, new in ((service.watch_rating_sync, 'run', self.watch),
+                               (service.collection_art_sync, 'run', self.collections),
+                               (service.pass_progress, 'PassProgress', mock.Mock(return_value=self.progress)),
+                               (service.xbmcgui, 'DialogProgressBG', mock.MagicMock())):
+            p = mock.patch.object(obj, name, new)
+            p.start()
             self.addCleanup(p.stop)
-        p = mock.patch.object(service.pass_progress, 'PassProgress', return_value=self.progress)
-        p.start()
-        self.addCleanup(p.stop)
 
     def test_disabled_by_setting(self):
         self.addon.getSettingBool.return_value = False
-        self.monitor.run_full_sync_check('scan finished')
-        self.run.assert_not_called()
+        self.monitor.run_post_scan_pass('scan finished')
+        self.watch.assert_not_called()
+        self.collections.assert_not_called()
 
     def test_scan_finished_runs_it_for_the_video_library_only(self):
         self.monitor.onScanFinished('music')
-        self.run.assert_not_called()
+        self.watch.assert_not_called()
         self.monitor.onScanFinished('video')
-        self.run.assert_called_once()
+        self.watch.assert_called_once()
+
+    def test_the_watch_sync_runs_first_and_then_the_collection_art_sync(self):
+        self.monitor.onScanFinished('video')
+        self.assertEqual(self.order, ['watch', 'collections'])
 
     def test_a_pass_just_completed_blocks_the_cascade_of_scan_finished_events(self):
-        self.monitor.run_full_sync_check('scan finished')
-        self.monitor.run_full_sync_check('scan finished')
-        self.assertEqual(self.run.call_count, 1)
-        self.monitor._full_sync_check_last_completed_at = time.time() - service._FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS - 1
-        self.monitor.run_full_sync_check('scan finished')
-        self.assertEqual(self.run.call_count, 2)
+        self.monitor.run_post_scan_pass('scan finished')
+        self.monitor.run_post_scan_pass('scan finished')
+        self.assertEqual(self.watch.call_count, 1)
+        self.monitor._post_scan_last_completed_at = time.time() - service._POST_SCAN_MIN_SECONDS_BETWEEN_RUNS - 1
+        self.monitor.run_post_scan_pass('scan finished')
+        self.assertEqual(self.watch.call_count, 2)
 
     def test_a_running_pass_blocks_an_overlapping_one(self):
-        self.monitor._full_sync_check_lock.acquire()
-        self.monitor.run_full_sync_check('scan finished')
-        self.run.assert_not_called()
+        self.monitor._post_scan_lock.acquire()
+        self.monitor.run_post_scan_pass('scan finished')
+        self.watch.assert_not_called()
 
     def test_it_waits_for_other_activity_and_gives_up_if_aborted(self):
         self.scanning[0] = True
         with mock.patch.object(self.monitor, 'waitForAbort', return_value=True):
-            self.monitor.run_full_sync_check('scan finished')
-        self.run.assert_not_called()
-        self.assertTrue(self.monitor._full_sync_check_lock.acquire(False))
-        self.assertEqual(self.monitor._full_sync_check_last_completed_at, 0.0)   # no work done: the cooldown is not started
+            self.monitor.run_post_scan_pass('scan finished')
+        self.watch.assert_not_called()
+        self.collections.assert_not_called()
+        self.assertTrue(self.monitor._post_scan_lock.acquire(False))
+        self.assertEqual(self.monitor._post_scan_last_completed_at, 0.0)   # no work done: the cooldown is not started
 
-    def test_a_crash_releases_the_lock(self):
-        self.run.side_effect = RuntimeError('rpc down')
-        self.monitor.run_full_sync_check('scan finished')
-        self.assertTrue(self.monitor._full_sync_check_lock.acquire(False))
+    def test_a_crash_releases_the_lock_and_does_not_start_the_cooldown(self):
+        self.watch.side_effect = RuntimeError('rpc down')
+        self.monitor.run_post_scan_pass('scan finished')
+        self.assertTrue(self.monitor._post_scan_lock.acquire(False))
+        self.assertEqual(self.monitor._post_scan_last_completed_at, 0.0)
 
-    def test_result_notifications(self):
-        cases = [
-            ({'aborted': 'Chronicle not reachable'}, service.xbmcgui.NOTIFICATION_WARNING),
-            ({'cancelled': True}, service.xbmcgui.NOTIFICATION_INFO),
-            ({'updated': 3, 'errors': 0}, service.xbmcgui.NOTIFICATION_INFO),
-            ({'updated': 3, 'errors': 1}, service.xbmcgui.NOTIFICATION_WARNING),
-            ({'updated': 0, 'errors': 2}, service.xbmcgui.NOTIFICATION_WARNING),
-        ]
-        for result, icon in cases:
-            self.dialog.notification.reset_mock()
-            self.monitor._notify_full_sync_check_result(result)
-            self.assertEqual(self.dialog.notification.call_args[1]['icon'], icon, result)
-        self.dialog.notification.reset_mock()
-        self.monitor._notify_full_sync_check_result({'updated': 0, 'errors': 0, 'checked': 9})
-        self.dialog.notification.assert_not_called()                       # a clean pass says nothing
+    def test_a_periodic_watch_pass_already_running_is_not_run_twice_but_the_collections_still_are(self):
+        self.monitor._watch_rating_lock.acquire()
+        self.monitor.run_post_scan_pass('scan finished')
+        self.watch.assert_not_called()
+        self.collections.assert_called_once()
 
-    def test_a_notification_problem_is_swallowed(self):
-        self.dialog.notification.side_effect = RuntimeError('ui gone')
-        self.monitor._notify_full_sync_check_result({'updated': 1})
+    def test_the_collection_sync_waits_for_the_scraper_the_first_pass_kept_busy(self):
+        # The watch pass can ask Kodi to re-scrape an item, which keeps the scraper busy for a while.
+        self.watch.side_effect = lambda **kw: self.recent.__setitem__(0, True) or dict(self.WATCH)
+        with mock.patch.object(self.monitor, 'waitForAbort', return_value=True):
+            self.monitor.run_post_scan_pass('scan finished')
+        self.watch.assert_called_once()
+        self.collections.assert_not_called()
+        self.assertTrue(self.monitor._post_scan_lock.acquire(False))
+
+    def test_both_passes_stop_when_a_new_scan_starts_mid_way(self):
+        self.monitor.run_post_scan_pass('scan finished')
+        for run in (self.watch, self.collections):
+            is_cancelled = run.call_args[1]['is_cancelled']
+            self.scanning[0] = False
+            self.assertFalse(is_cancelled())
+            self.scanning[0] = True
+            self.assertTrue(is_cancelled())
+
+    def test_locks_are_released_after_the_pass(self):
+        self.monitor.run_post_scan_pass('scan finished')
+        self.assertTrue(self.monitor._post_scan_lock.acquire(False))
+        self.assertTrue(self.monitor._watch_rating_lock.acquire(False))
+        self.assertTrue(self.monitor._collection_art_lock.acquire(False))
 
 
-class TestScanSignalAndFollowup(_Base):
-    def test_check_runs_once_at_a_time(self):
-        with mock.patch.object(service.kodi_scan_signal, 'check_and_scan') as check:
-            self.monitor.run_scan_signal_check()
-            self.assertEqual(check.call_count, 1)
-            self.assertTrue(self.monitor._scan_signal_lock.acquire(False))
-            self.monitor._scan_signal_lock.release()
-            self.monitor._scan_signal_lock.acquire()
-            self.monitor.run_scan_signal_check()
-            self.assertEqual(check.call_count, 1)
+class TestStartupRefresh(_Base):
+    def test_passes_the_movie_kind_and_the_abort_check(self):
+        with mock.patch.object(service.kodi_scan_signal, 'run_startup_refresh') as refresh:
+            self.monitor.run_startup_refresh()
+        self.assertEqual(refresh.call_args[0], (['movie'],))
+        self.assertEqual(refresh.call_args[1]['is_aborted'], self.monitor.abortRequested)
 
-    def test_a_crashing_check_releases_the_lock(self):
-        with mock.patch.object(service.kodi_scan_signal, 'check_and_scan', side_effect=RuntimeError('x')):
-            self.monitor.run_scan_signal_check()
-        self.assertTrue(self.monitor._scan_signal_lock.acquire(False))
-
-    def test_startup_followup_passes_the_movie_kind_and_swallows_errors(self):
-        with mock.patch.object(service.kodi_scan_signal, 'run_startup_scan_followup') as followup:
-            self.monitor.run_startup_scan_followup(123.0)
-        self.assertEqual(followup.call_args[0], (123.0, ['movie']))
-        with mock.patch.object(service.kodi_scan_signal, 'run_startup_scan_followup', side_effect=RuntimeError('x')):
-            self.monitor.run_startup_scan_followup(123.0)
+    def test_the_service_has_no_scan_triggers_left(self):
+        for name in ('run_scan_signal_check', 'run_startup_scan_followup', 'run_full_sync_check'):
+            self.assertFalse(hasattr(self.monitor, name), name)
 
     def test_clean_state_follows_the_video_library_only(self):
         self.monitor.onCleanStarted('music')

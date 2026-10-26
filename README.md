@@ -82,8 +82,9 @@ A background service (`service.py`) shows a corner progress toast (matching Kodi
 file-scan indicator) while the scrapers are working -- each scraper action
 (`find`/`getdetails`/`getepisodedetails`/`getartwork`) is a separate short-lived Kodi
 process, so the service polls a small cross-process heartbeat file to know something
-is happening. It also runs the periodic watch-history/rating sync, collection art
-sync, and Chronicle's "new content available" scan signal.
+is happening. It also runs the periodic watch-history/rating sync and collection art
+sync, runs both once after every Kodi library scan, and once per start re-scrapes the items
+Chronicle says changed. It never starts a library scan: Kodi pulls from Chronicle when it scans.
 
 ## Setup
 
@@ -122,7 +123,7 @@ Chronicle_Scraper/
 │   ├── chronicle_client.py        # HTTP client for Chronicle's scraper-facing API
 │   ├── kodi_video_info.py         # Shared InfoTagVideo helpers (ratings, artwork, trailer, common fields)
 │   ├── kodi_settings.py           # Reads Kodi's own live settings via JSON-RPC (never hardcoded)
-│   ├── collection_sync.py         # Fills/overwrites movie-set art and extrafanart in Kodi's local movie-sets folder
+│   ├── collection_art_sync.py     # Sets movie-set art on Kodi's sets, only where it differs from Chronicle (per-device change cursor)
 │   ├── movie_art_sync.py          # Local poster/fanart sync + streamdetails lookup for movies
 │   ├── progress_sync.py           # Shared resume/watched/rating reconciliation logic (used by scrapes AND the periodic sync)
 │   ├── watch_rating_sync.py       # Periodic non-destructive watch-history/rating sync (own settings category, own timer)
@@ -136,36 +137,35 @@ Chronicle_Scraper/
     └── language/resource.language.en_gb/strings.po
 ```
 
-## Local movie-set artwork
+## Movie-set artwork
 
-Kodi checks its own configured **Movie set information folder**
-(Settings → Media → Library → "Movie set information folder", exposed as
-`videolibrary.moviesetsfolder`) for a set's poster/fanart *before* it ever
-looks at anything a scraper offers, and uses a local file there if one
-exists — even a broken reference to a file that no longer exists, which just
-renders as a blank card instead of falling back to the scraper's art.
+Kodi's scrapers can offer a set only a poster and a fanart, so the add-on sets the rest
+(banner, clearlogo, clearart, discart, thumb) itself, on the set, with
+`VideoLibrary.SetMovieSetDetails`, as the image's own web address. Nothing is written to
+Kodi's "Movie set information folder" any more, so a share that can't be reached no longer
+matters.
 
-This addon reads that setting live via Kodi's own Settings API on every
-scrape (it's different per install, so it's never hardcoded) and, when a
-movie belongs to a collection:
+It touches Kodi only when something is different:
 
-- If the setting isn't configured at all, it does nothing — that's a
-  deliberate choice, not a problem to flag.
-- Whenever Chronicle has a candidate for a given art type (poster, fanart,
-  banner, clearlogo, clearart, discart, thumb), it downloads that pick and
-  writes it into the set's own folder — **overwriting** whatever file is
-  already there. Chronicle is authoritative here, the same way it already
-  is for an individual movie's own local poster/fanart.
-- If the folder can't be created or written to (unreachable share, read-only
-  mount), Kodi shows a notification naming the configured base path (not any
-  particular movie or set — the folder itself is the problem). A whole
-  library scan can touch dozens of sets in seconds, so this is throttled to
-  at most one popup roughly every 10 minutes rather than once per movie.
+- **Each Kodi keeps its own copy of the time it last synced.** The add-on sends it to Chronicle
+  and asks for the collections changed since (one request); Chronicle keeps nothing per device.
+  A library where nothing changed gets an empty answer and nothing is compared, written or
+  shown. Several Kodi installs each get exactly what they are missing.
+- **Each changed collection is compared with the art Kodi already has**, slot by slot, and
+  only the slots that differ are written, so a collection that merely appears in the list
+  (one of its movies changed) costs nothing visible.
+- **A movie set Kodi has not had before** (new movies in a new collection after a scan, a
+  rebuilt library) is not in a "changed since" list, so the add-on keeps the names of the
+  sets it has handled and asks for everything when Kodi has a new one. The first run does the
+  same, which also moves older sets off their folder files.
+- A slot Chronicle has no art for is left alone.
+
+It runs after every library scan, once shortly after Kodi starts, and on the interval in
+Settings; **Sync Collection Art Now** compares every collection.
 
 Note: Chronicle's server can *also* write collection art directly into a shared UNC
 folder (see the "Kodi Movie Collections" setting in Chronicle itself) — that path is
-independent of this addon and is meant for households where multiple Kodi instances
-share one library but only one should be doing scraper work.
+independent of this addon.
 
 ## Known Limitations (v2.13.0)
 

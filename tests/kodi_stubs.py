@@ -143,6 +143,20 @@ def _install():
 
     xbmc.Monitor = _Monitor
 
+    class _Player:
+        """Base of xbmc.Player: nothing playing unless a test sets .playing_file."""
+        playing_file = None
+
+        def isPlayingVideo(self):
+            return self.playing_file is not None
+
+        def getPlayingFile(self):
+            if self.playing_file is None:
+                raise RuntimeError('Kodi is not playing any media file')
+            return self.playing_file
+
+    xbmc.Player = _Player
+
     class _Actor:
         """Stands in for xbmc.Actor: keeps what the scraper passed so a test can read it back."""
         def __init__(self, name='', role='', order=0, thumbnail=''):

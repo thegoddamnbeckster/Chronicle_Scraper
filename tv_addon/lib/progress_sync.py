@@ -52,7 +52,7 @@ log = Logger('progress_sync')
 # resume bar on something the user already completed.
 _RESUME_SKIP_THRESHOLD_PERCENT = 98
 
-_STATE_PROPERTIES = ['userrating', 'resume', 'playcount', 'lastplayed']
+_STATE_PROPERTIES = ['userrating', 'resume', 'playcount', 'lastplayed', 'file']
 
 
 def lookup_episode_state(tvshowid, season, episode):

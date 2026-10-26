@@ -86,14 +86,25 @@ class TestManualSyncs(unittest.TestCase):
         self.bg.update.assert_called_once_with(25, message='Heat (1995)')
         self.bg.close.assert_called_once()
 
-    def test_collection_sync_reports_counts_and_errors(self):
-        with mock.patch.object(default.collection_art_sync, 'run', return_value={'collections': 7, 'errors': 0}):
+    def test_collection_sync_compares_everything_and_reports_what_changed(self):
+        with mock.patch.object(default.collection_art_sync, 'run',
+                               return_value={'collections': 7, 'changed': 3, 'errors': 0}) as run:
             default._sync_collections_now()
-        self.assertEqual(self._notification()[0][1], '7 collections')
-        with mock.patch.object(default.collection_art_sync, 'run', return_value={'collections': 7, 'errors': 2}):
+        self.assertTrue(run.call_args[1]['everything'])
+        self.assertEqual(self._notification()[0][1], '3 collections')
+
+    def test_collection_sync_warns_about_errors(self):
+        with mock.patch.object(default.collection_art_sync, 'run',
+                               return_value={'collections': 7, 'changed': 1, 'errors': 2}):
             default._sync_collections_now()
-        self.assertEqual(self._notification()[0][1], '7 collections (2 errors)')
+        self.assertEqual(self._notification()[0][1], '1 collections (2 errors)')
         self.assertEqual(self._notification()[1]['icon'], default.xbmcgui.NOTIFICATION_WARNING)
+
+    def test_collection_sync_with_nothing_changed_still_answers_the_button(self):
+        with mock.patch.object(default.collection_art_sync, 'run',
+                               return_value={'collections': 7, 'changed': 0, 'errors': 0}):
+            default._sync_collections_now()
+        self.assertEqual(self._notification()[0][1], 'Already up to date')
 
 
 class TestOnConnected(unittest.TestCase):

@@ -26,6 +26,8 @@ class TestCheckAndRefresh(unittest.TestCase):
 
     def setUp(self):
         kodi_stubs.reset_vfs()
+        import xbmc
+        self.addCleanup(setattr, xbmc, 'executeJSONRPC', xbmc.executeJSONRPC)   # these tests replace it
 
     def test_no_items_due_fires_no_rpc_calls(self):
         mock_client = MagicMock()
@@ -110,6 +112,81 @@ class TestCheckAndRefresh(unittest.TestCase):
 
         with patch.object(kodi_scan_signal, 'ChronicleClient', return_value=mock_client):
             kodi_scan_signal.check_and_refresh(['movie'])  # must not raise
+
+
+class TestRunStartupRefresh(unittest.TestCase):
+    """The once-per-startup refresh: waits for Kodi's OWN startup scan, never starts one."""
+
+    def setUp(self):
+        import xbmc
+        self.xbmc = xbmc
+        self.addCleanup(setattr, xbmc, 'executeJSONRPC', xbmc.executeJSONRPC)
+        self.setting = True
+        self.scanning = [False]
+
+        def rpc(raw):
+            request = json.loads(raw)
+            if request['method'] == 'Settings.GetSettingValue':
+                return json.dumps({'result': {'value': self.setting}})
+            return '{"result": "OK"}'
+        xbmc.executeJSONRPC = MagicMock(side_effect=rpc)
+        for obj, name, new in ((xbmc, 'getCondVisibility', MagicMock(side_effect=lambda c: self.scanning[0])),
+                               (kodi_scan_signal, '_SCAN_FINISH_STARTED_TIMEOUT_SECONDS', 0.1),
+                               (kodi_scan_signal, '_SCAN_FINISH_STARTED_POLL_SECONDS', 0.01),
+                               (kodi_scan_signal, '_SCAN_FINISH_POLL_SECONDS', 0.01)):
+            p = patch.object(obj, name, new)
+            p.start()
+            self.addCleanup(p.stop)
+        p = patch.object(kodi_scan_signal, 'check_and_refresh')
+        self.refresh = p.start()
+        self.addCleanup(p.stop)
+
+    def methods(self):
+        return [json.loads(c.args[0])['method'] for c in self.xbmc.executeJSONRPC.call_args_list]
+
+    def test_refreshes_the_given_kinds_when_the_native_startup_scan_is_on(self):
+        kodi_scan_signal.run_startup_refresh(['movie'])
+        self.refresh.assert_called_once_with(['movie'])
+
+    def test_never_starts_a_scan(self):
+        kodi_scan_signal.run_startup_refresh(['movie'])
+        self.assertNotIn('VideoLibrary.Scan', self.methods())
+
+    def test_does_nothing_when_the_native_startup_scan_is_off(self):
+        self.setting = False
+        kodi_scan_signal.run_startup_refresh(['movie'])
+        self.refresh.assert_not_called()
+
+    def test_does_nothing_when_the_setting_cannot_be_read(self):
+        self.setting = None
+        kodi_scan_signal.run_startup_refresh(['movie'])
+        self.refresh.assert_not_called()
+
+    def test_waits_for_a_running_startup_scan_to_finish_first(self):
+        states = iter([True, True, False])        # scan seen starting, still running, then done
+
+        def scanning(cond):
+            try:
+                self.scanning[0] = next(states)
+            except StopIteration:
+                self.scanning[0] = False
+            return self.scanning[0]
+        self.xbmc.getCondVisibility.side_effect = scanning
+        order = []
+        self.refresh.side_effect = lambda kinds: order.append(('refresh', self.scanning[0]))
+
+        kodi_scan_signal.run_startup_refresh(['movie'])
+
+        self.assertEqual(order, [('refresh', False)])
+
+    def test_skipped_if_kodi_is_shutting_down_during_the_wait(self):
+        self.scanning[0] = True
+        kodi_scan_signal.run_startup_refresh(['movie'], is_aborted=lambda: True)
+        self.refresh.assert_not_called()
+
+    def test_a_failure_is_swallowed(self):
+        self.refresh.side_effect = RuntimeError('boom')
+        kodi_scan_signal.run_startup_refresh(['movie'])
 
 
 if __name__ == '__main__':

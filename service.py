@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """script.chronicle.scraper.movie — Background service entry point.
 
-Runs continuously once Kodi starts: keeps this device's remote-control
-address registered with Chronicle, periodically syncs watch history/ratings
-and collection artwork back to Chronicle, and checks Chronicle's "new content
-available" signal to trigger a library scan when needed. See
-lib/watch_rating_sync.py, lib/collection_art_sync.py, lib/kodi_scan_signal.py
-and lib/device_registration.py for what each of those actually does.
+Runs continuously once Kodi starts: registers this device with Chronicle, periodically
+syncs watch history/ratings and collection artwork between Chronicle and Kodi, and after each
+Kodi library scan runs one pass of both. It never starts a library scan -- Kodi pulls from
+Chronicle when IT scans. See lib/watch_rating_sync.py, lib/collection_art_sync.py,
+lib/kodi_scan_signal.py and lib/device_registration.py for what each of those actually does.
 
 Chronicle's own API is the source of truth Kodi's scraper reads from directly.
 """
@@ -22,9 +21,9 @@ from lib.logger import Logger
 from lib import activity_tracker
 from lib import collection_art_sync
 from lib import device_registration
-from lib import full_sync_check
 from lib import install_marker
 from lib import pass_progress
+from lib import recent_play
 from lib import scan_progress
 from lib import status_display
 from lib import kodi_scan_signal
@@ -41,19 +40,20 @@ log   = Logger('service')
 # on and off between individual items.
 _ACTIVITY_IDLE_TIMEOUT_SECONDS = 30
 _POLL_INTERVAL_SECONDS = 3
-# How often to re-register this device's own remote-control address with Chronicle (see
-# lib/device_registration.py) -- catches a DHCP-renewed LAN IP or a webserver setting toggled
-# since the last registration, on a long-running Kodi instance that's never been reconnected
-# through default.py's own one-time post-pairing registration. Deliberately not more frequent
-# than this: it's a handful of local JSON-RPC calls plus one Chronicle POST, cheap but pointless
-# to repeat more often than a LAN IP realistically changes.
-_DEVICE_REREGISTER_INTERVAL_SECONDS = 6 * 60 * 60
+# Default for the "seconds to wait after Kodi starts" setting (startup_delay_seconds): how long after
+# service start before any start-up work begins (the watch/rating and collection art start-up passes and
+# the refresh check), so Kodi's own start-up -- add-on init, network, mounting the drives -- gets room
+# first. Read fresh each time, so changing it needs no restart.
+_DEFAULT_STARTUP_DELAY_SECONDS = 10
 
-# How long to wait after service startup before the "sync once shortly after Kodi starts" pass
-# begins -- gives Kodi's own startup (library scan, add-on init, network) a little room to settle
-# first rather than immediately piling on more JSON-RPC/network activity the moment this
-# service's own run() starts.
-_WATCH_RATING_STARTUP_DELAY_SECONDS = 60
+
+def _startup_delay_seconds():
+    try:
+        return max(0, ADDON.getSettingInt('startup_delay_seconds'))
+    except Exception:
+        return _DEFAULT_STARTUP_DELAY_SECONDS
+
+
 # Checked against sync_interval_minutes (a user setting, read fresh each time -- see the main
 # loop below) to decide when the next periodic pass is due.
 _WATCH_RATING_CHECK_INTERVAL_SECONDS = 60
@@ -74,22 +74,6 @@ def _anchor_after_attempt(now, interval_seconds, started):
         return now
     return now - interval_seconds + min(_DEFERRED_RETRY_SECONDS, interval_seconds)
 
-# Chronicle's "new content available" flag (lib/kodi_scan_signal.py) is always checked once
-# after Kodi starts, regardless of the scan_signal_enabled setting -- most imports land via
-# Chronicle's own nightly schedule, so the next Kodi startup already catches them with no
-# recurring poll needed. Periodic re-checking while Kodi keeps running is opt-in (default off,
-# see settings.xml) at a user-configurable interval (scan_signal_interval_minutes, default 120)
-# -- a triggered scan cascades into every OTHER addon's own onScanFinished handler too (confirmed
-# live: Chronicle_Scrobbler's VideoLibrary.Clean, SIMKL's own full sync pass), so this defaults
-# to conservative rather than "as fast as possible."
-_SCAN_SIGNAL_STARTUP_DELAY_SECONDS = 60
-
-# Short delay before the startup-scan followup check (lib/kodi_scan_signal.py's
-# run_startup_scan_followup) -- just enough that Kodi's own JSON-RPC server is definitely up;
-# the check itself is a single cheap local settings read, and the followup scan it may launch
-# already does its own bounded wait for the network/share to actually be reachable.
-_STARTUP_SCAN_FOLLOWUP_DELAY_SECONDS = 10
-
 # How often to renew the server-side "a Kodi device is actively scanning" flag (see
 # lib/chronicle_client.py's report_scan_active()) while Kodi's own library scan OR this addon's
 # own scraper-activity tail is still running. Comfortably shorter than that flag's own 3-minute
@@ -102,17 +86,15 @@ _SCAN_PROGRESS_INTERVAL_SECONDS = 60
 
 # onScanFinished fires the instant a scan ends, which is exactly when this addon's own
 # just-finished per-item scraper activity is still inside _ACTIVITY_IDLE_TIMEOUT_SECONDS -- see
-# run_full_sync_check's own doc. Bounded so a genuinely stuck/long-running scrape can't wait
+# run_post_scan_pass's own doc. Bounded so a genuinely stuck/long-running scrape can't wait
 # forever; generous since a real scan/scrape tail can legitimately run long on a big library.
-_FULL_SYNC_CHECK_DEFER_WAIT_TIMEOUT_SECONDS = 20 * 60
-_FULL_SYNC_CHECK_DEFER_POLL_SECONDS = 10
+_POST_SCAN_DEFER_WAIT_TIMEOUT_SECONDS = 20 * 60
+_POST_SCAN_DEFER_POLL_SECONDS = 10
 
-# VideoLibrary.Scan finishing cascades into every OTHER addon's own onScanFinished handler too
-# (see kodi_scan_signal.py's own doc on this) -- one native/manual/self-triggered scan can
-# legitimately fire onScanFinished several times in quick succession as different addons' own
-# triggered scans each complete in turn. This keeps a completed full sync-check pass from
+# One native/manual scan can legitimately fire onScanFinished several times in quick succession as
+# different addons' own scans each complete in turn. This keeps a completed post-scan pass from
 # re-running on every one of those, not just the first.
-_FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS = 5 * 60
+_POST_SCAN_MIN_SECONDS_BETWEEN_RUNS = 5 * 60
 
 
 class ChronicleMonitor(xbmc.Monitor):
@@ -123,22 +105,17 @@ class ChronicleMonitor(xbmc.Monitor):
         # so an overlap wouldn't corrupt anything, but it would mean two full passes hammering
         # Chronicle/VideoLibrary at once for no benefit.
         self._watch_rating_lock = threading.Lock()
-        # Guards against two check_and_scan() calls overlapping if one is still waiting on a
-        # slow/hanging network call when the next poll interval comes due -- cheap insurance,
-        # not a response to any observed failure.
-        self._scan_signal_lock = threading.Lock()
         # Guards against this service's own periodic timer and a manual "Sync Now" (or an
         # on-load pass still running long) overlapping -- same reasoning as
         # _watch_rating_lock, this task has no destructive per-item step either.
         self._collection_art_lock = threading.Lock()
         # Guards against onScanFinished firing again (a second scan completing) while a
-        # previous full sync-check pass is still walking the library -- same non-destructive
-        # reasoning as the other locks above, this is about not wasting duplicate work, not
+        # previous post-scan pass is still running -- about not wasting duplicate work, not
         # data safety.
-        self._full_sync_check_lock = threading.Lock()
-        # See _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS's own doc -- 0.0 so the very first
+        self._post_scan_lock = threading.Lock()
+        # See _POST_SCAN_MIN_SECONDS_BETWEEN_RUNS's own doc -- 0.0 so the very first
         # onScanFinished this session always runs regardless of when the service itself started.
-        self._full_sync_check_last_completed_at = 0.0
+        self._post_scan_last_completed_at = 0.0
         # True between Kodi's onCleanStarted and onCleanFinished, so the corner status can say so.
         self.cleaning = False
         self._defer_notice_shown = False
@@ -170,6 +147,77 @@ class ChronicleMonitor(xbmc.Monitor):
         return False
 
 
+    def _watch_rating_pass(self, trigger_label, is_cancelled=None):
+        """One watch_rating_sync.run() pass with its on-screen progress and notification. The
+        caller holds _watch_rating_lock."""
+        # Opened the moment the pass starts and kept up to date through it (see lib/pass_progress.py):
+        # this pass writes into the library, which makes Kodi's screens refresh, and that must never
+        # happen without something on screen saying why.
+        progress = pass_progress.PassProgress(
+            ADDON.getLocalizedString(32134), ADDON.getLocalizedString(32157), log)
+        try:
+            log.info('service: starting watch/rating sync ({0})'.format(trigger_label))
+            progress.start()
+
+            result = watch_rating_sync.run(is_cancelled=is_cancelled or self.abortRequested,
+                                           progress_callback=progress.update)
+            log.info(
+                'service: watch/rating sync ({0}) complete -- {1} movie(s), {2} show(s), '
+                '{3} episode(s) visited; changed {4} movie(s), {5} show(s), {6} episode(s); '
+                '{7} error(s){8}'.format(
+                    trigger_label, result['movies'], result['shows'], result['episodes'],
+                    result['movies_changed'], result['shows_changed'], result['episodes_changed'],
+                    result['errors'], ' (cancelled)' if result['cancelled'] else ''))
+
+            # Only what changed is worth a notification; a pass that found nothing to do stays silent.
+            message = None if result['cancelled'] else watch_rating_sync.describe_result(
+                result, ADDON.getLocalizedString)
+            if message:
+                xbmcgui.Dialog().notification(
+                    ADDON.getLocalizedString(32134),
+                    message,
+                    icon=xbmcgui.NOTIFICATION_INFO if not result['errors'] else xbmcgui.NOTIFICATION_WARNING,
+                    time=8000,
+                )
+        finally:
+            progress.finish()
+
+    def _collection_art_pass(self, trigger_label, is_cancelled=None):
+        """One collection_art_sync.run() pass. The caller holds _collection_art_lock. Nothing is
+        shown unless Chronicle had a collection to compare, and only a change is announced."""
+        bg = None
+        try:
+            log.info('service: starting collection art sync ({0})'.format(trigger_label))
+
+            def on_progress(index, total, label):
+                nonlocal bg
+                if bg is None:
+                    bg = xbmcgui.DialogProgressBG()
+                    bg.create(ADDON.getLocalizedString(32143))
+                percent = min(100, int(index * 100 / total)) if total else 0
+                bg.update(percent, message=label)
+
+            result = collection_art_sync.run(is_cancelled=is_cancelled or self.abortRequested,
+                                             progress_callback=on_progress)
+            log.info(
+                'service: collection art sync ({0}) complete -- {1} compared, {2} changed, '
+                '{3} error(s){4}'.format(
+                    trigger_label, result['collections'], result['changed'], result['errors'],
+                    ' (cancelled)' if result['cancelled'] else ''))
+
+            message = None if result['cancelled'] else collection_art_sync.describe_result(
+                result, ADDON.getLocalizedString)
+            if message:
+                xbmcgui.Dialog().notification(
+                    ADDON.getLocalizedString(32143),
+                    message,
+                    icon=xbmcgui.NOTIFICATION_INFO if not result['errors'] else xbmcgui.NOTIFICATION_WARNING,
+                    time=8000,
+                )
+        finally:
+            if bg is not None:
+                bg.close()
+
     def run_watch_rating_sync(self, trigger_label):
         """Runs one watch_rating_sync.run() pass, under _watch_rating_lock so this service's own
         startup pass and periodic timer can't overlap each other. trigger_label (e.g.
@@ -192,49 +240,21 @@ class ChronicleMonitor(xbmc.Monitor):
             return True
 
         def _do():
-            # Opened the moment the pass starts and kept up to date through it (see lib/pass_progress.py):
-            # this pass writes into the library, which makes Kodi's screens refresh, and that must never
-            # happen without something on screen saying why.
-            progress = pass_progress.PassProgress(
-                ADDON.getLocalizedString(32134), ADDON.getLocalizedString(32157), log)
             try:
-                log.info('service: starting watch/rating sync ({0})'.format(trigger_label))
-                progress.start()
-
-                result = watch_rating_sync.run(is_cancelled=self.abortRequested, progress_callback=progress.update)
-                log.info(
-                    'service: watch/rating sync ({0}) complete -- {1} movie(s), {2} show(s), '
-                    '{3} episode(s) visited; changed {4} movie(s), {5} show(s), {6} episode(s); '
-                    '{7} error(s){8}'.format(
-                        trigger_label, result['movies'], result['shows'], result['episodes'],
-                        result['movies_changed'], result['shows_changed'], result['episodes_changed'],
-                        result['errors'], ' (cancelled)' if result['cancelled'] else ''))
-
-                # Only what changed is worth a notification; a pass that found nothing to do stays silent.
-                message = None if result['cancelled'] else watch_rating_sync.describe_result(
-                    result, ADDON.getLocalizedString)
-                if message:
-                    xbmcgui.Dialog().notification(
-                        ADDON.getLocalizedString(32134),
-                        message,
-                        icon=xbmcgui.NOTIFICATION_INFO if not result['errors'] else xbmcgui.NOTIFICATION_WARNING,
-                        time=8000,
-                    )
+                self._watch_rating_pass(trigger_label)
             except Exception as exc:
                 log.error('service: watch/rating sync ({0}) failed: {1}'.format(trigger_label, exc))
             finally:
-                progress.finish()
                 self._watch_rating_lock.release()
 
         threading.Thread(target=_do, name='chronicle-watch-rating-sync', daemon=True).start()
         return True
 
     def run_collection_art_sync(self, trigger_label):
-        """Runs one collection_art_sync.run() pass -- see that module's own doc for why this
-        exists as its own periodic task. Same locking/deferral shape as run_watch_rating_sync
-        above: deferred behind an active scan/scrape (see _should_defer_for_active_scan),
-        guarded by its own lock so this service's startup pass and periodic timer (or a manual
-        "Sync Now") can't overlap each other.
+        """Runs one collection_art_sync.run() pass -- see that module's own doc. Same locking/
+        deferral shape as run_watch_rating_sync above: deferred behind an active scan/scrape
+        (see _should_defer_for_active_scan), guarded by its own lock so this service's startup
+        pass and periodic timer (or a manual "Sync Now") can't overlap each other.
         """
         if self._should_defer_for_active_scan('collection art sync ({0})'.format(trigger_label)):
             return False
@@ -244,40 +264,11 @@ class ChronicleMonitor(xbmc.Monitor):
             return True
 
         def _do():
-            bg = None
             try:
-                log.info('service: starting collection art sync ({0})'.format(trigger_label))
-
-                def on_progress(index, total, label):
-                    nonlocal bg
-                    if bg is None:
-                        bg = xbmcgui.DialogProgressBG()
-                        bg.create(ADDON.getLocalizedString(32143))
-                    percent = min(100, int(index * 100 / total)) if total else 0
-                    bg.update(percent, message=label)
-
-                result = collection_art_sync.run(is_cancelled=self.abortRequested, progress_callback=on_progress)
-                log.info(
-                    'service: collection art sync ({0}) complete -- {1} collection(s) visited, '
-                    '{2} error(s){3}'.format(
-                        trigger_label, result['collections'], result['errors'],
-                        ' (cancelled)' if result['cancelled'] else ''))
-
-                if not result['cancelled']:
-                    message = ADDON.getLocalizedString(32147).format(
-                        result['collections'],
-                        ADDON.getLocalizedString(32136).format(result['errors']) if result['errors'] else '')
-                    xbmcgui.Dialog().notification(
-                        ADDON.getLocalizedString(32143),
-                        message,
-                        icon=xbmcgui.NOTIFICATION_INFO if not result['errors'] else xbmcgui.NOTIFICATION_WARNING,
-                        time=8000,
-                    )
+                self._collection_art_pass(trigger_label)
             except Exception as exc:
                 log.error('service: collection art sync ({0}) failed: {1}'.format(trigger_label, exc))
             finally:
-                if bg is not None:
-                    bg.close()
                 self._collection_art_lock.release()
 
         threading.Thread(target=_do, name='chronicle-collection-art-sync', daemon=True).start()
@@ -292,156 +283,101 @@ class ChronicleMonitor(xbmc.Monitor):
             self.cleaning = False
 
     def onScanFinished(self, library):
-        """Kodi's own native callback, fired the same way regardless of what triggered the
-        scan -- its own automatic startup scan, the user's manual "Update Library", or this
-        addon's own new-content-detection feature calling VideoLibrary.Scan. Per-user direction
-        (2026-09-22): the full sync-check should run after ALL of those alike, gated by its own
-        settings toggle (default on) rather than trying to tell them apart -- see
-        lib/full_sync_check.py's own doc for what this actually does and why."""
+        """Kodi's own native callback, fired the same way regardless of what started the scan --
+        its automatic startup scan, the user's manual "Update Library", or another add-on's. One
+        pass follows it, gated by the "after each scan" setting (default on): the watch/rating sync
+        (which also corrects any movie text/art that disagrees with Chronicle, and finishes the work
+        a quick scan deferred) and then the collection art sync."""
         if library != 'video':
             return
-        self.run_full_sync_check('scan finished')
+        self.run_post_scan_pass('scan finished')
 
-    def run_full_sync_check(self, trigger_label):
-        """Runs one full_sync_check.run() pass -- checks every movie Kodi already has against
-        Chronicle's current data (matched by file, not title/year) and corrects only whatever
-        disagrees. Guarded by _full_sync_check_lock so an onScanFinished firing again mid-pass
-        can't overlap a previous one."""
+    def run_post_scan_pass(self, trigger_label):
+        """The work that follows a library scan, as part of it: waits until the scan and this
+        add-on's own scraper tail are over, then runs the watch/rating sync and the collection art
+        sync one after the other. Each touches Kodi only where it differs from Chronicle. A pass
+        already running (the periodic one, say) is not run twice; a second onScanFinished within
+        _POST_SCAN_MIN_SECONDS_BETWEEN_RUNS of a finished pass is skipped."""
         if not ADDON.getSettingBool('full_sync_check_enabled'):
             return
-        since_last = time.time() - self._full_sync_check_last_completed_at
-        if since_last < _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS:
-            log.info('service: full sync-check ({0}) skipped -- a pass completed {1:.0f}s ago, '
-                     'inside the {2}s cooldown (VideoLibrary.Scan finishing cascades into '
-                     'multiple onScanFinished firings)'.format(
-                     trigger_label, since_last, _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS))
+        since_last = time.time() - self._post_scan_last_completed_at
+        if since_last < _POST_SCAN_MIN_SECONDS_BETWEEN_RUNS:
+            log.info('service: post-scan pass ({0}) skipped -- a pass completed {1:.0f}s ago, '
+                     'inside the {2}s cooldown (one scan can fire onScanFinished several times)'.format(
+                     trigger_label, since_last, _POST_SCAN_MIN_SECONDS_BETWEEN_RUNS))
             return
-        if not self._full_sync_check_lock.acquire(False):
-            log.info('service: full sync-check ({0}) skipped -- another pass is already '
+        if not self._post_scan_lock.acquire(False):
+            log.info('service: post-scan pass ({0}) skipped -- another pass is already '
                      'running'.format(trigger_label))
             return
 
+        def _busy():
+            return self.abortRequested() or self._should_defer_for_active_scan(
+                'post-scan pass ({0})'.format(trigger_label))
+
+        def _wait_until_quiet():
+            """True once nothing else is scanning or scraping; False if Kodi is shutting down or the
+            wait ran out. Bounded, and checked INSIDE the thread rather than once before spawning it:
+            onScanFinished fires the instant Kodi's own scan ends, which is exactly when this addon's
+            own last per-item scraper call is still within its idle window, and nothing else
+            re-triggers this. Needed again before the second pass, since the first one can itself
+            start re-scrapes (cast/collection differences) that keep the scraper busy."""
+            deadline = time.time() + _POST_SCAN_DEFER_WAIT_TIMEOUT_SECONDS
+            while self._should_defer_for_active_scan('post-scan pass ({0})'.format(trigger_label)):
+                if self.abortRequested() or time.time() >= deadline:
+                    log.info('service: post-scan pass ({0}) gave up waiting for other '
+                             'activity to clear'.format(trigger_label))
+                    return False
+                if self.waitForAbort(_POST_SCAN_DEFER_POLL_SECONDS):
+                    return False
+            return True
+
         def _do():
             try:
-                # Checked INSIDE the thread, with a bounded wait, not once before spawning it --
-                # onScanFinished fires the instant Kodi's own scan ends, which is exactly when
-                # this addon's own last per-item scraper call (find/getdetails, tracked via
-                # activity_tracker -- the same calls Kodi just made AS the scan) is still well
-                # within its own idle window. Checking once and bailing here would make this
-                # feature defer on every single run and never get a second chance, since nothing
-                # else re-triggers it -- this isn't a periodic poll, only onScanFinished calls it.
-                deadline = time.time() + _FULL_SYNC_CHECK_DEFER_WAIT_TIMEOUT_SECONDS
-                while self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)):
-                    if self.abortRequested() or time.time() >= deadline:
-                        log.info('service: full sync-check ({0}) gave up waiting for other '
-                                 'activity to clear'.format(trigger_label))
-                        return
-                    if self.waitForAbort(_FULL_SYNC_CHECK_DEFER_POLL_SECONDS):
-                        return
+                if not _wait_until_quiet():
+                    return
 
-                log.info('service: starting full sync-check ({0})'.format(trigger_label))
-                # This pass writes corrections into the library, which makes Kodi's screens refresh;
-                # the corner progress says so from the first moment (lib/pass_progress.py).
-                progress = pass_progress.PassProgress(
-                    ADDON.getLocalizedString(32158), ADDON.getLocalizedString(32157), log)
-                progress.start()
-                try:
-                    # Also stops the sweep if a fresh scan/scrape starts mid-pass -- the wait loop
-                    # above only guarantees nothing else was active at the START; without this, a
-                    # pass already underway would keep hammering Chronicle/JSON-RPC for its entire
-                    # remaining duration in parallel with new scan activity, exactly what
-                    # _should_defer_for_active_scan exists to prevent. Checked per item (see
-                    # full_sync_check.run()'s own loop), not continuously, so this only adds one
-                    # cheap local check per item, not a background poll.
-                    result = full_sync_check.run(
-                        is_cancelled=lambda: self.abortRequested() or
-                            self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)),
-                        progress_callback=progress.update)
-                finally:
-                    progress.finish()
-                log.info('service: full sync-check ({0}) complete -- {1}'.format(
-                         trigger_label, result))
-                self._notify_full_sync_check_result(result)
-                # Marks completion regardless of a mid-run cancel -- a cancelled/aborted pass
-                # still did real (if partial) work and real Chronicle/JSON-RPC traffic, exactly
-                # what the cooldown exists to space out; only the "gave up waiting" early
-                # returns above (which did no work at all) skip this.
-                self._full_sync_check_last_completed_at = time.time()
+                # Each pass stops if a fresh scan/scrape starts mid-way (checked per item), so it
+                # never competes with new scan activity for the same share and CPU.
+                if self._watch_rating_lock.acquire(False):
+                    try:
+                        self._watch_rating_pass(trigger_label, is_cancelled=_busy)
+                    finally:
+                        self._watch_rating_lock.release()
+                else:
+                    log.info('service: post-scan watch/rating sync skipped -- another pass is running')
+
+                if not _wait_until_quiet():
+                    return
+                if self._collection_art_lock.acquire(False):
+                    try:
+                        self._collection_art_pass(trigger_label, is_cancelled=_busy)
+                    finally:
+                        self._collection_art_lock.release()
+                else:
+                    log.info('service: post-scan collection art sync skipped -- another pass is running')
+                self._post_scan_last_completed_at = time.time()
             except Exception as exc:
-                log.error('service: full sync-check ({0}) failed: {1}'.format(trigger_label, exc))
+                log.error('service: post-scan pass ({0}) failed: {1}'.format(trigger_label, exc))
             finally:
-                self._full_sync_check_lock.release()
+                self._post_scan_lock.release()
 
-        threading.Thread(target=_do, name='chronicle-full-sync-check', daemon=True).start()
+        threading.Thread(target=_do, name='chronicle-post-scan-pass', daemon=True).start()
 
-    def _notify_full_sync_check_result(self, result):
-        """Says how the post-scan check ended, so a pass that ran (and refreshed the screens) never ends
-        silently. Best-effort: a notification problem must not look like a failed check."""
-        try:
-            icon = xbmcgui.NOTIFICATION_INFO
-            if result.get('aborted'):
-                icon = xbmcgui.NOTIFICATION_WARNING
-                message = ADDON.getLocalizedString(32161).format(result['aborted'])
-            elif result.get('cancelled'):
-                message = ADDON.getLocalizedString(32160)
-            elif result.get('updated') or result.get('errors'):
-                # Only what was corrected is reported -- how many were merely checked is noise, and a
-                # check that found everything already right says nothing at all.
-                if result.get('errors'):
-                    icon = xbmcgui.NOTIFICATION_WARNING
-                message = ADDON.getLocalizedString(32159).format(
-                    result.get('updated', 0),
-                    ADDON.getLocalizedString(32136).format(result['errors']) if result.get('errors') else '')
-            else:
-                return
-            xbmcgui.Dialog().notification(ADDON.getLocalizedString(32000), message, icon=icon, time=8000)
-        except Exception as exc:
-            log.warning('service: could not show the full sync-check result: {0}'.format(exc))
-
-    def run_scan_signal_check(self):
-        """Runs one kodi_scan_signal.check_and_scan() pass on a background thread -- see that
-        module's own doc. Skipped (not queued) if a check is already in flight; the next poll
-        interval will simply try again."""
-        if not self._scan_signal_lock.acquire(False):
-            log.info('service: scan-signal check skipped -- another check is already running')
-            return
-        try:
-            threading.Thread(
-                target=lambda: self._run_scan_signal_check_locked(),
-                name='chronicle-scan-signal-check', daemon=True,
-            ).start()
-        except Exception:
-            self._scan_signal_lock.release()
-            raise
-
-    def _run_scan_signal_check_locked(self):
-        try:
-            kodi_scan_signal.check_and_scan()
-        except Exception as exc:
-            log.error('service: scan-signal check failed: {0}'.format(exc))
-        finally:
-            self._scan_signal_lock.release()
-
-    def run_startup_scan_followup(self, service_started_at):
-        """Also runs this addon's own check_and_refresh(['movie']) as the followup's own last
-        step, once the scan it fires (or defers to) actually finishes -- see
-        kodi_scan_signal.run_startup_scan_followup's own doc. Not a recurring poll: this fires
-        at most once per Kodi session, same as the scan followup itself."""
+    def run_startup_refresh(self):
+        """Runs this add-on's own once-per-startup refresh check on a background thread -- see
+        kodi_scan_signal.run_startup_refresh's own doc. Not a recurring poll."""
         threading.Thread(
-            target=self._run_startup_scan_followup, args=(service_started_at,),
-            name='chronicle-startup-scan-followup', daemon=True,
+            target=kodi_scan_signal.run_startup_refresh, args=(['movie'],),
+            kwargs={'is_aborted': self.abortRequested},
+            name='chronicle-startup-refresh', daemon=True,
         ).start()
-
-    def _run_startup_scan_followup(self, service_started_at):
-        try:
-            kodi_scan_signal.run_startup_scan_followup(
-                service_started_at, ['movie'], is_aborted=self.abortRequested)
-        except Exception as exc:
-            log.error('service: startup-scan followup failed: {0}'.format(exc))
 
 
 def run():
     monitor = ChronicleMonitor()
+    # Records every file this Kodi plays, so a bookmark made by a partial rewatch is never mistaken for a stale one.
+    playback_recorder = recent_play.Recorder()  # noqa: F841 -- must stay referenced for its callbacks to fire
     log.info('service: Chronicle Scraper background service started')
 
     # Corner status indicator (DialogProgressBG) covering scraper activity
@@ -456,13 +392,10 @@ def run():
     bg = None
     last_shown_count = None
 
-    # Registered once at service startup (covers a fresh Kodi boot picking up a changed LAN
-    # IP or webserver setting) and every _DEVICE_REREGISTER_INTERVAL_SECONDS thereafter -- see
-    # lib/device_registration.py. Best-effort and silent when there's nothing to register
-    # (remote control off, or not yet connected to Chronicle at all).
+    # Registered once per service start -- see lib/device_registration.py. Best-effort and silent
+    # when Chronicle is not connected yet.
     threading.Thread(target=device_registration.register, name='chronicle-device-register',
                       daemon=True).start()
-    last_device_register = time.time()
 
     # Watch/rating sync timing state -- see the loop below for how these combine.
     # started_at anchors BOTH the one-time "on Kodi start" delay and the first periodic
@@ -491,19 +424,15 @@ def run():
 
     # Own anchor, deliberately not shared with service_started_at above -- that one gets reset
     # on a watch-rating off-to-on transition, which has nothing to do with this feature.
-    scan_signal_service_started_at = time.time()
-    scan_signal_startup_done = False
-    last_scan_signal_check = 0.0  # only consulted once scan_signal_enabled is on
-    startup_followup_done = False
+    refresh_service_started_at = time.time()
+    startup_refresh_done = False
 
-    # Never start a library scan just because the add-on was installed or upgraded (every install
-    # restarts this service): skip both startup scan checks for this one start.
+    # Never refresh just because the add-on was installed or upgraded (every install restarts this
+    # service): skip the startup refresh check for this one start.
     if install_marker.is_first_start_of_version(ADDON.getAddonInfo('version')):
-        log.info('service: first start of this add-on version -- not starting a library scan; the '
-                 'startup scan checks resume on the next normal Kodi start')
-        scan_signal_startup_done = True
-        startup_followup_done = True
-        last_scan_signal_check = time.time()
+        log.info('service: first start of this add-on version -- skipping the startup refresh '
+                 'check; it resumes on the next normal Kodi start')
+        startup_refresh_done = True
 
     last_scan_active_heartbeat = 0.0  # forces an immediate first heartbeat once scanning starts
     last_scan_progress = 0.0
@@ -513,11 +442,6 @@ def run():
     # abortRequested() (set on Kodi shutdown) is noticed promptly instead of
     # blocking in one long sleep.
     while not monitor.abortRequested():
-        if time.time() - last_device_register >= _DEVICE_REREGISTER_INTERVAL_SECONDS:
-            threading.Thread(target=device_registration.register, name='chronicle-device-register',
-                              daemon=True).start()
-            last_device_register = time.time()
-
         # Checked at most once every _WATCH_RATING_CHECK_INTERVAL_SECONDS, not every single
         # ~3s idle-loop tick -- reading three settings and doing this arithmetic is cheap, but
         # there's no reason to do it 20x more often than the coarsest granularity (30-minute
@@ -537,7 +461,7 @@ def run():
                 # Two independent checks, not if/else -- once the startup phase has passed,
                 # periodic checking must run on every tick from then on, not just "instead of"
                 # the one-time startup check on whichever single tick first noticed it.
-                if not startup_sync_done and now - service_started_at >= _WATCH_RATING_STARTUP_DELAY_SECONDS:
+                if not startup_sync_done and now - service_started_at >= _startup_delay_seconds():
                     startup_sync_done = True
                     if ADDON.getSettingBool('sync_on_kodi_start'):
                         interval_seconds = max(30, ADDON.getSettingInt('sync_interval_minutes')) * 60
@@ -568,7 +492,7 @@ def run():
 
             if collection_art_enabled:
                 if not collection_art_startup_done and \
-                        now - collection_art_started_at >= _WATCH_RATING_STARTUP_DELAY_SECONDS:
+                        now - collection_art_started_at >= _startup_delay_seconds():
                     collection_art_startup_done = True
                     if ADDON.getSettingBool('sync_collections_on_kodi_start'):
                         interval_seconds = max(30, ADDON.getSettingInt('sync_collections_interval_minutes')) * 60
@@ -582,30 +506,12 @@ def run():
             else:
                 last_collection_art_sync = now
 
-        # Startup check: always runs exactly once, regardless of scan_signal_enabled -- see
-        # this module's own top-of-file doc for why a recurring poll isn't the default.
-        if not scan_signal_startup_done and \
-                now - scan_signal_service_started_at >= _SCAN_SIGNAL_STARTUP_DELAY_SECONDS:
-            scan_signal_startup_done = True
-            monitor.run_scan_signal_check()
-
-        # Independent of scan_signal_enabled above -- see lib/kodi_scan_signal.py's own doc
-        # (Startup-scan followup). Always runs exactly once; the function itself is a no-op if
-        # Kodi's native "Update library on startup" setting turns out to be off. Also runs this
-        # addon's own per-item refresh-check as its own last step, once the scan actually
-        # finishes -- see run_startup_scan_followup's own doc above; not a recurring poll.
-        # Anchored to scan_signal_service_started_at (fixed for this service's lifetime), not the
-        # watch-rating service_started_at above (which gets reset on an off-to-on transition).
-        if not startup_followup_done and \
-                now - scan_signal_service_started_at >= _STARTUP_SCAN_FOLLOWUP_DELAY_SECONDS:
-            startup_followup_done = True
-            monitor.run_startup_scan_followup(scan_signal_service_started_at)
-
-        if ADDON.getSettingBool('scan_signal_enabled'):
-            interval_seconds = max(30, ADDON.getSettingInt('scan_signal_interval_minutes')) * 60
-            if now - last_scan_signal_check >= interval_seconds:
-                last_scan_signal_check = now
-                monitor.run_scan_signal_check()
+        # Once per Kodi start: after Kodi's own startup library scan, re-scrape the items Chronicle
+        # says changed since this device last scraped them. Never starts a scan itself.
+        if not startup_refresh_done and \
+                now - refresh_service_started_at >= _startup_delay_seconds():
+            startup_refresh_done = True
+            monitor.run_startup_refresh()
 
         activity = activity_tracker.read_activity()
         is_active = activity is not None and \

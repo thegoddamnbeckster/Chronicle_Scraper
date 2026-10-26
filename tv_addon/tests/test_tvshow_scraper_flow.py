@@ -193,6 +193,31 @@ class TestEpisodeDetails(_Base):
         self.items[0].getVideoInfoTag().setResumePoint.assert_called_with(0, 0)
 
 
+    FILE = 'smb://n/TV/Show/S01E02.mkv'
+
+    def test_a_bookmark_made_here_after_chronicle_finished_is_kept_and_reported_not_wiped(self):
+        ts.progress_sync.lookup_episode_state.return_value = {
+            'playcount': 1, 'lastplayed': '2020-01-01 12:00:00', 'file': self.FILE, 'resume': {'position': 500, 'total': 1000}}
+        with mock.patch.object(ts.recent_play, 'load', return_value={ts.recent_play.norm(self.FILE): '2026-10-25 16:30:00'}):
+            self._run(isWatched=True, lastWatchedAt='2020-06-01T12:00:00Z')
+        vtag = self.items[0].getVideoInfoTag()
+        vtag.setResumePoint.assert_not_called()
+        vtag.setPlaycount.assert_not_called()
+        self.assertEqual(self.client.push_resume.call_args[0][:2], (11, 50.0))
+
+    def test_an_episode_that_is_playing_is_left_alone(self):
+        ts.progress_sync.lookup_episode_state.return_value = {
+            'playcount': 0, 'lastplayed': '', 'file': self.FILE, 'resume': {}}
+        self.addCleanup(setattr, ts.xbmc.Player, 'playing_file', None)
+        ts.xbmc.Player.playing_file = self.FILE
+        self._run(isWatched=True, lastWatchedAt='2020-06-01T12:00:00Z')
+        vtag = self.items[0].getVideoInfoTag()
+        vtag.setPlaycount.assert_not_called()
+        vtag.setResumePoint.assert_not_called()
+        self.client.push_resume.assert_not_called()
+        self.client.push_watched.assert_not_called()
+
+
 class TestArtwork(_Base):
     def test_art_and_season_posters(self):
         self.client.get_show_details.return_value = {'title': 'Show', 'artwork': {'poster': [{'url': 'http://c/p.jpg'}]},

@@ -22,8 +22,8 @@ class _Base(unittest.TestCase):
         stubs.reset_vfs()
         self.clock = [10_000.0]
         self.bools = {'sync_watch_ratings_enabled': True, 'sync_on_kodi_start': True, 'sync_collections_enabled': True,
-                      'sync_collections_on_kodi_start': True, 'scan_signal_enabled': False}
-        self.ints = {'sync_interval_minutes': 60, 'sync_collections_interval_minutes': 60, 'scan_signal_interval_minutes': 60}
+                      'sync_collections_on_kodi_start': True}
+        self.ints = {'sync_interval_minutes': 60, 'sync_collections_interval_minutes': 60, 'startup_delay_seconds': 10}
         self.addon = mock.MagicMock()
         self.addon.getSettingBool.side_effect = lambda sid: self.bools.get(sid, False)
         self.addon.getSettingInt.side_effect = lambda sid: self.ints.get(sid, 0)
@@ -80,14 +80,26 @@ class TestStartupSchedule(_Base):
         self._run(ticks=1)
         self.monitor.run_watch_rating_sync.assert_not_called()
         self.monitor.run_collection_art_sync.assert_not_called()
-        self.monitor.run_scan_signal_check.assert_not_called()
+        self.monitor.run_startup_refresh.assert_not_called()
 
     def test_after_the_delay_each_startup_task_runs_once_with_the_startup_label(self):
         self._run(ticks=3)
         self.monitor.run_watch_rating_sync.assert_called_once_with('startup')
         self.monitor.run_collection_art_sync.assert_called_once_with('startup')
-        self.monitor.run_scan_signal_check.assert_called_once()
-        self.monitor.run_startup_scan_followup.assert_called_once()
+        self.monitor.run_startup_refresh.assert_called_once()
+
+    def test_the_startup_delay_setting_holds_every_startup_task_back(self):
+        self.ints['startup_delay_seconds'] = 1000
+        self._run(ticks=5)                                # 500 s: still inside the delay
+        self.monitor.run_watch_rating_sync.assert_not_called()
+        self.monitor.run_collection_art_sync.assert_not_called()
+        self.monitor.run_startup_refresh.assert_not_called()
+
+    def test_a_delay_of_zero_starts_straight_away(self):
+        self.ints['startup_delay_seconds'] = 0
+        self._run(ticks=1)
+        self.monitor.run_startup_refresh.assert_called_once()
+        self.monitor.run_watch_rating_sync.assert_called_once_with('startup')
 
     def test_turning_off_sync_on_kodi_start_skips_the_startup_pass_only(self):
         self.bools['sync_on_kodi_start'] = False
@@ -119,23 +131,20 @@ class TestStartupSchedule(_Base):
         self._run(ticks=30)
         self.assertGreater(self.monitor.run_watch_rating_sync.call_count, 2)
 
-    def test_the_recurring_scan_check_only_runs_when_enabled(self):
-        self.bools['scan_signal_enabled'] = True
-        self.ints['scan_signal_interval_minutes'] = 30
-        self._run(ticks=3)
-        self.assertGreaterEqual(self.monitor.run_scan_signal_check.call_count, 2)    # the startup check + the first interval check
-
-    def test_the_first_start_of_a_version_holds_back_the_scan_checks(self):
+    def test_the_first_start_of_a_version_holds_back_the_startup_refresh(self):
         self._run(ticks=3, first_start=True)
-        self.monitor.run_scan_signal_check.assert_not_called()
-        self.monitor.run_startup_scan_followup.assert_not_called()
-        self.monitor.run_watch_rating_sync.assert_called_once_with('startup')      # syncs are unaffected: they scan nothing
+        self.monitor.run_startup_refresh.assert_not_called()
+        self.monitor.run_watch_rating_sync.assert_called_once_with('startup')      # the syncs are unaffected
+
+    def test_the_add_on_no_longer_has_anything_that_starts_a_library_scan(self):
+        self.assertFalse(hasattr(service.kodi_scan_signal, 'check_and_scan'))
+        self.assertFalse(hasattr(service.kodi_scan_signal, 'run_startup_scan_followup'))
 
 
 class TestRegistrationAndHeartbeat(_Base):
-    def test_the_device_registers_at_start(self):
-        self._run(ticks=1)
-        self.assertIn('chronicle-device-register', self.threads)
+    def test_the_device_registers_once_at_start_and_not_again(self):
+        self._run(ticks=300)                              # well past the old 6-hour re-registration
+        self.assertEqual(self.threads.count('chronicle-device-register'), 1)
 
     def test_scanning_sends_the_heartbeat_and_starts_progress_logging(self):
         self.scanning[0] = True

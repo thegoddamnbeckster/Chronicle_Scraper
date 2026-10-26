@@ -132,23 +132,7 @@ msgid "Connected as {0}"
 msgstr ""
 
 msgctxt "#32137"
-msgid "New Content Detection"
-msgstr ""
-
-msgctxt "#32138"
-msgid "Periodically check for new content"
-msgstr ""
-
-msgctxt "#32139"
-msgid "Chronicle can tell this device when new TV content has been imported that Kodi hasn't discovered yet (VideoLibrary.Refresh, used everywhere else, only works on an item Kodi already has -- discovering a brand-new episode file needs a real library scan). This device always checks once when Kodi starts, regardless of this setting. Turning this on also checks periodically while Kodi keeps running, at the interval below -- off by default, since most imports happen on Chronicle's own nightly schedule and are already caught by the next Kodi startup. Only ever scans the source folder(s) this addon is actually the configured scraper for on this device, never anything else."
-msgstr ""
-
-msgctxt "#32140"
-msgid "Check every (minutes)"
-msgstr ""
-
-msgctxt "#32141"
-msgid "How often the periodic check runs, in 30-minute steps. Defaults to every 2 hours (120 minutes)."
+msgid "Start-up and Library Scans"
 msgstr ""
 
 msgctxt "#32150"
@@ -268,7 +252,7 @@ msgid "Verify every episode matches Chronicle after each scan"
 msgstr ""
 
 msgctxt "#32181"
-msgid "After any video library scan finishes -- Kodi's own automatic one, your own manual \"Update Library\", or this addon's own new-content detection above -- checks every episode Kodi already has against Chronicle's current data (matched by the exact video file, not by title/season/episode) and corrects only whatever actually disagrees. Fixes cases where a file was scraped with the wrong data at some point and never corrected since. On by default."
+msgid "After any video library scan finishes -- Kodi's own automatic one or your own manual \"Update Library\" -- checks every episode Kodi already has against Chronicle's current data (matched by the exact video file, not by title/season/episode) and corrects only whatever actually disagrees. Fixes cases where a file was scraped with the wrong data at some point and never corrected since. On by default."
 msgstr ""
 
 msgctxt "#32184"
@@ -309,4 +293,12 @@ msgstr ""
 
 msgctxt "#32193"
 msgid "Kodi always prefers a poster.jpg sitting in a show's folder over any scraper's art, so a wrong one left there by some other tool comes back after every refresh. When Chronicle has a poster for the show, the show's own poster.jpg / folder.jpg is deleted so Chronicle's is what Kodi shows. Only the show's own folder is touched. On by default."
+msgstr ""
+
+msgctxt "#32194"
+msgid "Seconds to wait after Kodi starts"
+msgstr ""
+
+msgctxt "#32195"
+msgid "How long after Kodi starts before this add-on does anything: the watch history, ratings and collection art syncs that run at start-up, and the check for items Chronicle says changed. Raise it if your network drives need longer to mount, or lower it to 0 to start straight away. Default 10 seconds. It cannot delay Kodi's own start-up library scan, which Kodi runs on its own schedule."
 msgstr ""

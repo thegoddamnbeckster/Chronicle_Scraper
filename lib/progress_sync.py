@@ -67,7 +67,7 @@ _RESUME_SKIP_THRESHOLD_PERCENT = 98
 # same field set (plus a few identity fields of their own, e.g. title/file/season/episode) and
 # extend this list rather than redeclaring it, so the two call sites can't quietly drift apart
 # on which fields reconciliation actually depends on.
-STATE_PROPERTIES = ['userrating', 'resume', 'playcount', 'lastplayed']
+STATE_PROPERTIES = ['userrating', 'resume', 'playcount', 'lastplayed', 'file']
 
 
 def lookup_movie_state(title, year):

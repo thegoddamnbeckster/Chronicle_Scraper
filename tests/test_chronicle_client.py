@@ -88,7 +88,7 @@ class TestConnectionSettings(unittest.TestCase):
             self.assertIsNone(c.search_show('Show'))
             self.assertIsNone(c.get_show_details(1))
             self.assertIsNone(c.get_current_user())
-            self.assertFalse(c.is_scan_needed())
+            self.assertIsNone(c.get_changed_collections())
             c.report_kodi_id(1, 'movie', 2)
             c.report_resolved_file(1, 'a.mkv')
             c.report_scan_active()
@@ -171,25 +171,7 @@ class TestGetEndpoints(_Net):
         self.assertEqual(calls[0][1], 5)
 
 
-class TestScanSignals(_Net):
-    def test_is_scan_needed(self):
-        c, _ = _client()
-        self._urlopen(_Resp({'data': {'scanNeeded': True}}))
-        self.assertTrue(c.is_scan_needed())
-        self._urlopen(_Resp({'data': {'scanNeeded': False}}))
-        self.assertFalse(c.is_scan_needed())
-        self._urlopen(urllib.error.URLError('down'))
-        self.assertFalse(c.is_scan_needed())
-
-    def test_acknowledge_posts_an_empty_body(self):
-        c, _ = _client()
-        calls = self._urlopen(_Resp({'data': {'acknowledged': True}}))
-        c.acknowledge_scan_needed()
-        self.assertEqual((calls[0][0].full_url, calls[0][0].get_method(), calls[0][0].data),
-                         ('http://chronicle:7979/api/v1/scraper/kodi-scan-signal/ack', 'POST', b'{}'))
-        self._urlopen(urllib.error.URLError('down'))
-        c.acknowledge_scan_needed()   # swallowed
-
+class TestSignals(_Net):
     def test_refresh_signal_returns_items_or_empty(self):
         c, _ = _client()
         self._need(c, 'get_refresh_signal')
@@ -201,13 +183,26 @@ class TestScanSignals(_Net):
         self._urlopen(urllib.error.URLError('down'))
         self.assertEqual(c.get_refresh_signal(['movie']), [])
 
-    def test_get_all_collections_empty_on_failure(self):
+    def test_changed_collections_returns_the_listing_or_none(self):
         c, _ = _client()
-        self._need(c, 'get_all_collections')
-        self._urlopen(_Resp({'data': [{'id': 1}]}))
-        self.assertEqual(c.get_all_collections(), [{'id': 1}])
+        calls = self._urlopen(_Resp({'data': {'asOf': '2026-10-24T01:00:00Z', 'collections': [{'id': 1}]}}))
+        self.assertEqual(c.get_changed_collections(),
+                         {'asOf': '2026-10-24T01:00:00Z', 'collections': [{'id': 1}]})
+        self.assertEqual(calls[0][0].full_url, 'http://chronicle:7979/api/v1/scraper/movies/collections/changed')
+        # An empty list is an answer; a failure (or anything that is not a listing) is not.
+        self._urlopen(_Resp({'data': {'asOf': 'x', 'collections': []}}))
+        self.assertEqual(c.get_changed_collections()['collections'], [])
         self._urlopen(urllib.error.URLError('down'))
-        self.assertEqual(c.get_all_collections(), [])
+        self.assertIsNone(c.get_changed_collections())
+        self._urlopen(_Resp({'data': None}))
+        self.assertIsNone(c.get_changed_collections())
+
+    def test_changed_collections_sends_this_devices_own_time_as_since(self):
+        c, _ = _client()
+        calls = self._urlopen(_Resp({'data': {'asOf': 'x', 'collections': []}}))
+        c.get_changed_collections(since='2026-10-24T01:00:00.123Z')
+        self.assertTrue(calls[0][0].full_url.endswith(
+            '/movies/collections/changed?since=2026-10-24T01%3A00%3A00.123Z'))
 
 
 class TestBestEffortPosts(_Net):
@@ -222,8 +217,8 @@ class TestBestEffortPosts(_Net):
              {'mediaItemId': 7, 'progressPercent': 42.5, 'timestamp': '2026-10-01T00:00:00Z'}),
         ]
         if hasattr(c, 'register_device'):
-            cases.append(('register_device', ('Shield', '10.0.0.203', 8080, 'kodi', 'pw'), '/api/v1/scraper/devices/kodi/register',
-                          {'name': 'Shield', 'host': '10.0.0.203', 'port': 8080, 'username': 'kodi', 'password': 'pw'}))
+            cases.append(('register_device', ('Shield',), '/api/v1/scraper/devices/kodi/register',
+                          {'name': 'Shield'}))
         return [case for case in cases if hasattr(c, case[0])]
 
     def test_each_posts_the_documented_body(self):
@@ -243,6 +238,12 @@ class TestBestEffortPosts(_Net):
             for outcome in (_http_error(500), urllib.error.URLError('down'), TimeoutError(), ValueError(), _Resp(b'', status=202)):
                 self._urlopen(outcome)
                 getattr(c, method)(*args)   # must not raise
+
+    def test_registration_sends_the_name_and_nothing_about_the_device_address(self):
+        c, _ = _client()
+        calls = self._urlopen(_Resp(b'', status=200))
+        c.register_device('Shield')
+        self.assertEqual(json.loads(calls[0][0].data), {'name': 'Shield'})
 
     def test_push_without_timestamp_omits_it(self):
         c, _ = _client()

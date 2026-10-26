@@ -284,51 +284,33 @@ class ChronicleClient:
         except Exception as exc:
             log.warning('report_scan_active(): {0}'.format(exc))
 
-    def get_all_collections(self):
-        """GET /api/v1/scraper/movies/collections -- every real collection Chronicle knows
-        about, each as {id, name, overview, posterUrl, backdropUrl, logoUrl, bannerUrl,
-        clearartUrl, discUrl, thumbUrl, pinnedSlots} -- the same shape an individual movie's own
-        get_details() response embeds under "collection", but independent of any specific
-        member movie. Used by collection_art_sync.py's own periodic task (see that module's own
-        doc) so a collection whose every member is already fully scraped still gets its art
-        refreshed when it changes in Chronicle, not only as a side effect of some member movie
-        happening to get rescraped. Returns [] on any failure -- a fetch failure here just means
-        this pass finds nothing to sync, not an error worth surfacing further than the log."""
-        result = self._get('/api/v1/scraper/movies/collections', 'get_all_collections()')
-        return result if result else []
-
-    def is_scan_needed(self):
-        """GET /api/v1/scraper/kodi-scan-signal -- true if Chronicle imported new movie/TV
-        content since this device last acknowledged (see acknowledge_scan_needed()). This is how
-        a brand-new file gets discovered at all: VideoLibrary.Refresh*
-        cannot do that, only VideoLibrary.Scan can, and Chronicle's server never calls a device's
-        JSON-RPC directly for this -- this device polls and runs the scan on itself via its own
-        LOCAL xbmc.executeJSONRPC, so nothing here needs "Allow remote control via HTTP" turned
-        on. Returns False (not an error) on any failure -- a missed poll just means this device
-        checks again next cycle, not something worth surfacing further than the log."""
-        result = self._get('/api/v1/scraper/kodi-scan-signal', 'is_scan_needed()', timeout=10)
-        return bool(result and result.get('scanNeeded'))
-
-    def acknowledge_scan_needed(self):
-        """POST /api/v1/scraper/kodi-scan-signal/ack -- reports that this device just ran its
-        own local VideoLibrary.Scan in response to is_scan_needed(). Call this AFTER the scan
-        actually completes, not before -- see the server-side AcknowledgeScanAsync's own doc for
-        why (a device that dies mid-scan should still see itself as due next poll)."""
-        result = self._post('kodi-scan-signal/ack', {}, 'acknowledge_scan_needed()', timeout=10)
-        log.info('acknowledge_scan_needed(): {0}'.format(
-                 'acknowledged' if result and result.get('acknowledged') else 'failed'))
+    def get_changed_collections(self, since=None):
+        """GET /api/v1/scraper/movies/collections/changed[?since=...] -- the collections whose art
+        changed after `since`, as {'asOf': <server time>, 'collections': [{id, name, overview,
+        posterUrl, backdropUrl, logoUrl, bannerUrl, clearartUrl, discUrl, thumbUrl, pinnedSlots},
+        ...]}. `since` is the asOf of this device's own last successful sync, kept by this add-on
+        (Chronicle keeps nothing per device); without it every collection is returned. A library
+        where nothing changed answers with an empty list. Returns None on any failure -- unlike an
+        empty list, that means "could not ask", and the caller must not remember the time."""
+        path = '/api/v1/scraper/movies/collections/changed'
+        if since:
+            path += '?since=' + urllib.parse.quote(since, safe='')
+        result = self._get(path, 'get_changed_collections()')
+        if not isinstance(result, dict) or 'collections' not in result:
+            return None
+        return result
 
     def get_refresh_signal(self, kinds):
         """GET /api/v1/scraper/kodi-refresh-signal?kinds=... -- items THIS device already knows
         about (of the given kinds, e.g. ['movie'] or ['episode', 'tvshow']) whose own metadata
         has changed in Chronicle since this device last scraped them. Same pull-only
-        architecture as is_scan_needed() -- Chronicle's own server code never calls a device's
+        architecture as everything else here -- Chronicle's own server code never calls a device's
         JSON-RPC directly, this device does its own local VideoLibrary.Refresh* for whatever
         comes back (see lib/kodi_scan_signal.py's check_and_refresh()). No separate
         acknowledgement call: refreshing an item makes Kodi re-invoke getdetails(), which
         already calls report_kodi_id() again, closing the loop on its own.
 
-        Returns [] (not an error) on any failure -- same reasoning as is_scan_needed(), a
+        Returns [] (not an error) on any failure -- same reasoning as every other poll here, a
         missed poll just means this device checks again next cycle."""
         kinds_param = urllib.parse.quote(','.join(kinds))
         result = self._get(
@@ -336,19 +318,17 @@ class ChronicleClient:
             'get_refresh_signal()', timeout=10)
         return (result or {}).get('items') or []
 
-    def register_device(self, name: str, host: str, port: int, username, password):
-        """POST /api/v1/scraper/devices/kodi/register -- self-registers this Kodi instance's
-        own remote-control address with Chronicle (see lib/device_registration.py for what
-        supplies these values and why). Best-effort: failures are logged and swallowed, same
-        as every other client call here -- registration retries on its own next scheduled
-        attempt (service.py's idle loop) if this one fails."""
+    def register_device(self, name: str):
+        """POST /api/v1/scraper/devices/kodi/register -- tells Chronicle this Kodi instance exists
+        (its name; the server notes the address the request came from). Chronicle never calls a
+        device, so no address, port or login is sent: all the row is for is letting
+        report_kodi_id() and the refresh signal tell this device's library ids apart from another
+        Kodi's. Best-effort: failures are logged and swallowed, same as every other client call
+        here -- registration is repeated at the next service start."""
         if not self._base_url or not self._api_key:
             return
         url = '{0}/api/v1/scraper/devices/kodi/register'.format(self._base_url)
-        data = json.dumps({
-            'name': name, 'host': host, 'port': port,
-            'username': username, 'password': password,
-        }).encode('utf-8')
+        data = json.dumps({'name': name}).encode('utf-8')
         req = self._build_request(url, data=data, method='POST')
 
         def _do():
@@ -358,19 +338,16 @@ class ChronicleClient:
         try:
             status = call_with_timeout(_do, 10)
             if status == 200:
-                log.info('register_device({0!r}, {1}:{2}): registered with Chronicle'.format(name, host, port))
+                log.info('register_device({0!r}): registered with Chronicle'.format(name))
             else:
-                log.warning('register_device({0!r}, {1}:{2}): unexpected HTTP {3}'.format(
-                            name, host, port, status))
+                log.warning('register_device({0!r}): unexpected HTTP {1}'.format(name, status))
         except urllib.error.HTTPError as exc:
-            log.warning('register_device({0!r}, {1}:{2}): Chronicle returned HTTP {3} ({4})'.format(
-                        name, host, port, exc.code, exc.reason))
+            log.warning('register_device({0!r}): Chronicle returned HTTP {1} ({2})'.format(
+                        name, exc.code, exc.reason))
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            log.warning('register_device({0!r}, {1}:{2}): Chronicle not reachable ({3})'.format(
-                        name, host, port, exc))
+            log.warning('register_device({0!r}): Chronicle not reachable ({1})'.format(name, exc))
         except Exception as exc:
-            log.warning('register_device({0!r}, {1}:{2}): unexpected error: {3}'.format(
-                        name, host, port, exc))
+            log.warning('register_device({0!r}): unexpected error: {1}'.format(name, exc))
 
     def push_watched(self, media_item_id: int, timestamp_iso):
         """POST /api/v1/scrobble -- imports Kodi's own local watched status into Chronicle

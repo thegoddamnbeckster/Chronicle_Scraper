@@ -88,7 +88,6 @@ class TestConnectionSettings(unittest.TestCase):
             self.assertIsNone(c.search_show('Show'))
             self.assertIsNone(c.get_show_details(1))
             self.assertIsNone(c.get_current_user())
-            self.assertFalse(c.is_scan_needed())
             c.report_kodi_id(1, 'movie', 2)
             c.report_resolved_file(1, 'a.mkv')
             c.report_scan_active()
@@ -171,25 +170,7 @@ class TestGetEndpoints(_Net):
         self.assertEqual(calls[0][1], 5)
 
 
-class TestScanSignals(_Net):
-    def test_is_scan_needed(self):
-        c, _ = _client()
-        self._urlopen(_Resp({'data': {'scanNeeded': True}}))
-        self.assertTrue(c.is_scan_needed())
-        self._urlopen(_Resp({'data': {'scanNeeded': False}}))
-        self.assertFalse(c.is_scan_needed())
-        self._urlopen(urllib.error.URLError('down'))
-        self.assertFalse(c.is_scan_needed())
-
-    def test_acknowledge_posts_an_empty_body(self):
-        c, _ = _client()
-        calls = self._urlopen(_Resp({'data': {'acknowledged': True}}))
-        c.acknowledge_scan_needed()
-        self.assertEqual((calls[0][0].full_url, calls[0][0].get_method(), calls[0][0].data),
-                         ('http://chronicle:7979/api/v1/scraper/kodi-scan-signal/ack', 'POST', b'{}'))
-        self._urlopen(urllib.error.URLError('down'))
-        c.acknowledge_scan_needed()   # swallowed
-
+class TestSignals(_Net):
     def test_refresh_signal_returns_items_or_empty(self):
         c, _ = _client()
         self._need(c, 'get_refresh_signal')

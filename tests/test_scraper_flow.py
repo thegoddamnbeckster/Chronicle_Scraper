@@ -21,7 +21,7 @@ class _Base(unittest.TestCase):
                                (sc.xbmcplugin, 'setResolvedUrl', mock.Mock()), (sc.xbmcplugin, 'addDirectoryItem', mock.Mock()),
                                (sc.xbmcplugin, 'endOfDirectory', mock.Mock()),
                                (sc, 'find_movie_location', mock.Mock(return_value=(None, None, None, False, None))),
-                               (sc, 'sync_movie_art', mock.Mock()), (sc, 'sync_collection_art', mock.Mock()),
+                               (sc, 'sync_movie_art', mock.Mock()),
                                (sc.xbmcgui, 'ListItem', mock.Mock(side_effect=self._make_item))):
             p = mock.patch.object(obj, name, new)
             p.start()
@@ -105,12 +105,11 @@ class TestGetDetails(_Base):
         self.assertEqual(vtag.setCast.call_args[0][0][0].name, 'Al')
         sc.xbmcplugin.setResolvedUrl.assert_called_once()
 
-    def test_quick_scan_defers_art_files_collection_art_and_watch_sync(self):
+    def test_quick_scan_defers_art_files_and_watch_sync(self):
         with mock.patch.object(sc.progress_sync, 'lookup_movie_state') as lookup:
             self._run(quick=True)
         lookup.assert_not_called()
         sc.sync_movie_art.assert_not_called()
-        sc.sync_collection_art.assert_not_called()
         sc.find_movie_location.assert_called_once()
         self.assertEqual(sc.find_movie_location.call_args[1]['library_retries'], 1)
 
@@ -118,7 +117,6 @@ class TestGetDetails(_Base):
         with mock.patch.object(sc.progress_sync, 'lookup_movie_state', return_value=None):
             self._run(quick=False, isWatched=True, lastWatchedAt='2020-06-01T00:00:00Z', resumePositionPercent=None)
         sc.sync_movie_art.assert_called_once()
-        sc.sync_collection_art.assert_called_once()
         self.items[0].getVideoInfoTag().setPlaycount.assert_called_with(1)
 
     def test_a_resume_point_is_pushed_and_kodis_newer_state_pulled(self):
@@ -176,7 +174,6 @@ class TestGetArtwork(_Base):
                                                       'collection': {'name': 'C', 'posterUrl': 'http://c/sp.jpg', 'backdropUrl': 'http://c/sb.jpg'}}
         self.assertTrue(sc.get_artwork(5, 3))
         sc.sync_movie_art.assert_called_once()
-        sc.sync_collection_art.assert_called_once()
         sc.xbmcplugin.setResolvedUrl.assert_called_once()
 
     def test_unknown(self):

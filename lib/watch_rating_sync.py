@@ -39,12 +39,16 @@ from lib import movie_art_sync
 from lib.full_sync_check import _MOVIE_PROPERTIES as _MOVIE_TEXT_PROPERTIES
 from lib.full_sync_check import diff_movie, needs_cast_refresh, refresh_movie, set_differs, year_from_path, years_in_path
 from lib import progress_sync
+from lib import recent_play
 from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
 
 log = Logger('watch_rating_sync')
 
 _MIN_ITEM_SPACING_SECONDS = 0.2
+
+# recent_play.load() for the pass in progress, so thousands of items don't each re-read the file.
+_run_plays = None
 
 # Extends progress_sync.STATE_PROPERTIES (userrating/resume/playcount/lastplayed) with the
 # identity fields this module's own bulk listing calls need on top -- rather than redeclaring
@@ -56,8 +60,8 @@ _MIN_ITEM_SPACING_SECONDS = 0.2
 _MOVIE_STATE_PROPERTIES = list(dict.fromkeys(
     ['title', 'year', 'file'] + _MOVIE_TEXT_PROPERTIES + progress_sync.STATE_PROPERTIES))
 _SHOW_PROPERTIES = ['title', 'year', 'userrating', 'plot', 'premiered', 'mpaa', 'genre', 'studio', 'uniqueid']
-_EPISODE_STATE_PROPERTIES = (['season', 'episode', 'file', 'title', 'plot', 'firstaired', 'art']
-                             + progress_sync.STATE_PROPERTIES)
+_EPISODE_STATE_PROPERTIES = list(dict.fromkeys(
+    ['season', 'episode', 'file', 'title', 'plot', 'firstaired', 'art'] + progress_sync.STATE_PROPERTIES))
 
 
 def describe_result(result, get_string):
@@ -91,8 +95,10 @@ def run(is_cancelled=None, progress_callback=None):
     actually written, which is all a person reading the result needs -- see kodi.log for what
     changed on any given item.
     """
+    global _run_plays
     client = ChronicleClient()
     cache = media_id_cache.load()
+    _run_plays = recent_play.load()
     movies = _get_all_movies()
     shows = _get_all_tvshows()
     total = len(movies) + len(shows)  # episodes are counted/logged per-show below, not known yet
@@ -143,6 +149,7 @@ def run(is_cancelled=None, progress_callback=None):
             xbmc.sleep(int(_MIN_ITEM_SPACING_SECONDS * 1000))
 
     media_id_cache.save(cache)
+    _run_plays = None
 
     log.info(
         'watch_rating_sync: done -- {0} movie(s), {1} show(s), {2} episode(s) visited; changed '
@@ -461,7 +468,7 @@ def _sync_one_episode(client, show, kodi_ep, episode_id):
     return bool(updates)
 
 
-def _build_state_updates(details, kodi_item, client, media_item_id, log_label):
+def _build_state_updates(details, kodi_item, client, media_item_id, log_label, plays=None):
     """Shared reconciliation for movies and episodes (shows only carry a rating, handled
     separately in _sync_one_show since there's no resume/watched concept at the show level).
     Returns a dict of VideoLibrary.Set*Details params to apply locally (possibly empty), after
@@ -474,6 +481,29 @@ def _build_state_updates(details, kodi_item, client, media_item_id, log_label):
         kodi_rating = kodi_item.get('userrating') or 0
         if kodi_rating != details['userRating']:
             updates['userrating'] = details['userRating']
+
+    # Kodi only stores a play's real position and play count when playback stops, so while an item is
+    # playing its library row is stale by definition. Reconciling it now pushed Chronicle's older
+    # "watched" over a rewatch in progress and zeroed the resume point (Harry Potter and the Prisoner
+    # of Azkaban, 2026-10-25), and would just as wrongly report the stale row to Chronicle. Leave the
+    # playing item's watched/resume state alone; the first pass after it stops reconciles it properly.
+    if recent_play.is_playing(kodi_item.get('file')):
+        log.info('watch_rating_sync: "{0}" -- is playing right now, leaving its watched/resume state '
+                 'alone'.format(log_label))
+        return updates
+
+    # A bookmark this device made by playing the item AFTER Chronicle last knew of it is new progress, not
+    # a leftover: stopping part-way leaves Kodi's play count and last-played date alone, so by those fields
+    # a rewatch of a finished film looks stale and the passes below would wipe it. Keep it, and tell
+    # Chronicle the real position (its own most-recent-wins check settles any conflict).
+    fresh = recent_play.fresh_bookmark(
+        kodi_item, recent_play.chronicle_stamps(details), _run_plays if plays is None else plays)
+    if fresh is not None:
+        percent, played_at = fresh
+        log.info('watch_rating_sync: "{0}" -- has progress made here since Chronicle last heard '
+                 '({1:.1f}%), keeping it'.format(log_label, percent))
+        client.push_resume(media_item_id, percent, played_at)
+        return updates
 
     kodi_lastplayed = kodi_item.get('lastplayed')
 

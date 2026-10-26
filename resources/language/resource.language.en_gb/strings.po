@@ -182,23 +182,7 @@ msgid " -- {0} error(s), see kodi.log"
 msgstr ""
 
 msgctxt "#32137"
-msgid "New Content Detection"
-msgstr ""
-
-msgctxt "#32138"
-msgid "Periodically check for new content"
-msgstr ""
-
-msgctxt "#32139"
-msgid "Chronicle can tell this device when new movies/TV content has been imported that Kodi hasn't discovered yet (VideoLibrary.Refresh, used everywhere else, only works on an item Kodi already has -- discovering a brand-new file needs a real library scan). This device always checks once when Kodi starts, regardless of this setting. Turning this on also checks periodically while Kodi keeps running, at the interval below -- off by default, since most imports happen on Chronicle's own nightly schedule and are already caught by the next Kodi startup. Only ever scans the source folder(s) this addon is actually the configured scraper for on this device, never anything else."
-msgstr ""
-
-msgctxt "#32140"
-msgid "Check every (minutes)"
-msgstr ""
-
-msgctxt "#32141"
-msgid "How often the periodic check runs, in 30-minute steps. Defaults to every 2 hours (120 minutes)."
+msgid "Start-up and Library Scans"
 msgstr ""
 
 msgctxt "#32142"
@@ -214,7 +198,7 @@ msgid "Automatically sync collection art"
 msgstr ""
 
 msgctxt "#32145"
-msgid "Periodically refreshes every collection's poster/fanart/logo/etc. in Kodi's own \"Movie set information folder\" from Chronicle -- not just the collections that happen to get touched as a side effect of one of their member movies being rescraped. Replaces Chronicle_Scrobbler's own collection art sync, which pushed the same art a different way (directly via Kodi's API instead of into this dedicated folder) -- movie collections belong entirely to this addon now. On by default."
+msgid "Keeps the poster, fanart, logo, banner and other art of Kodi's movie sets in step with Chronicle. Chronicle remembers what each device has been given, so this only compares the collections that changed since, and Kodi is touched only where a set's art really differs. Nothing is written to the \"Movie set information folder\" any more. On by default."
 msgstr ""
 
 msgctxt "#32146"
@@ -222,7 +206,7 @@ msgid "Sync Collection Art Now"
 msgstr ""
 
 msgctxt "#32147"
-msgid "Synced {0} collection(s){1}"
+msgid "Updated {0} collection(s){1}"
 msgstr ""
 
 msgctxt "#32148"
@@ -230,11 +214,11 @@ msgid "Runs one collection art sync pass immediately, regardless of the automati
 msgstr ""
 
 msgctxt "#32149"
-msgid "Verify every movie matches Chronicle after each scan"
+msgid "Sync with Chronicle after each library scan"
 msgstr ""
 
 msgctxt "#32150"
-msgid "After any video library scan finishes -- Kodi's own automatic one, your own manual \"Update Library\", or this addon's own new-content detection above -- checks every movie Kodi already has against Chronicle's current data (matched by the exact video file, not by title/year) and corrects only whatever actually disagrees. Fixes cases where a file was scraped with the wrong data at some point and never corrected since. On by default."
+msgid "After any video library scan finishes -- Kodi's own automatic one or your own manual \"Update Library\" -- runs the watch history and ratings sync (which also corrects any movie whose details or art disagree with Chronicle, and finishes what a quick scan left for later) and then the collection art sync. Each changes only what differs from Chronicle. On by default."
 msgstr ""
 
 msgctxt "#32151"
@@ -258,27 +242,11 @@ msgid "Quick scan: add movies first, fill in details afterwards"
 msgstr ""
 
 msgctxt "#32156"
-msgid "While Kodi scans, only adds each movie with Chronicle's text details (title, plot, cast, ratings, artwork links). Writing poster/fanart files next to the movies, collection art, and the watched/rating/resume sync are skipped during the scan and done by the passes that already run right after it (the post-scan check and the History and ratings sync). Makes scanning a large number of new movies many times faster. On by default."
+msgid "While Kodi scans, only adds each movie with Chronicle's text details (title, plot, cast, ratings, artwork links). Writing poster/fanart files next to the movies and the watched/rating/resume sync are skipped during the scan and done by the passes that run right after it (the watch history and ratings sync, then the collection art sync). Makes scanning a large number of new movies many times faster. On by default."
 msgstr ""
 
 msgctxt "#32157"
 msgid "Starting -- the screen may refresh while Chronicle checks your library"
-msgstr ""
-
-msgctxt "#32158"
-msgid "Verifying movies against Chronicle…"
-msgstr ""
-
-msgctxt "#32159"
-msgid "Corrected {0} movie(s){1}"
-msgstr ""
-
-msgctxt "#32160"
-msgid "Stopped early because a scan or scrape started. It runs again after the next scan."
-msgstr ""
-
-msgctxt "#32161"
-msgid "Could not check your movies -- {0}"
 msgstr ""
 
 msgctxt "#32162"
@@ -299,4 +267,12 @@ msgstr ""
 
 msgctxt "#32166"
 msgid "Watch and rating sync hit {0} error(s), see kodi.log"
+msgstr ""
+
+msgctxt "#32167"
+msgid "Seconds to wait after Kodi starts"
+msgstr ""
+
+msgctxt "#32168"
+msgid "How long after Kodi starts before this add-on does anything: the watch history, ratings and collection art syncs that run at start-up, and the check for items Chronicle says changed. Raise it if your network drives need longer to mount, or lower it to 0 to start straight away. Default 10 seconds. It cannot delay Kodi's own start-up library scan, which Kodi runs on its own schedule."
 msgstr ""

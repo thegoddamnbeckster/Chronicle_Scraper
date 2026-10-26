@@ -1,52 +1,28 @@
 # -*- coding: utf-8 -*-
-"""Full-library sync-check: after every Kodi video library scan finishes -- whatever triggered
-it (native startup auto-scan, the user's own manual "Update Library", or this addon's own
-new-content-detection feature) -- walks every movie Kodi's own VideoLibrary already has and
-verifies it still matches Chronicle's current data, pushing a correction only for whatever
-field(s) actually disagree.
+"""What a Kodi movie should look like according to Chronicle, and the difference between the two.
 
-Per-user direction (2026-09-22): "Kodi has all of the file paths. You should be able to use
-that to definitively figure out what item is what in Chronicle." Resolves each Kodi movie to
-its Chronicle item purely by the exact video file's own basename
-(ChronicleClient.get_movie_details_by_file), never by title/year matching and never by
-Chronicle's own kodi_library_ids bookkeeping table -- that table only covers items a NORMAL
-scrape has already successfully reported, and can't be trusted as a complete inventory the way
-Kodi's own file list is.
+This used to be its own pass after every library scan; that pass is now the watch/rating sync
+(lib/watch_rating_sync.py), which uses everything here: diff_movie() names the fields whose value in
+Kodi is not Chronicle's, so only those are written, never a blind overwrite; refresh_movie() and
+set_differs()/needs_cast_refresh() decide when a re-scrape is the only way to fix cast or set
+membership (VideoLibrary.SetMovieDetails has no parameter for either).
 
-Root-caused live (2026-09-22): a "Ghostbusters (2016)" file was scraped with the WRONG (1984)
-movie's data at some point in the past and never corrected since -- Chronicle's own data was
-already right, but nothing had ever pushed the fix into Kodi's own local VideoLibrary (the
-existing kodi-refresh-signal mechanism only fires for items already known to have changed
-SINCE their last successful sync; it can't catch data that was simply wrong from the start).
-This is the durable, general fix for that whole class of problem, not a one-off.
+Per-user direction (2026-09-22): "Kodi has all of the file paths. You should be able to use that to
+definitively figure out what item is what in Chronicle." year_from_path()/years_in_path() read the
+(YYYY) in a file's own name, the independent witness to which film a file is when Kodi's own year came
+from a wrong scrape (live 2026-09-26: "Total Recall (2012).mkv" scraped as the 1990 film).
 
-Per-user direction: only ever updates a field that actually differs from what Chronicle has --
-"you're only doing this for items that are not the same as what Chronicle has" -- never a blind
-overwrite of everything on every pass. Only ever calls VideoLibrary.SetMovieDetails/writes a
-movie's own local art files, and never involves Chronicle's own server
-calling this device's JSON-RPC -- same pull-only architecture as every other feature in this addon.
-
-Poster/fanart/thumb go through movie_art_sync.sync_movie_art(), not VideoLibrary.SetMovieDetails'
-own `art` parameter. Caught live (2026-09-22), right after this feature's first release: Kodi
-uses a movie's own local "-poster.jpg" file unconditionally, before ever looking at anything a
-scraper (or SetMovieDetails' art param) offers -- see movie_art_sync.py's own module doc, the
-same reason the normal scrape path never trusted SetMovieDetails for art either. The Ghostbusters
-(2016) fix landed correctly for every OTHER field but the poster kept showing the wrong (1984)
-image regardless, because nothing had actually rewritten the local file. sync_movie_art() already
-solves this properly (writes the local file, skip-caches on unchanged URL+size, invalidates
-Kodi's texture cache on overwrite) and is called unconditionally per item, same as the normal
-scrape flow -- its own skip-cache is what keeps an unchanged poster cheap, not a diff check here.
+Poster/fanart/thumb are not handled here: Kodi uses a movie's own local "-poster.jpg" unconditionally,
+before anything a scraper or SetMovieDetails' art parameter offers, so art goes through
+movie_art_sync.sync_movie_art() (which writes the local file and skip-caches an unchanged one).
 """
 
 import json
-import posixpath
 import re
 
 import xbmc
 
-from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
-from lib import movie_art_sync
 
 log = Logger('full_sync_check')
 
@@ -83,22 +59,6 @@ def years_in_path(path):
     for candidate in (parts[-1], parts[-2] if len(parts) > 1 else ''):
         found.extend(int(y) for y in _YEAR_IN_NAME.findall(candidate))
     return found
-
-
-def _get_all_movies():
-    request = {
-        'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetMovies',
-        'params': {'properties': _MOVIE_PROPERTIES},
-    }
-    try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
-    except Exception as exc:
-        log.error("full_sync_check: couldn't get movie list: {0}".format(exc))
-        return []
-    if 'error' in response:
-        log.error('full_sync_check: VideoLibrary.GetMovies rejected: {0}'.format(response['error']))
-        return []
-    return response.get('result', {}).get('movies') or []
 
 
 def cast_differs(kodi_item, details):
@@ -232,96 +192,3 @@ def diff_movie(kodi_item, details):
     # own skip-cache) is what actually reaches the screen.
 
     return updates
-
-
-def _set_movie_details(movieid, updates):
-    request = {
-        'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.SetMovieDetails',
-        'params': dict(updates, movieid=movieid),
-    }
-    try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
-    except Exception as exc:
-        log.warning('full_sync_check: SetMovieDetails({0}) failed: {1}'.format(movieid, exc))
-        return False
-    if 'error' in response:
-        log.warning('full_sync_check: SetMovieDetails({0}) rejected: {1}'.format(movieid, response['error']))
-        return False
-    return True
-
-
-def run(is_cancelled=None, progress_callback=None):
-    """Best-effort throughout: one movie failing to resolve or update never stops the rest.
-    Returns a summary dict; never raises.
-
-    Checks connectivity up front and aborts the whole pass if Chronicle isn't reachable --
-    ChronicleClient._get() returns None identically for "no match for this file" (expected,
-    most items) and "Chronicle is down/unreachable/API key rejected" (a real failure), so
-    without this check an outage partway through would silently look exactly like a completely
-    clean library (checked=0 either way) instead of the error it actually is."""
-    is_cancelled = is_cancelled or (lambda: False)
-    client = ChronicleClient()
-
-    reachable, message = client.test_connection()
-    if not reachable:
-        log.error('full_sync_check: aborting -- Chronicle not reachable: {0}'.format(message))
-        return {'checked': 0, 'updated': 0, 'errors': 0, 'cancelled': False,
-                'aborted': 'Chronicle not reachable: {0}'.format(message)}
-
-    movies = _get_all_movies()
-    log.info('full_sync_check: checking {0} movie(s) against Chronicle'.format(len(movies)))
-
-    checked = 0
-    updated = 0
-    errors = 0
-    for index, movie in enumerate(movies):
-        if is_cancelled():
-            break
-        if progress_callback:
-            progress_callback(index, len(movies), movie.get('title') or '')
-
-        file_path = movie.get('file')
-        if not file_path:
-            continue
-        file_name = posixpath.basename(file_path)
-
-        details = client.get_movie_details_by_file(
-            file_name, year=year_from_path(file_path) or movie.get('year'))
-        if not details:
-            continue  # nothing unambiguous in Chronicle for this exact file -- nothing to sync
-        checked += 1
-
-        # Unconditional, same as the normal scrape flow (python/scraper.py) -- sync_movie_art's
-        # own skip-cache (unchanged URL + local file size) is what keeps an already-correct
-        # poster cheap here, not a diff check. location is derived straight from the file Kodi
-        # itself just told us about -- more direct and reliable than sync_movie_art's own
-        # fallback lookup (a VideoLibrary re-query, then source-folder browsing), which exists
-        # for when the caller doesn't already know the file's real current location.
-        folder = posixpath.dirname(file_path) + '/'
-        video_basename = movie_art_sync.strip_video_ext(posixpath.basename(file_path))
-        try:
-            movie_art_sync.sync_movie_art(
-                details.get('title'), details.get('year'), details.get('artwork'),
-                location=(folder, video_basename))
-        except Exception as exc:
-            log.warning('full_sync_check: art sync failed for "{0}": {1}'.format(
-                        movie.get('title'), exc))
-
-        updates = diff_movie(movie, details)
-        if not updates:
-            continue
-
-        refresh = needs_cast_refresh(movie, details, updates) or set_differs(movie, details)
-        if _set_movie_details(movie['movieid'], updates):
-            updated += 1
-            log.info('full_sync_check: "{0}" ({1}) -- updated {2}'.format(
-                movie.get('title'), movie.get('year'), ', '.join(sorted(updates.keys()))))
-            if refresh:
-                refresh_movie(movie['movieid'])
-        else:
-            errors += 1
-
-    result = {'checked': checked, 'updated': updated, 'errors': errors, 'cancelled': is_cancelled(),
-              'aborted': None}
-    log.info('full_sync_check: complete -- {0}'.format(result))
-    return result

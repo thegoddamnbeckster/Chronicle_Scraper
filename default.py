@@ -27,8 +27,8 @@ log   = Logger('default')
 
 
 def _on_connected():
-    # Best-effort, on a background thread -- registration makes a couple of local JSON-RPC calls plus one Chronicle POST, nothing this
-    # UI flow should wait for. See lib/device_registration.py.
+    # Best-effort, on a background thread -- one Chronicle POST, nothing this UI flow should wait
+    # for. See lib/device_registration.py.
     threading.Thread(target=device_registration.register, name='chronicle-device-register', daemon=True).start()
 
 
@@ -107,27 +107,29 @@ def _sync_watch_ratings_now():
 
 
 def _sync_collections_now():
-    """Manual "Sync Collection Art Now" action -- runs the same collection_art_sync.run() pass
-    the background service triggers automatically (on load, and on its own interval),
-    immediately and on demand. No confirmation dialog, same reasoning as
-    _sync_watch_ratings_now above: sync_collection_art() overwrites local art files inside
-    Kodi's own dedicated "Movie set information folder" (never a video file), the same
-    fill-or-refresh write an ordinary scrape already does for a collection's member movie."""
-    bg = xbmcgui.DialogProgressBG()
-    bg.create(ADDON.getLocalizedString(32143))
+    """Manual "Sync Collection Art Now" action -- compares EVERY collection with Kodi's (not just
+    the ones Chronicle says changed), immediately and on demand, and writes only the art that
+    differs. No confirmation dialog, same reasoning as _sync_watch_ratings_now above: it sets
+    art on Kodi's movie sets and touches no file."""
+    bg = None
 
     def on_progress(index, total, label):
+        nonlocal bg
+        if bg is None:
+            bg = xbmcgui.DialogProgressBG()
+            bg.create(ADDON.getLocalizedString(32143))
         percent = min(100, int(index * 100 / total)) if total else 0
         bg.update(percent, message=label)
 
     try:
-        result = collection_art_sync.run(progress_callback=on_progress)
+        result = collection_art_sync.run(progress_callback=on_progress, everything=True)
     finally:
-        bg.close()
+        if bg is not None:
+            bg.close()
 
-    message = ADDON.getLocalizedString(32147).format(
-        result['collections'],
-        ADDON.getLocalizedString(32136).format(result['errors']) if result['errors'] else '')
+    # A button press expects an answer, so a pass that changed nothing says so.
+    message = (collection_art_sync.describe_result(result, ADDON.getLocalizedString)
+               or ADDON.getLocalizedString(32165))
     xbmcgui.Dialog().notification(
         ADDON.getLocalizedString(32143),
         message,

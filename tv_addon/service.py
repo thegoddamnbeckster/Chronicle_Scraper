@@ -4,16 +4,17 @@
 Deliberately minimal: unlike the sibling Chronicle Scraper (Movies) addon's own service.py
 (corner activity status, device registration, watch/rating sync -- see
 that addon's own default.py doc for why none of those are duplicated here), this addon's
-service exists for exactly one job: periodically polling Chronicle's "new content available"
-signal (see lib/kodi_scan_signal.py) and triggering this device's own local VideoLibrary.Scan
-when due.
+service exists for two jobs: after each Kodi library scan, checking every episode against
+Chronicle (see lib/full_sync_check.py), and once per Kodi start asking Chronicle which already-scraped
+items changed so Kodi can re-scrape just those (see lib/kodi_scan_signal.py). It never starts a library
+scan: Kodi pulls from Chronicle when IT scans, and a scan this add-on started would also fire every other
+add-on's own scan-finished work.
 
 Why this has to be a service of its own, not shared with the Movies addon: Kodi runs
 xbmc.service as a per-addon persistent process -- there is no way for one addon's background
-service to run code on behalf of a second, separate addon package, and a periodic POLL has
-nothing to piggyback on, since nothing about it is triggered by a scrape. The only thing that makes a Kodi
+service to run code on behalf of a second, separate addon package. The only thing that makes a Kodi
 addon run continuously is its own declared xbmc.service extension. Without this file, the
-scan-signal feature would only ever run for someone who also happened to have the Movies addon
+refresh check would only ever run for someone who also happened to have the Movies addon
 installed -- silently breaking this addon's own stated promise (see addon.xml) of working
 standalone for someone tracking TV shows only.
 """
@@ -57,33 +58,24 @@ _FULL_SYNC_CHECK_DEFER_POLL_SECONDS = 10
 # re-running on every one of those, not just the first. Same value as the Movies addon's own.
 _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS = 5 * 60
 
-# Chronicle's "new content available" flag (lib/kodi_scan_signal.py) is always checked once
-# after Kodi starts, regardless of the scan_signal_enabled setting -- most imports land via
-# Chronicle's own nightly schedule, so the next Kodi startup already catches them with no
-# recurring poll needed. Periodic re-checking while Kodi keeps running is opt-in (default off,
-# see settings.xml) at a user-configurable interval (scan_signal_interval_minutes, default 120)
-# -- a triggered scan cascades into every OTHER addon's own onScanFinished handler too (confirmed
-# live: Chronicle_Scrobbler's VideoLibrary.Clean, SIMKL's own full sync pass), so this defaults
-# to conservative rather than "as fast as possible." Same settings/behavior as the sibling
-# Movies addon's own copy of this same logic.
-_SCAN_SIGNAL_STARTUP_DELAY_SECONDS = 60
 _POLL_INTERVAL_SECONDS = 3
 
-# Short delay before the startup-scan followup check (lib/kodi_scan_signal.py's
-# run_startup_scan_followup) -- just enough that Kodi's own JSON-RPC server is definitely up;
-# the check itself is a single cheap local settings read, and the followup scan it may launch
-# already does its own bounded wait for the network/share to actually be reachable.
-_STARTUP_SCAN_FOLLOWUP_DELAY_SECONDS = 10
+# Default for the "seconds to wait after Kodi starts" setting (startup_delay_seconds): how long after
+# service start before the once-per-startup refresh check, so Kodi's own start-up -- add-on init,
+# network, mounting the drives -- gets room first. Read fresh each time, so changing it needs no restart.
+_DEFAULT_STARTUP_DELAY_SECONDS = 10
+
+
+def _startup_delay_seconds():
+    try:
+        return max(0, ADDON.getSettingInt('startup_delay_seconds'))
+    except Exception:
+        return _DEFAULT_STARTUP_DELAY_SECONDS
 
 
 class ChronicleTVMonitor(xbmc.Monitor):
     def __init__(self):
         super(ChronicleTVMonitor, self).__init__()
-        # Guards against two check_and_scan() calls overlapping if one is still waiting on a
-        # slow/hanging network call when the next poll interval comes due -- cheap insurance,
-        # not a response to any observed failure. Same precedent as the Movies addon's own
-        # _scan_signal_lock.
-        self._scan_signal_lock = threading.Lock()
         # Guards against onScanFinished firing again (a second scan completing) while a
         # previous full sync-check pass is still walking the library.
         self._full_sync_check_lock = threading.Lock()
@@ -106,12 +98,11 @@ class ChronicleTVMonitor(xbmc.Monitor):
         return False
 
     def onScanFinished(self, library):
-        """Kodi's own native callback, fired the same way regardless of what triggered the
-        scan -- its own automatic startup scan, the user's manual "Update Library", or this
-        addon's own new-content-detection feature calling VideoLibrary.Scan. Per-user direction
-        (2026-09-22): the full sync-check should run after ALL of those alike, gated by its own
-        settings toggle (default on) rather than trying to tell them apart -- see
-        lib/full_sync_check.py's own doc for what this actually does and why."""
+        """Kodi's own native callback, fired the same way regardless of what started the
+        scan -- its own automatic startup scan, the user's manual "Update Library", or another
+        add-on's. Per-user direction (2026-09-22): the full sync-check should run after ALL of those
+        alike, gated by its own settings toggle (default on) rather than trying to tell them
+        apart -- see lib/full_sync_check.py's own doc for what this actually does and why."""
         if library != 'video':
             return
         self.run_full_sync_check('scan finished')
@@ -126,8 +117,8 @@ class ChronicleTVMonitor(xbmc.Monitor):
         since_last = time.time() - self._full_sync_check_last_completed_at
         if since_last < _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS:
             log.info('service: full sync-check ({0}) skipped -- a pass completed {1:.0f}s ago, '
-                     'inside the {2}s cooldown (VideoLibrary.Scan finishing cascades into '
-                     'multiple onScanFinished firings)'.format(
+                     'inside the {2}s cooldown (one scan can fire '
+                     'onScanFinished several times)'.format(
                      trigger_label, since_last, _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS))
             return
         if not self._full_sync_check_lock.acquire(False):
@@ -195,45 +186,15 @@ class ChronicleTVMonitor(xbmc.Monitor):
         except Exception as exc:
             log.warning('service: could not show the full sync-check result: {0}'.format(exc))
 
-    def run_scan_signal_check(self):
-        if not self._scan_signal_lock.acquire(False):
-            log.info('service: scan-signal check skipped -- another check is already running')
-            return
-        try:
-            threading.Thread(
-                target=self._run_scan_signal_check_locked,
-                name='chronicle-tv-scan-signal-check', daemon=True,
-            ).start()
-        except Exception:
-            self._scan_signal_lock.release()
-            raise
-
-    def _run_scan_signal_check_locked(self):
-        try:
-            kodi_scan_signal.check_and_scan()
-        except Exception as exc:
-            log.error('service: scan-signal check failed: {0}'.format(exc))
-        finally:
-            self._scan_signal_lock.release()
-
-    def run_startup_scan_followup(self, service_started_at):
-        """Also runs this addon's own check_and_refresh(['episode', 'tvshow']) as the followup's
-        own last step, once the scan it fires (or defers to) actually finishes -- see
-        kodi_scan_signal.run_startup_scan_followup's own doc. Not a recurring poll: this fires
-        at most once per Kodi session, same as the scan followup itself. Movies are the Movies
-        addon's own responsibility, via its own identical copy of this same call with its own
-        kind."""
+    def run_startup_refresh(self):
+        """Runs this addon's own once-per-startup refresh check on a background thread -- see
+        kodi_scan_signal.run_startup_refresh's own doc. Not a recurring poll. Movies are the
+        Movies addon's own responsibility, via its own identical call with its own kind."""
         threading.Thread(
-            target=self._run_startup_scan_followup, args=(service_started_at,),
-            name='chronicle-tv-startup-scan-followup', daemon=True,
+            target=kodi_scan_signal.run_startup_refresh, args=(['episode', 'tvshow'],),
+            kwargs={'is_aborted': self.abortRequested},
+            name='chronicle-tv-startup-refresh', daemon=True,
         ).start()
-
-    def _run_startup_scan_followup(self, service_started_at):
-        try:
-            kodi_scan_signal.run_startup_scan_followup(
-                service_started_at, ['episode', 'tvshow'], is_aborted=self.abortRequested)
-        except Exception as exc:
-            log.error('service: startup-scan followup failed: {0}'.format(exc))
 
 
 def run():
@@ -241,46 +202,26 @@ def run():
     log.info('service: Chronicle Scraper (TV) background service started')
 
     service_started_at = time.time()
-    startup_done = False
-    startup_followup_done = False
-    last_scan_signal_check = 0.0  # only consulted once scan_signal_enabled is on
+    startup_refresh_done = False
     last_scan_active_heartbeat = 0.0  # forces an immediate first heartbeat once scanning starts
 
-    # Never start a library scan just because the add-on was installed or upgraded (every install restarts this service): skip both
-    # startup scan checks for this one start, as the movie add-on does. They resume on the next normal Kodi start.
+    # Never refresh just because the add-on was installed or upgraded (every install restarts this service): skip the
+    # startup refresh check for this one start. It resumes on the next normal Kodi start.
     if install_marker.is_first_start_of_version(ADDON.getAddonInfo('version')):
-        log.info('service: first start of this add-on version -- not starting a library scan; the '
-                 'startup scan checks resume on the next normal Kodi start')
-        startup_done = True
-        startup_followup_done = True
-        last_scan_signal_check = time.time()
+        log.info('service: first start of this add-on version -- skipping the startup refresh '
+                 'check; it resumes on the next normal Kodi start')
+        startup_refresh_done = True
 
     # Standard Kodi service idle loop: sleep in short increments so abortRequested() (set on
     # Kodi shutdown) is noticed promptly instead of blocking in one long sleep.
     while not monitor.abortRequested():
         now = time.time()
 
-        # Startup check: always runs exactly once, regardless of scan_signal_enabled -- see
-        # this file's own top-of-module doc for why a recurring poll isn't the default.
-        if not startup_done and now - service_started_at >= _SCAN_SIGNAL_STARTUP_DELAY_SECONDS:
-            startup_done = True
-            monitor.run_scan_signal_check()
-
-        # Independent of scan_signal_enabled above -- see lib/kodi_scan_signal.py's own doc
-        # (Startup-scan followup). Always runs exactly once; the function itself is a no-op if
-        # Kodi's native "Update library on startup" setting turns out to be off. Also runs this
-        # addon's own per-item refresh-check as its own last step, once the scan actually
-        # finishes -- see run_startup_scan_followup's own doc above; not a recurring poll.
-        if not startup_followup_done and \
-                now - service_started_at >= _STARTUP_SCAN_FOLLOWUP_DELAY_SECONDS:
-            startup_followup_done = True
-            monitor.run_startup_scan_followup(service_started_at)
-
-        if ADDON.getSettingBool('scan_signal_enabled'):
-            interval_seconds = max(30, ADDON.getSettingInt('scan_signal_interval_minutes')) * 60
-            if now - last_scan_signal_check >= interval_seconds:
-                last_scan_signal_check = now
-                monitor.run_scan_signal_check()
+        # Once per Kodi start: after Kodi's own startup library scan, re-scrape the items Chronicle
+        # says changed since this device last scraped them. Never starts a scan itself.
+        if not startup_refresh_done and now - service_started_at >= _startup_delay_seconds():
+            startup_refresh_done = True
+            monitor.run_startup_refresh()
 
         # Covers this addon's own scraper-activity tail (per-episode find/getepisodedetails
         # calls, each its own short-lived process -- see lib/activity_tracker.py) as well as

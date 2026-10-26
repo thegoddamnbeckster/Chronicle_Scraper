@@ -121,25 +121,17 @@ class TestFullSyncCheck(_Base):
         self.monitor._notify_full_sync_check_result({'checked': 1})   # swallowed
 
 
-class TestScanSignalAndFollowup(_Base):
-    def test_one_check_at_a_time_and_errors_release_the_lock(self):
-        with mock.patch.object(service.kodi_scan_signal, 'check_and_scan') as check:
-            self.monitor.run_scan_signal_check()
-            self.assertEqual(check.call_count, 1)
-            self.monitor._scan_signal_lock.acquire()
-            self.monitor.run_scan_signal_check()
-            self.assertEqual(check.call_count, 1)
-            self.monitor._scan_signal_lock.release()
-        with mock.patch.object(service.kodi_scan_signal, 'check_and_scan', side_effect=RuntimeError('x')):
-            self.monitor.run_scan_signal_check()
-        self.assertTrue(self.monitor._scan_signal_lock.acquire(False))
+class TestStartupRefresh(_Base):
+    def test_asks_for_episode_and_show_refreshes_with_the_abort_check(self):
+        with mock.patch.object(service.kodi_scan_signal, 'run_startup_refresh') as refresh:
+            self.monitor.run_startup_refresh()
+        self.assertEqual(refresh.call_args[0], (['episode', 'tvshow'],))
+        self.assertEqual(refresh.call_args[1]['is_aborted'], self.monitor.abortRequested)
 
-    def test_followup_asks_for_episode_and_show_refreshes(self):
-        with mock.patch.object(service.kodi_scan_signal, 'run_startup_scan_followup') as followup:
-            self.monitor.run_startup_scan_followup(5.0)
-        self.assertEqual(followup.call_args[0], (5.0, ['episode', 'tvshow']))
-        with mock.patch.object(service.kodi_scan_signal, 'run_startup_scan_followup', side_effect=RuntimeError('x')):
-            self.monitor.run_startup_scan_followup(5.0)
+    def test_the_service_has_no_scan_triggers_left(self):
+        for name in ('run_scan_signal_check', 'run_startup_scan_followup'):
+            self.assertFalse(hasattr(self.monitor, name), name)
+        self.assertFalse(hasattr(service.kodi_scan_signal, 'check_and_scan'))
 
 
 class TestMainLoop(_Base):
@@ -147,7 +139,6 @@ class TestMainLoop(_Base):
 
     def setUp(self):
         super().setUp()
-        self.addon.getSettingBool.side_effect = lambda sid: sid == 'scan_signal_enabled'
         self.monitor_instance = mock.MagicMock()
         self.monitor_instance.abortRequested.return_value = False
         self.clock = [1000.0]
@@ -169,16 +160,23 @@ class TestMainLoop(_Base):
             self.monitor_instance.waitForAbort.side_effect = wait
             service.run()
 
-    def test_a_normal_start_checks_for_new_content_once_the_delay_has_passed(self):
+    def test_a_normal_start_refreshes_once_the_delay_has_passed(self):
         self._run(first_start=False)
-        self.monitor_instance.run_startup_scan_followup.assert_called_once()
-        self.assertTrue(self.monitor_instance.run_scan_signal_check.called)
+        self.monitor_instance.run_startup_refresh.assert_called_once()
 
-    def test_the_first_start_of_a_new_version_scans_nothing(self):
+    def test_the_startup_delay_setting_is_honoured(self):
+        self.addon.getSettingInt.side_effect = lambda sid: 1000 if sid == 'startup_delay_seconds' else 0
+        self._run(first_start=False)
+        self.monitor_instance.run_startup_refresh.assert_not_called()
+
+    def test_an_unreadable_delay_falls_back_to_ten_seconds(self):
+        self.addon.getSettingInt.side_effect = RuntimeError('no such setting')
+        self._run(first_start=False)
+        self.monitor_instance.run_startup_refresh.assert_called_once()
+
+    def test_the_first_start_of_a_new_version_refreshes_nothing(self):
         self._run(first_start=True)
-        self.monitor_instance.run_startup_scan_followup.assert_not_called()
-        # the recurring check (scan_signal_enabled) is also held back for its first interval
-        self.monitor_instance.run_scan_signal_check.assert_not_called()
+        self.monitor_instance.run_startup_refresh.assert_not_called()
 
     def test_the_heartbeat_tells_chronicle_a_scan_is_running(self):
         self.scanning[0] = True

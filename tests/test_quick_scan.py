@@ -57,43 +57,40 @@ class TestGetDetailsQuickScan(unittest.TestCase):
         with patch('python.scraper.ChronicleClient', return_value=client), \
              patch('python.scraper.find_movie_location', return_value=_LOCATION) as locate, \
              patch('python.scraper.sync_movie_art') as sync_art, \
-             patch('python.scraper.sync_collection_art') as sync_collection, \
              patch.object(scraper.progress_sync, 'lookup_movie_state',
                           wraps=scraper.progress_sync.lookup_movie_state) as lookup_state, \
              patch.object(scraper.progress_sync, 'apply_watched_push',
                           wraps=scraper.progress_sync.apply_watched_push) as watched_push:
             result = scraper.get_details(media_item_id=555, handle=1)
-        return result, client, locate, sync_art, sync_collection, (lookup_state, watched_push)
+        return result, client, locate, sync_art, (lookup_state, watched_push)
 
-    def test_quick_scan_adds_the_movie_but_defers_art_files_collection_art_and_watch_sync(self):
-        result, _client, _locate, sync_art, sync_collection, progress = self._run(quick=True)
+    def test_quick_scan_adds_the_movie_but_defers_art_files_and_watch_sync(self):
+        result, _client, _locate, sync_art, progress = self._run(quick=True)
 
         self.assertTrue(result)
         scraper.xbmcplugin.setResolvedUrl.assert_called_once()   # the movie IS added
         sync_art.assert_not_called()
-        sync_collection.assert_not_called()
         lookup_state, watched_push = progress
         lookup_state.assert_not_called()
         watched_push.assert_not_called()
 
     def test_quick_scan_still_records_the_resolved_file_so_the_post_scan_pass_can_match_it(self):
-        # full_sync_check matches Kodi's movie to Chronicle by the exact file name, which
+        # the post-scan watch/rating pass matches Kodi's movie to Chronicle by the exact file name, which
         # Chronicle only knows once resolved-file has been reported.
-        _result, client, _locate, _a, _c, _p = self._run(quick=True)
+        _result, client, _locate, _a, _p = self._run(quick=True)
 
         client.report_resolved_file.assert_called_once_with(555, 'Dune Part Two (2024).mkv')
 
     def test_quick_scan_skips_the_videolibrary_retry_pause(self):
-        _result, _client, locate, _a, _c, _p = self._run(quick=True)
+        _result, _client, locate, _a, _p = self._run(quick=True)
 
         self.assertEqual(locate.call_args.kwargs.get('library_retries'), 1)
 
     def test_full_mode_still_does_everything(self):
-        result, _client, locate, sync_art, sync_collection, progress = self._run(quick=False)
+        result, _client, locate, sync_art, progress = self._run(quick=False)
 
         self.assertTrue(result)
         sync_art.assert_called_once()
-        sync_collection.assert_called_once()
         lookup_state, watched_push = progress
         lookup_state.assert_called_once()
         watched_push.assert_called_once()   # Chronicle says watched; full mode pushes it into Kodi

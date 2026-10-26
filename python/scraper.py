@@ -1,4 +1,5 @@
-# -*- coding: utf-8 -*-
+
+from lib import recent_play# -*- coding: utf-8 -*-
 """Kodi metadata-scraper entry point (xbmc.metadata.scraper.movies).
 
 Real Kodi Python-scraper contract, confirmed against Team Kodi's own
@@ -55,9 +56,9 @@ from lib.chronicle_client import ChronicleClient
 from lib.kodi_video_info import (
     apply_common_video_info, apply_ratings, apply_artwork, youtube_trailer_uri,
 )
-from lib.collection_sync import sync_collection_art
 from lib.movie_art_sync import sync_movie_art, find_movie_location
 from lib import progress_sync
+from lib import recent_play
 
 log = Logger('scraper')
 ADDON = xbmcaddon.Addon()
@@ -91,12 +92,11 @@ def parse_lookup_string(value):
 
 def quick_scan_enabled():
     """True when scrapes should defer everything that is not needed to ADD the movie to Kodi's
-    library: its local poster/fanart files, its collection's art files, and the watched/rating/
-    resume reconciliation. Per-user request (2026-10-02): getting ~900 missing movies in took
+    library: its local poster/fanart files and the watched/rating/resume reconciliation. Per-user request (2026-10-02): getting ~900 missing movies in took
     ~57s each -- hours -- almost all of it that deferrable work, so "a minimal scan first to get
     the movies in and then a secondary scan to populate." The secondary pass already exists and
-    runs after every scan: full_sync_check (text fields, art files, cast/set) and the
-    watch/rating sync (Kodi ids, watched state, ratings, resume). On by default (the setting's
+    runs after every scan: the watch/rating sync (text fields, art files, cast/set, Kodi ids,
+    watched state, ratings, resume) followed by the collection art sync. On by default (the setting's
     own default); an unreadable setting is treated as on."""
     try:
         return bool(ADDON.getSettingBool('quick_scan'))
@@ -266,8 +266,6 @@ def get_details(media_item_id, handle):
             vtag.addAvailableArtwork(collection['posterUrl'], 'set.poster')
         if collection.get('backdropUrl'):
             vtag.addAvailableArtwork(collection['backdropUrl'], 'set.fanart')
-        if not quick:
-            sync_collection_art(collection)
     t_collection_art = time.time()
 
     apply_ratings(vtag, details.get('ratings'))
@@ -286,36 +284,41 @@ def get_details(media_item_id, handle):
     # Quick scan defers this to the post-scan watch/rating sync (see quick_scan_enabled).
     if not quick:
         kodi_state = progress_sync.lookup_movie_state(details.get('title'), details.get('year'))
-        direction, value = progress_sync.resolve_progress_direction(
-            details.get('resumePositionPercent'), details.get('resumeUpdatedAt'), kodi_state)
-        if direction == 'push':
-            progress_sync.apply_resume_push(vtag, value, details.get('runtimeMinutes'))
-        elif direction == 'pull':
-            ChronicleClient().push_resume(
-                media_item_id, value, progress_sync.kodi_lastplayed_to_iso(kodi_state.get('lastplayed')))
+        # Playing right now, or a bookmark made here since Chronicle last heard: Kodi's library row is stale or
+        # newer than Chronicle's, so reconciling it would overwrite real progress (see lib/recent_play.py).
+        protected = recent_play.protects_progress(
+            kodi_state, details, lambda pct, at: ChronicleClient().push_resume(media_item_id, pct, at))
+        if not protected:
+            direction, value = progress_sync.resolve_progress_direction(
+                details.get('resumePositionPercent'), details.get('resumeUpdatedAt'), kodi_state)
+            if direction == 'push':
+                progress_sync.apply_resume_push(vtag, value, details.get('runtimeMinutes'))
+            elif direction == 'pull':
+                ChronicleClient().push_resume(
+                    media_item_id, value, progress_sync.kodi_lastplayed_to_iso(kodi_state.get('lastplayed')))
 
-        # Fully-watched reconciliation -- separate from resume above on purpose. Chronicle clears
-        # resumePositionPercent/resumeUpdatedAt to null the moment an item is marked watched
-        # (nothing left to "resume"), so a completed item gives resolve_progress_direction nothing
-        # to compare and it correctly no-ops. isWatched/lastWatchedAt are never cleared, so this
-        # is the only path that can ever sync a finished watch onto a Kodi instance that's never
-        # played the item. Confirmed live (2026-09-05): a movie completed on one Shield stayed
-        # permanently unwatched on another with no error, since nothing was actually wrong --
-        # nothing was trying to reconcile watched status at all.
-        watched_direction, watched_value = progress_sync.resolve_watched_direction(
-            details.get('isWatched'), details.get('lastWatchedAt'), kodi_state,
-            chronicle_reset_at=details.get('watchResetAt'))
-        if watched_direction == 'push':
-            progress_sync.apply_watched_push(vtag, watched_value)
-        elif watched_direction == 'reset':
-            progress_sync.apply_watched_reset(vtag)
-        elif watched_direction == 'pull':
-            ChronicleClient().push_watched(
-                media_item_id, progress_sync.kodi_lastplayed_to_iso(watched_value))
-        # A leftover resume bookmark on an item Chronicle has finished (see progress_sync.has_stale_resume).
-        if watched_direction != 'push' and progress_sync.has_stale_resume(
-                details.get('isWatched'), details.get('lastWatchedAt'), details.get('resumePositionPercent'), kodi_state):
-            vtag.setResumePoint(0, 0)
+            # Fully-watched reconciliation -- separate from resume above on purpose. Chronicle clears
+            # resumePositionPercent/resumeUpdatedAt to null the moment an item is marked watched
+            # (nothing left to "resume"), so a completed item gives resolve_progress_direction nothing
+            # to compare and it correctly no-ops. isWatched/lastWatchedAt are never cleared, so this
+            # is the only path that can ever sync a finished watch onto a Kodi instance that's never
+            # played the item. Confirmed live (2026-09-05): a movie completed on one Shield stayed
+            # permanently unwatched on another with no error, since nothing was actually wrong --
+            # nothing was trying to reconcile watched status at all.
+            watched_direction, watched_value = progress_sync.resolve_watched_direction(
+                details.get('isWatched'), details.get('lastWatchedAt'), kodi_state,
+                chronicle_reset_at=details.get('watchResetAt'))
+            if watched_direction == 'push':
+                progress_sync.apply_watched_push(vtag, watched_value)
+            elif watched_direction == 'reset':
+                progress_sync.apply_watched_reset(vtag)
+            elif watched_direction == 'pull':
+                ChronicleClient().push_watched(
+                    media_item_id, progress_sync.kodi_lastplayed_to_iso(watched_value))
+            # A leftover resume bookmark on an item Chronicle has finished (see progress_sync.has_stale_resume).
+            if watched_direction != 'push' and progress_sync.has_stale_resume(
+                    details.get('isWatched'), details.get('lastWatchedAt'), details.get('resumePositionPercent'), kodi_state):
+                vtag.setResumePoint(0, 0)
     t_progress_sync = time.time()
 
     if not quick:
@@ -376,7 +379,6 @@ def get_artwork(media_item_id, handle):
             vtag.addAvailableArtwork(collection['posterUrl'], 'set.poster')
         if collection.get('backdropUrl'):
             vtag.addAvailableArtwork(collection['backdropUrl'], 'set.fanart')
-        sync_collection_art(collection)
 
     xbmcplugin.setResolvedUrl(handle=handle, succeeded=True, listitem=listitem)
     return True

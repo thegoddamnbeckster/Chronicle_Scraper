@@ -78,19 +78,5 @@ class TestLoggerNeverWritesALogin(unittest.TestCase):
             self.assertIn('smb://***@nas/Collections/', written, level)
 
 
-class TestTheNotification(unittest.TestCase):
-
-    def test_the_unreachable_folder_notification_never_shows_the_login(self):
-        from lib import collection_sync
-        with patch.object(collection_sync, '_should_alert', return_value=True), \
-                patch.object(collection_sync.xbmcgui, 'Dialog') as dialog:
-            collection_sync._notify_unreachable('smb://kodi:s3cret@10.0.0.162/Video7/Movie Collections/')
-
-        shown = dialog.return_value.notification.call_args[0][1]
-        self.assertNotIn('s3cret', shown)
-        self.assertNotIn('kodi:', shown)
-        self.assertEqual('Movie collections folder not reachable: smb://***@10.0.0.162/Video7/Movie Collections/', shown)
-
-
 if __name__ == '__main__':
     unittest.main()

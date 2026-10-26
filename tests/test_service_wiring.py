@@ -112,9 +112,9 @@ class TestPassesAlwaysReportProgress(unittest.TestCase):
                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                 and n.func.attr == func and isinstance(n.func.value, ast.Name) and n.func.value.id == module]
 
-    def test_the_post_scan_check_reports_progress(self):
-        calls = self._calls_to('full_sync_check', 'run')
-        self.assertTrue(calls, 'service.py no longer calls full_sync_check.run')
+    def test_the_collection_art_sync_reports_progress(self):
+        calls = self._calls_to('collection_art_sync', 'run')
+        self.assertTrue(calls, 'service.py no longer calls collection_art_sync.run')
         for call in calls:
             self.assertIn('progress_callback', {k.arg for k in call.keywords})
 
@@ -125,42 +125,7 @@ class TestPassesAlwaysReportProgress(unittest.TestCase):
             self.assertIn('progress_callback', {k.arg for k in call.keywords})
 
     def test_passes_use_the_shared_reporter(self):
-        self.assertGreaterEqual(len(self._calls_to('pass_progress', 'PassProgress')), 2)
-
-
-class TestFullSyncCheckResultNotification(unittest.TestCase):
-
-    def setUp(self):
-        self.monitor = service.ChronicleMonitor()
-
-    def _notify(self, result):
-        with patch.object(service.xbmcgui, 'Dialog') as dialog:
-            self.monitor._notify_full_sync_check_result(result)
-        return dialog.return_value.notification
-
-    def test_a_completed_pass_says_how_many_were_checked_and_corrected(self):
-        notification = self._notify({'checked': 700, 'updated': 12, 'errors': 0, 'cancelled': False, 'aborted': None})
-        notification.assert_called_once()
-        self.assertEqual(notification.call_args.kwargs['icon'], service.xbmcgui.NOTIFICATION_INFO)
-        # titled with the add-on name (string 32000), not the "Verifying..." heading of the pass that just ended
-        service.ADDON.getLocalizedString.assert_any_call(32000)
-
-    def test_a_pass_with_errors_is_a_warning(self):
-        notification = self._notify({'checked': 700, 'updated': 12, 'errors': 3, 'cancelled': False, 'aborted': None})
-        self.assertEqual(notification.call_args.kwargs['icon'], service.xbmcgui.NOTIFICATION_WARNING)
-
-    def test_a_pass_stopped_early_still_says_so(self):
-        self._notify({'checked': 5, 'updated': 0, 'errors': 0, 'cancelled': True, 'aborted': None}).assert_called_once()
-
-    def test_a_pass_that_could_not_start_is_a_warning(self):
-        notification = self._notify({'checked': 0, 'updated': 0, 'errors': 0, 'cancelled': False,
-                                     'aborted': 'Chronicle not reachable: timed out'})
-        self.assertEqual(notification.call_args.kwargs['icon'], service.xbmcgui.NOTIFICATION_WARNING)
-
-    def test_a_notification_failure_never_propagates(self):
-        with patch.object(service.xbmcgui, 'Dialog', side_effect=RuntimeError('no GUI')):
-            self.monitor._notify_full_sync_check_result({'checked': 1, 'updated': 0, 'errors': 0,
-                                                         'cancelled': False, 'aborted': None})   # must not raise
+        self.assertGreaterEqual(len(self._calls_to('pass_progress', 'PassProgress')), 1)
 
 
 if __name__ == '__main__':
