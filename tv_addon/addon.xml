@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.tv"
        name="Chronicle Scraper (TV)"
-       version="1.21.1"
+       version="1.22.0"
        provider-name="Michael Beck">
 
   <requires>
@@ -58,7 +58,9 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (TV)</summary>
     <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. The corner status indicator lives in the Movies addon and covers both movies and TV shows together; this addon doesn't duplicate it. Neither addon writes a local NFO file of any kind -- Chronicle's own API is the source of truth both scrapers read from directly. It does have its own small background service that keeps Kodi's library in sync with newly-imported content, independent of the Movies addon -- see this version's changelog.</description>
-    <news>v1.21.1 - FIX: the sync check after each library scan no longer rewrites the same episode thumbnails every time. Kodi reports a stored image address in a wrapped form, so it never matched Chronicle's plain address and about 3,000 episodes had their art written again on every scan; the two are now compared as the same address. Also, the log line for each scraper call no longer prints this add-on's settings, which include the Chronicle API key, and any "api_key" value in a logged line is replaced by ***.
+    <news>v1.22.0 - This add-on now registers itself with Chronicle (device name, add-on name, id and version, Kodi build) when it starts and after pairing, so its row in Chronicle's device list is named for the add-on instead of its API key.
+
+v1.21.1 - FIX: the sync check after each library scan no longer rewrites the same episode thumbnails every time. Kodi reports a stored image address in a wrapped form, so it never matched Chronicle's plain address and about 3,000 episodes had their art written again on every scan; the two are now compared as the same address. Also, the log line for each scraper call no longer prints this add-on's settings, which include the Chronicle API key, and any "api_key" value in a logged line is replaced by ***.
 
 v1.21.0 - FIX: progress made on this device is no longer overwritten. An episode that is playing at that moment is skipped by the watched/resume step of a scrape, and a bookmark left by playing an episode AFTER Chronicle last knew of it is kept and reported to Chronicle instead of being wiped as stale. This relies on the play record kept by the Chronicle Scraper (Movies) add-on 3.24.0 or later; without it nothing changes.
 
