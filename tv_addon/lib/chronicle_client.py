@@ -250,6 +250,39 @@ class ChronicleClient:
             log.warning('report_kodi_id({0}, {1!r}, {2}): unexpected error: {3}'.format(
                         media_item_id, kind, kodi_id, exc))
 
+    def register_device(self, name: str, addon_name: str = '', addon_id: str = '', addon_version: str = '',
+                        kodi_version: str = ''):
+        """POST /api/v1/scraper/devices/kodi/register -- tells Chronicle this Kodi install exists and which
+        add-on is saying so: the device's name, this add-on's name, id and version, and the Kodi build (the
+        server notes the address the request came from). Each add-on has its own API key and so its own row;
+        these fields make it obvious which is which. Chronicle never calls a device, so no address, port or
+        login is sent. Best-effort: failures are logged and swallowed, same as every other client call here --
+        registration is repeated at the next service start."""
+        if not self._base_url or not self._api_key:
+            return
+        url = '{0}/api/v1/scraper/devices/kodi/register'.format(self._base_url)
+        data = json.dumps({'name': name, 'addonName': addon_name, 'addonId': addon_id,
+                           'addonVersion': addon_version, 'kodiVersion': kodi_version}).encode('utf-8')
+        req = self._build_request(url, data=data, method='POST')
+
+        def _do():
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status
+
+        label = 'register_device({0!r}, {1!r} {2})'.format(name, addon_id, addon_version)
+        try:
+            status = call_with_timeout(_do, 10)
+            if status == 200:
+                log.info('{0}: registered with Chronicle'.format(label))
+            else:
+                log.warning('{0}: unexpected HTTP {1}'.format(label, status))
+        except urllib.error.HTTPError as exc:
+            log.warning('{0}: Chronicle returned HTTP {1} ({2})'.format(label, exc.code, exc.reason))
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            log.warning('{0}: Chronicle not reachable ({1})'.format(label, exc))
+        except Exception as exc:
+            log.warning('{0}: unexpected error: {1}'.format(label, exc))
+
     def report_scan_active(self):
         """POST /api/v1/scraper/scan-active -- heartbeat telling Chronicle "a Kodi device is
         actively scanning right now" (see IKodiDeviceService.IsScanActiveAsync server-side). Called from

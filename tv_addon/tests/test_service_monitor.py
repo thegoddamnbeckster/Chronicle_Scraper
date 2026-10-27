@@ -145,6 +145,7 @@ class TestMainLoop(_Base):
         for obj, name, new in ((service, 'ChronicleTVMonitor', mock.Mock(return_value=self.monitor_instance)),
                                (service.activity_tracker, 'read_activity', mock.Mock(return_value=None)),
                                (service, 'ChronicleClient', mock.MagicMock()),
+                               (service.device_registration, 'register', mock.Mock()),
                                (service.time, 'time', mock.Mock(side_effect=lambda: self.clock[0]))):
             p = mock.patch.object(obj, name, new)
             p.start()
@@ -163,6 +164,12 @@ class TestMainLoop(_Base):
     def test_a_normal_start_refreshes_once_the_delay_has_passed(self):
         self._run(first_start=False)
         self.monitor_instance.run_startup_refresh.assert_called_once()
+
+    def test_the_add_on_registers_itself_once_per_start(self):
+        with mock.patch.object(service.threading, 'Thread') as thread:
+            self._run(first_start=False)
+        targets = [c[1].get('target') for c in thread.call_args_list]
+        self.assertEqual(targets.count(service.device_registration.register), 1)
 
     def test_the_startup_delay_setting_is_honoured(self):
         self.addon.getSettingInt.side_effect = lambda sid: 1000 if sid == 'startup_delay_seconds' else 0

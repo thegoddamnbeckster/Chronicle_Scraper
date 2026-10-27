@@ -203,8 +203,10 @@ class TestBestEffortPosts(_Net):
              {'mediaItemId': 7, 'progressPercent': 42.5, 'timestamp': '2026-10-01T00:00:00Z'}),
         ]
         if hasattr(c, 'register_device'):
-            cases.append(('register_device', ('Shield', '10.0.0.203', 8080, 'kodi', 'pw'), '/api/v1/scraper/devices/kodi/register',
-                          {'name': 'Shield', 'host': '10.0.0.203', 'port': 8080, 'username': 'kodi', 'password': 'pw'}))
+            cases.append(('register_device', ('Shield', 'Chronicle Scraper (TV)', 'script.chronicle.scraper.tv', '1.22.0', '21.1'),
+                          '/api/v1/scraper/devices/kodi/register',
+                          {'name': 'Shield', 'addonName': 'Chronicle Scraper (TV)', 'addonId': 'script.chronicle.scraper.tv',
+                           'addonVersion': '1.22.0', 'kodiVersion': '21.1'}))
         return [case for case in cases if hasattr(c, case[0])]
 
     def test_each_posts_the_documented_body(self):

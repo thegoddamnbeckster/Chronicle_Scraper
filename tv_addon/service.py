@@ -27,6 +27,7 @@ import xbmcaddon
 import xbmcgui
 
 from lib import activity_tracker
+from lib import device_registration
 from lib import full_sync_check
 from lib import install_marker
 from lib import kodi_scan_signal
@@ -200,6 +201,11 @@ class ChronicleTVMonitor(xbmc.Monitor):
 def run():
     monitor = ChronicleTVMonitor()
     log.info('service: Chronicle Scraper (TV) background service started')
+
+    # Registered once per service start -- see lib/device_registration.py. Best-effort and silent
+    # when Chronicle is not connected yet.
+    threading.Thread(target=device_registration.register, name='chronicle-tv-device-register',
+                     daemon=True).start()
 
     service_started_at = time.time()
     startup_refresh_done = False

@@ -41,6 +41,7 @@ key after confirmation, then falls through to this same entry point.
 """
 
 import sys
+import threading
 import time
 import traceback
 
@@ -51,12 +52,17 @@ from lib.logger import Logger
 from lib.chronicle_client import ChronicleClient
 from lib.connection_ui import ConnectionUi, parse_script_args
 from lib.device_auth import DeviceAuthManager
+from lib import device_registration
 from lib import library_repair
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('default')
 
-_on_connected = None
+def _on_connected():
+    # Best-effort, on a background thread -- one Chronicle POST, nothing this UI flow should wait
+    # for. See lib/device_registration.py.
+    threading.Thread(target=device_registration.register, name='chronicle-device-register', daemon=True).start()
+
 
 _ui = ConnectionUi(ADDON, log, ChronicleClient, lambda base_url: DeviceAuthManager(base_url=base_url), _on_connected)
 

@@ -16,20 +16,30 @@ class TestDeviceRegistration(unittest.TestCase):
         p = mock.patch.object(device_registration, 'ChronicleClient', mock.Mock(return_value=self.client))
         p.start()
         self.addCleanup(p.stop)
+        self.labels = {'System.FriendlyName': 'Vision', 'System.BuildVersion': '21.1 (21.1.0) Git:x'}
+        p = mock.patch.object(xbmc, 'getInfoLabel', side_effect=lambda k: self.labels.get(k, ''))
+        p.start()
+        self.addCleanup(p.stop)
+        self.addon = mock.MagicMock()
+        self.addon.getAddonInfo.side_effect = lambda k: {
+            'name': 'Chronicle Scraper (Movies)', 'id': 'script.chronicle.scraper.movie', 'version': '3.25.0'}[k]
+        p = mock.patch.object(device_registration.xbmcaddon, 'Addon', return_value=self.addon)
+        p.start()
+        self.addCleanup(p.stop)
 
-    def test_registers_by_name_only(self):
-        with mock.patch.object(xbmc, 'getInfoLabel', return_value='Downstairs Shield'):
-            device_registration.register()
-        self.client.register_device.assert_called_once_with('Downstairs Shield')
+    def test_registers_the_device_the_addon_its_version_and_the_kodi_build(self):
+        device_registration.register()
+        self.client.register_device.assert_called_once_with(
+            'Vision', 'Chronicle Scraper (Movies)', 'script.chronicle.scraper.movie', '3.25.0', '21.1 (21.1.0) Git:x')
 
-    def test_a_blank_name_is_registered_as_kodi(self):
-        with mock.patch.object(xbmc, 'getInfoLabel', return_value=''):
-            device_registration.register()
-        self.client.register_device.assert_called_once_with('Kodi')
+    def test_a_blank_device_name_is_registered_as_kodi_and_a_blank_build_as_empty(self):
+        self.labels = {}
+        device_registration.register()
+        args = self.client.register_device.call_args[0]
+        self.assertEqual((args[0], args[4]), ('Kodi', ''))
 
     def test_nothing_about_the_device_address_or_login_is_read(self):
-        with mock.patch.object(xbmc, 'getInfoLabel', return_value='Shield'), \
-                mock.patch.object(xbmc, 'executeJSONRPC') as rpc:
+        with mock.patch.object(xbmc, 'executeJSONRPC') as rpc:
             device_registration.register()
         rpc.assert_not_called()
         self.assertFalse(hasattr(device_registration, 'socket'))

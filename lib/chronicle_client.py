@@ -318,36 +318,38 @@ class ChronicleClient:
             'get_refresh_signal()', timeout=10)
         return (result or {}).get('items') or []
 
-    def register_device(self, name: str):
-        """POST /api/v1/scraper/devices/kodi/register -- tells Chronicle this Kodi instance exists
-        (its name; the server notes the address the request came from). Chronicle never calls a
-        device, so no address, port or login is sent: all the row is for is letting
-        report_kodi_id() and the refresh signal tell this device's library ids apart from another
-        Kodi's. Best-effort: failures are logged and swallowed, same as every other client call
-        here -- registration is repeated at the next service start."""
+    def register_device(self, name: str, addon_name: str = '', addon_id: str = '', addon_version: str = '',
+                        kodi_version: str = ''):
+        """POST /api/v1/scraper/devices/kodi/register -- tells Chronicle this Kodi install exists and which
+        add-on is saying so: the device's name, this add-on's name, id and version, and the Kodi build (the
+        server notes the address the request came from). Each add-on has its own API key and so its own row;
+        these fields make it obvious which is which. Chronicle never calls a device, so no address, port or
+        login is sent. Best-effort: failures are logged and swallowed, same as every other client call here --
+        registration is repeated at the next service start."""
         if not self._base_url or not self._api_key:
             return
         url = '{0}/api/v1/scraper/devices/kodi/register'.format(self._base_url)
-        data = json.dumps({'name': name}).encode('utf-8')
+        data = json.dumps({'name': name, 'addonName': addon_name, 'addonId': addon_id,
+                           'addonVersion': addon_version, 'kodiVersion': kodi_version}).encode('utf-8')
         req = self._build_request(url, data=data, method='POST')
 
         def _do():
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return resp.status
 
+        label = 'register_device({0!r}, {1!r} {2})'.format(name, addon_id, addon_version)
         try:
             status = call_with_timeout(_do, 10)
             if status == 200:
-                log.info('register_device({0!r}): registered with Chronicle'.format(name))
+                log.info('{0}: registered with Chronicle'.format(label))
             else:
-                log.warning('register_device({0!r}): unexpected HTTP {1}'.format(name, status))
+                log.warning('{0}: unexpected HTTP {1}'.format(label, status))
         except urllib.error.HTTPError as exc:
-            log.warning('register_device({0!r}): Chronicle returned HTTP {1} ({2})'.format(
-                        name, exc.code, exc.reason))
+            log.warning('{0}: Chronicle returned HTTP {1} ({2})'.format(label, exc.code, exc.reason))
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            log.warning('register_device({0!r}): Chronicle not reachable ({1})'.format(name, exc))
+            log.warning('{0}: Chronicle not reachable ({1})'.format(label, exc))
         except Exception as exc:
-            log.warning('register_device({0!r}): unexpected error: {1}'.format(name, exc))
+            log.warning('{0}: unexpected error: {1}'.format(label, exc))
 
     def push_watched(self, media_item_id: int, timestamp_iso):
         """POST /api/v1/scrobble -- imports Kodi's own local watched status into Chronicle

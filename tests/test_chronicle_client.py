@@ -217,8 +217,10 @@ class TestBestEffortPosts(_Net):
              {'mediaItemId': 7, 'progressPercent': 42.5, 'timestamp': '2026-10-01T00:00:00Z'}),
         ]
         if hasattr(c, 'register_device'):
-            cases.append(('register_device', ('Shield',), '/api/v1/scraper/devices/kodi/register',
-                          {'name': 'Shield'}))
+            cases.append(('register_device', ('Shield', 'Chronicle Scraper (Movies)', 'script.chronicle.scraper.movie', '3.25.0', '21.1'),
+                          '/api/v1/scraper/devices/kodi/register',
+                          {'name': 'Shield', 'addonName': 'Chronicle Scraper (Movies)', 'addonId': 'script.chronicle.scraper.movie',
+                           'addonVersion': '3.25.0', 'kodiVersion': '21.1'}))
         return [case for case in cases if hasattr(c, case[0])]
 
     def test_each_posts_the_documented_body(self):
@@ -239,11 +241,12 @@ class TestBestEffortPosts(_Net):
                 self._urlopen(outcome)
                 getattr(c, method)(*args)   # must not raise
 
-    def test_registration_sends_the_name_and_nothing_about_the_device_address(self):
+    def test_registration_sends_who_is_asking_and_nothing_about_the_device_address(self):
         c, _ = _client()
         calls = self._urlopen(_Resp(b'', status=200))
-        c.register_device('Shield')
-        self.assertEqual(json.loads(calls[0][0].data), {'name': 'Shield'})
+        c.register_device('Shield', 'Chronicle Scraper (Movies)', 'script.chronicle.scraper.movie', '3.25.0', '21.1')
+        sent = json.loads(calls[0][0].data)
+        self.assertEqual(sorted(sent), ['addonId', 'addonName', 'addonVersion', 'kodiVersion', 'name'])
 
     def test_push_without_timestamp_omits_it(self):
         c, _ = _client()
