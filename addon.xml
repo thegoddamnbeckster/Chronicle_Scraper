@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.25.0"
+       version="3.25.1"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,9 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.25.0 - Chronicle's device list now says which add-on each row is. Registration sends the device name, this add-on's name, id and version and the Kodi build (still no address, port or login). Chronicle shows one row per add-on, named for example "Vision - Chronicle Scraper (Movies)".
+    <news>v3.25.1 - FIX: the movie scraper failed every lookup with "cannot import name recent_play" (a stray import line at the top of the scraper script, added in 3.24.1, ran before the add-on's files could be found). Removed it.
+
+v3.25.0 - Chronicle's device list now says which add-on each row is. Registration sends the device name, this add-on's name, id and version and the Kodi build (still no address, port or login). Chronicle shows one row per add-on, named for example "Vision - Chronicle Scraper (Movies)".
 
 v3.24.2 - FIX: the watch history sync no longer rewrites the same episode thumbnails on every pass. Kodi reports a stored image address in a wrapped form, so it never matched Chronicle's plain address and about 3,000 episodes had their art written again each time; the two are now compared as the same address. Also, the add-on's log no longer shows the Chronicle API key: any "api_key" value in a logged line is replaced by ***.
 

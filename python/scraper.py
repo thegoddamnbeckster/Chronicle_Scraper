@@ -1,5 +1,4 @@
-
-from lib import recent_play# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Kodi metadata-scraper entry point (xbmc.metadata.scraper.movies).
 
 Real Kodi Python-scraper contract, confirmed against Team Kodi's own
