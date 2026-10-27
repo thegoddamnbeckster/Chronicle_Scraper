@@ -21,22 +21,28 @@ import traceback
 
 import xbmcgui
 
+from lib.connection_health import UNAUTHORIZED
 from lib.http_core import find_shared_chronicle_url, is_loopback, normalize_base_url
+
+# Shown in the Settings status line when Chronicle answers 401/403 to this add-on's key.
+REJECTED_STATUS = 'Not connected - Chronicle rejected the API key. Choose Edit Connection to reconnect.'
 
 # Every string id the flow reads, so each add-on's build can be checked for them (see the tests).
 STRING_IDS = (32000, 32002, 32012, 32020, 32021, 32060, 32081, 32082, 32083, 32111, 32120)
 
 
 class ConnectionUi:
-    def __init__(self, addon, log, client_factory, device_auth_factory, on_connected=None):
+    def __init__(self, addon, log, client_factory, device_auth_factory, on_connected=None, health=None):
         """addon: the add-on's xbmcaddon.Addon. client_factory(): a ChronicleClient. device_auth_factory(base_url): a
         DeviceAuthManager whose run() returns True once an API key was saved. on_connected(): optional, called after a successful
-        connect (the movie scraper registers the device with Chronicle)."""
+        connect (the movie scraper registers the device with Chronicle). health: the add-on's ConnectionHealth, so the status line can
+        say the key was rejected instead of showing the last name that worked."""
         self._addon = addon
         self._log = log
         self._client_factory = client_factory
         self._device_auth_factory = device_auth_factory
         self._on_connected = on_connected
+        self._health = health
 
     def _text(self, string_id):
         return self._addon.getLocalizedString(string_id)
@@ -57,6 +63,9 @@ class ConnectionUi:
             return
 
         user = self._client_factory().get_current_user()
+        if self._health is not None and self._health.current_problem() == UNAUTHORIZED:
+            addon.setSetting('auth_status', REJECTED_STATUS)
+            return
         name = None
         if user:
             name = user.get('displayName') or user.get('username')

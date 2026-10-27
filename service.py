@@ -26,6 +26,7 @@ from lib import pass_progress
 from lib import recent_play
 from lib import scan_progress
 from lib import status_display
+from lib import sync_baton
 from lib import kodi_scan_signal
 from lib import watch_rating_sync
 from lib.chronicle_client import ChronicleClient
@@ -147,7 +148,22 @@ class ChronicleMonitor(xbmc.Monitor):
         return False
 
 
+    def _hold_baton(self, what):
+        """The turn-taking with every other background sync on this Kodi (the TV add-on's included): see lib/sync_baton.py. Re-entrant
+        within a thread, so a thread that holds it across several passes keeps its place."""
+        return sync_baton.hold(sync_baton.owner_id(ADDON.getAddonInfo('id')), what, log, is_aborted=self.abortRequested)
+
     def _watch_rating_pass(self, trigger_label, is_cancelled=None):
+        with self._hold_baton('the watch/rating sync') as got:
+            if got:
+                self._watch_rating_pass_held(trigger_label, is_cancelled)
+
+    def _collection_art_pass(self, trigger_label, is_cancelled=None):
+        with self._hold_baton('the collection art sync') as got:
+            if got:
+                self._collection_art_pass_held(trigger_label, is_cancelled)
+
+    def _watch_rating_pass_held(self, trigger_label, is_cancelled=None):
         """One watch_rating_sync.run() pass with its on-screen progress and notification. The
         caller holds _watch_rating_lock."""
         # Opened the moment the pass starts and kept up to date through it (see lib/pass_progress.py):
@@ -182,7 +198,7 @@ class ChronicleMonitor(xbmc.Monitor):
         finally:
             progress.finish()
 
-    def _collection_art_pass(self, trigger_label, is_cancelled=None):
+    def _collection_art_pass_held(self, trigger_label, is_cancelled=None):
         """One collection_art_sync.run() pass. The caller holds _collection_art_lock. Nothing is
         shown unless Chronicle had a collection to compare, and only a change is announced."""
         bg = None
@@ -336,31 +352,39 @@ class ChronicleMonitor(xbmc.Monitor):
             try:
                 if not _wait_until_quiet():
                     return
-
-                # Each pass stops if a fresh scan/scrape starts mid-way (checked per item), so it
-                # never competes with new scan activity for the same share and CPU.
-                if self._watch_rating_lock.acquire(False):
-                    try:
-                        self._watch_rating_pass(trigger_label, is_cancelled=_busy)
-                    finally:
-                        self._watch_rating_lock.release()
-                else:
-                    log.info('service: post-scan watch/rating sync skipped -- another pass is running')
-
-                if not _wait_until_quiet():
-                    return
-                if self._collection_art_lock.acquire(False):
-                    try:
-                        self._collection_art_pass(trigger_label, is_cancelled=_busy)
-                    finally:
-                        self._collection_art_lock.release()
-                else:
-                    log.info('service: post-scan collection art sync skipped -- another pass is running')
-                self._post_scan_last_completed_at = time.time()
+                # One task, taken in turn with the other add-ons' syncs and kept for both passes below so nothing slips between them.
+                with self._hold_baton('the post-scan sync') as got:
+                    if got:
+                        _passes()
             except Exception as exc:
                 log.error('service: post-scan pass ({0}) failed: {1}'.format(trigger_label, exc))
             finally:
                 self._post_scan_lock.release()
+
+        def _passes():
+            # Having waited for its turn, the library may have gone busy again.
+            if not _wait_until_quiet():
+                return
+            # Each pass stops if a fresh scan/scrape starts mid-way (checked per item), so it
+            # never competes with new scan activity for the same share and CPU.
+            if self._watch_rating_lock.acquire(False):
+                try:
+                    self._watch_rating_pass(trigger_label, is_cancelled=_busy)
+                finally:
+                    self._watch_rating_lock.release()
+            else:
+                log.info('service: post-scan watch/rating sync skipped -- another pass is running')
+
+            if not _wait_until_quiet():
+                return
+            if self._collection_art_lock.acquire(False):
+                try:
+                    self._collection_art_pass(trigger_label, is_cancelled=_busy)
+                finally:
+                    self._collection_art_lock.release()
+            else:
+                log.info('service: post-scan collection art sync skipped -- another pass is running')
+            self._post_scan_last_completed_at = time.time()
 
         threading.Thread(target=_do, name='chronicle-post-scan-pass', daemon=True).start()
 

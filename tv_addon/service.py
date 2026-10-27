@@ -32,6 +32,7 @@ from lib import full_sync_check
 from lib import install_marker
 from lib import kodi_scan_signal
 from lib import pass_progress
+from lib import sync_baton
 from lib.chronicle_client import ChronicleClient
 from lib.logger import Logger
 
@@ -141,25 +142,30 @@ class ChronicleTVMonitor(xbmc.Monitor):
                     if self.waitForAbort(_FULL_SYNC_CHECK_DEFER_POLL_SECONDS):
                         return
 
-                log.info('service: starting full sync-check ({0})'.format(trigger_label))
-                # This pass writes corrections into the library, which makes Kodi's screens refresh;
-                # the corner progress says so from the first moment (lib/pass_progress.py).
-                progress = pass_progress.PassProgress(
-                    ADDON.getLocalizedString(32186), ADDON.getLocalizedString(32187), log)
-                progress.start()
-                try:
-                    # Also stops the sweep if a fresh scan/scrape starts mid-pass -- see the Movies
-                    # addon's own identical comment for why.
-                    result = full_sync_check.run(
-                        is_cancelled=lambda: self.abortRequested() or
-                            self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)),
-                        progress_callback=progress.update)
-                finally:
-                    progress.finish()
-                log.info('service: full sync-check ({0}) complete -- {1}'.format(
-                         trigger_label, result))
-                self._notify_full_sync_check_result(result)
-                self._full_sync_check_last_completed_at = time.time()
+                # Takes its turn with the movie add-on's syncs (lib/sync_baton.py): one background task at a time on this Kodi.
+                with sync_baton.hold(sync_baton.owner_id(ADDON.getAddonInfo('id')), 'the episode check', log,
+                                     is_aborted=self.abortRequested) as got:
+                    if not got:
+                        return
+                    log.info('service: starting full sync-check ({0})'.format(trigger_label))
+                    # This pass writes corrections into the library, which makes Kodi's screens refresh;
+                    # the corner progress says so from the first moment (lib/pass_progress.py).
+                    progress = pass_progress.PassProgress(
+                        ADDON.getLocalizedString(32186), ADDON.getLocalizedString(32187), log)
+                    progress.start()
+                    try:
+                        # Also stops the sweep if a fresh scan/scrape starts mid-pass -- see the Movies
+                        # addon's own identical comment for why.
+                        result = full_sync_check.run(
+                            is_cancelled=lambda: self.abortRequested() or
+                                self._should_defer_for_active_scan('full sync-check ({0})'.format(trigger_label)),
+                            progress_callback=progress.update)
+                    finally:
+                        progress.finish()
+                    log.info('service: full sync-check ({0}) complete -- {1}'.format(
+                             trigger_label, result))
+                    self._notify_full_sync_check_result(result)
+                    self._full_sync_check_last_completed_at = time.time()
             except Exception as exc:
                 log.error('service: full sync-check ({0}) failed: {1}'.format(trigger_label, exc))
             finally:

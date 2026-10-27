@@ -53,8 +53,44 @@ def api_headers(api_key, agent, json_body=True):
     return headers
 
 
+# Who is told how each request went: set_observer(fn) with fn(kind, detail=None), kind 'ok', 'http' (detail = the status code) or
+# 'unreachable' (detail = the exception). connection_health uses it to warn the user when an add-on is not really talking to Chronicle.
+_observer = None
+
+
+def set_observer(fn):
+    """Registers the function told the outcome of every call_with_timeout (None removes it)."""
+    global _observer
+    _observer = fn
+
+
+def _observe(kind, detail=None):
+    observer = _observer
+    if observer is None:
+        return
+    try:
+        observer(kind, detail)
+    except Exception:  # noqa: BLE001 -- watching a request must never change its outcome
+        pass
+
+
 def call_with_timeout(fn, timeout):
-    """Runs fn() and returns its result, raising TimeoutError if it has not finished after timeout + the watchdog grace."""
+    """Runs fn() and returns its result, raising TimeoutError if it has not finished after timeout + the watchdog grace. The outcome
+    is reported to the observer (see set_observer)."""
+    try:
+        value = _call_with_timeout(fn, timeout)
+    except urllib.error.HTTPError as exc:
+        _observe('http', exc.code)
+        raise
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        _observe('unreachable', exc)
+        raise
+    _observe('ok')
+    return value
+
+
+def _call_with_timeout(fn, timeout):
+    """Runs fn() on a daemon thread, with the watchdog."""
     result = {}
 
     def _target():

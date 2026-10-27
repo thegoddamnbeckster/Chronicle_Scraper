@@ -28,8 +28,8 @@ _ADDONS = {
     'tv': (os.path.join(_SCRAPER, 'tv_addon'), None,
            {name: os.path.join(_SCRAPER, 'lib', name) for name in ('kodi_scan_signal.py', 'pass_progress.py', 'movie_art_sync.py', 'install_marker.py')}),
     'scrobbler': (os.path.join(_REPOS, 'Chronicle_Scrobbler'),
-                  ('logger.py', 'redact.py', 'http_core.py', 'device_name.py', 'device_auth.py', 'qr_dialog.py', 'connection_ui.py'), {}),
-    'rating': (os.path.join(_REPOS, 'Chronicle_Rating'), ('logger.py', 'redact.py', 'http_core.py'), {}),
+                  ('logger.py', 'redact.py', 'http_core.py', 'connection_health.py', 'device_name.py', 'device_auth.py', 'qr_dialog.py', 'connection_ui.py'), {}),
+    'rating': (os.path.join(_REPOS, 'Chronicle_Rating'), ('logger.py', 'redact.py', 'http_core.py', 'connection_health.py'), {}),
 }
 
 _IMPORT_SCRIPT = r'''

@@ -17,10 +17,12 @@ import xbmcaddon
 from lib import timeutil
 from lib.http_core import (
     call_with_retries, call_with_timeout, find_shared_chronicle_url as _find_shared_url, normalize_base_url, user_agent)
+from lib import connection_health
 from lib.logger import Logger
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('client')
+health = connection_health.install(ADDON, log)
 
 _USER_AGENT = user_agent(ADDON.getAddonInfo('id'))
 
@@ -81,7 +83,7 @@ class ChronicleClient:
         Returns {'id', 'title', 'year', 'posterUrl'} dict, or None on any
         failure (not configured, network error, Chronicle couldn't resolve it).
         """
-        if not self._base_url or not self._api_key:
+        if not health.not_configured(self._base_url, self._api_key):
             log.warning('Chronicle URL or API key not configured — search skipped')
             return None
 
@@ -136,7 +138,7 @@ class ChronicleClient:
     def search_show(self, title: str, year=None):
         """GET /api/v1/scraper/tv/search?title=&year= -- same resolve-or-create
         pattern as search_movie(), for the show itself only."""
-        if not self._base_url or not self._api_key:
+        if not health.not_configured(self._base_url, self._api_key):
             log.warning('Chronicle URL or API key not configured — search skipped')
             return None
 
@@ -153,7 +155,7 @@ class ChronicleClient:
         (a resolve-or-create by title + year, which invents a brand-new stub whenever the year Kodi
         reports doesn't match -- confirmed live 2026-09-26: Kodi's own year for "A Knight of the
         Seven Kingdoms" was another show's, so each lookup created a duplicate empty show)."""
-        if not self._base_url or not self._api_key:
+        if not health.not_configured(self._base_url, self._api_key):
             log.warning('Chronicle URL or API key not configured — resolve_show_by_external_id skipped')
             return None
 
@@ -201,7 +203,7 @@ class ChronicleClient:
         swallowed, same as every other client call here -- this is a nice-to-
         have that speeds up future scrapes, not something the current one
         depends on."""
-        if not self._base_url or not self._api_key:
+        if not health.not_configured(self._base_url, self._api_key):
             return
         url = '{0}/api/v1/scraper/movies/{1}/resolved-file'.format(self._base_url, media_item_id)
         data = json.dumps({'fileName': filename}).encode('utf-8')
@@ -235,7 +237,7 @@ class ChronicleClient:
         itself yet, e.g. remote control is off in Kodi's own Settings -- see
         lib/device_registration.py. Best-effort: failures are logged and swallowed, same as
         report_resolved_file()."""
-        if not self._base_url or not self._api_key:
+        if not health.not_configured(self._base_url, self._api_key):
             return
         url = '{0}/api/v1/scraper/report-kodi-id'.format(self._base_url)
         data = json.dumps({'mediaItemId': media_item_id, 'kind': kind, 'kodiId': kodi_id}).encode('utf-8')
@@ -270,7 +272,7 @@ class ChronicleClient:
         explicit "finished" call by design: the server-side flag simply expires a couple of
         minutes after the last heartbeat. Best-effort, same as report_kodi_id(): a failure here
         must never interrupt whatever scan/scrape is actually in progress."""
-        if not self._base_url or not self._api_key:
+        if not health.not_configured(self._base_url, self._api_key):
             return
         url = '{0}/api/v1/scraper/scan-active'.format(self._base_url)
         req = self._build_request(url, data=b'{}', method='POST')
@@ -326,7 +328,7 @@ class ChronicleClient:
         these fields make it obvious which is which. Chronicle never calls a device, so no address, port or
         login is sent. Best-effort: failures are logged and swallowed, same as every other client call here --
         registration is repeated at the next service start."""
-        if not self._base_url or not self._api_key:
+        if not health.not_configured(self._base_url, self._api_key):
             return
         url = '{0}/api/v1/scraper/devices/kodi/register'.format(self._base_url)
         data = json.dumps({'name': name, 'addonName': addon_name, 'addonId': addon_id,
@@ -357,7 +359,7 @@ class ChronicleClient:
         resolve_watched_direction). Sibling of push_resume, same reasoning: reuses the
         scrobble endpoint's own existing "most recent wins" guard server-side rather than
         duplicating it here. Best-effort: failures are logged and swallowed."""
-        if not self._base_url or not self._api_key:
+        if not health.not_configured(self._base_url, self._api_key):
             return
         url = '{0}/api/v1/scrobble'.format(self._base_url)
         payload = {
@@ -396,7 +398,7 @@ class ChronicleClient:
         endpoint's own existing "most recent wins" guard server-side rather than
         duplicating it here. Best-effort: failures are logged and swallowed,
         same as report_resolved_file()."""
-        if not self._base_url or not self._api_key:
+        if not health.not_configured(self._base_url, self._api_key):
             return
         url = '{0}/api/v1/scrobble'.format(self._base_url)
         payload = {
@@ -477,7 +479,7 @@ class ChronicleClient:
     def _get(self, path_or_url: str, log_label: str, full_url: bool = False, timeout: int = 20):
         """Shared GET helper: builds the request, parses the {success,data} envelope,
         logs and swallows any failure so callers just get None back."""
-        if not self._base_url or not self._api_key:
+        if not health.not_configured(self._base_url, self._api_key):
             log.warning('Chronicle URL or API key not configured — {0} skipped'.format(log_label))
             return None
 
@@ -513,7 +515,7 @@ class ChronicleClient:
         retry here too since all three of those endpoints are idempotent in effect (a repeated
         claim just claims more, never double-claims a single row; complete/release repeated on
         an already-completed/-released row is a no-op)."""
-        if not self._base_url or not self._api_key:
+        if not health.not_configured(self._base_url, self._api_key):
             log.warning('Chronicle URL or API key not configured — {0} skipped'.format(log_label))
             return None
 
