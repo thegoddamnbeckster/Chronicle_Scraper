@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.26.0"
+       version="3.26.1"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,9 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.26.0 - NEW: a warning on screen when this add-on is not really talking to Chronicle. A missing address or API key, a key Chronicle rejects (401/403) and a Chronicle that cannot be reached each raise a Kodi warning that says what to do, instead of the work carrying on as if all was well; the Settings status line now says when the key was rejected. And the syncs now take turns: the watch/rating sync, the collection art sync and the TV add-on's episode check run one after another, after the library scan, never at the same time.
+    <news>v3.26.1 - FIX: a new API key now takes effect at once, with no Kodi restart. After you reconnected, the running service kept sending the old key (its settings were read once at start-up) and every request was rejected with 401 until Kodi was restarted. The key and address are now read from the saved settings at each use, as are the sync on/off switches and intervals.
+
+v3.26.0 - NEW: a warning on screen when this add-on is not really talking to Chronicle. A missing address or API key, a key Chronicle rejects (401/403) and a Chronicle that cannot be reached each raise a Kodi warning that says what to do, instead of the work carrying on as if all was well; the Settings status line now says when the key was rejected. And the syncs now take turns: the watch/rating sync, the collection art sync and the TV add-on's episode check run one after another, after the library scan, never at the same time.
 
 v3.25.1 - FIX: the movie scraper failed every lookup with "cannot import name recent_play" (a stray import line at the top of the scraper script, added in 3.24.1, ran before the add-on's files could be found). Removed it.
 

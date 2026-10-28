@@ -3,6 +3,7 @@
 
 This file is identical in the movie and TV add-ons' test folders (their clients share most endpoints); methods one client lacks are skipped.
 """
+import contextlib
 import io
 import json
 import unittest
@@ -13,6 +14,13 @@ import tests.kodi_stubs  # noqa: F401
 
 from lib import chronicle_client, http_core
 from lib.chronicle_client import ChronicleClient
+
+
+@contextlib.contextmanager
+def _addon_patched(module, addon):
+    """Both ways the client reaches its settings: the module's ADDON and the fresh xbmcaddon.Addon() it opens for the key and address."""
+    with mock.patch.object(module, 'ADDON', addon), mock.patch.object(module.xbmcaddon, 'Addon', return_value=addon):
+        yield
 
 
 class _Resp:
@@ -33,7 +41,7 @@ class _Resp:
 def _client(url='chronicle:7979/', key='k'):
     addon = mock.MagicMock()
     addon.getSetting.side_effect = lambda k: {'chronicle_url': url, 'api_key': key}.get(k, '')
-    with mock.patch.object(chronicle_client, 'ADDON', addon):
+    with _addon_patched(chronicle_client, addon):
         c = ChronicleClient()
     return c, addon
 
@@ -74,7 +82,7 @@ class TestConnectionSettings(unittest.TestCase):
         c, addon = _client('chronicle:7979/', 'k1')
         self.assertEqual((c._base_url, c._api_key), ('http://chronicle:7979', 'k1'))
         addon.getSetting.side_effect = lambda k: {'chronicle_url': 'http://b', 'api_key': 'k2'}.get(k, '')
-        with mock.patch.object(chronicle_client, 'ADDON', addon):
+        with _addon_patched(chronicle_client, addon):
             c.refresh_settings()
         self.assertEqual((c._base_url, c._api_key), ('http://b', 'k2'))
 
@@ -266,7 +274,7 @@ class TestSharedUrl(unittest.TestCase):
     def test_uses_this_addons_id(self):
         addon = mock.MagicMock()
         addon.getAddonInfo.return_value = 'script.chronicle.scraper.movie'
-        with mock.patch.object(chronicle_client, 'ADDON', addon), \
+        with _addon_patched(chronicle_client, addon), \
                 mock.patch.object(chronicle_client, '_find_shared_url', return_value='http://x') as find:
             self.assertEqual(chronicle_client.find_shared_chronicle_url(), 'http://x')
         self.assertEqual(find.call_args[0][0], 'script.chronicle.scraper.movie')

@@ -49,6 +49,7 @@ class _Base(unittest.TestCase):
         outer = self
         for obj, name, new in (
                 (service, 'ADDON', self.addon),
+                (service.xbmcaddon, 'Addon', mock.Mock(return_value=self.addon)),
                 (service, 'ChronicleMonitor', mock.Mock(return_value=self.monitor)),
                 (service.threading, 'Thread', Thread),
                 (service.time, 'time', mock.Mock(side_effect=lambda: self.clock[0])),

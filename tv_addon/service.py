@@ -70,7 +70,7 @@ _DEFAULT_STARTUP_DELAY_SECONDS = 10
 
 def _startup_delay_seconds():
     try:
-        return max(0, ADDON.getSettingInt('startup_delay_seconds'))
+        return max(0, xbmcaddon.Addon().getSettingInt('startup_delay_seconds'))
     except Exception:
         return _DEFAULT_STARTUP_DELAY_SECONDS
 
@@ -114,7 +114,7 @@ class ChronicleTVMonitor(xbmc.Monitor):
         against Chronicle's current data (matched by file, not title/season/episode) and
         corrects only whatever disagrees. Guarded by _full_sync_check_lock so an onScanFinished
         firing again mid-pass can't overlap a previous one."""
-        if not ADDON.getSettingBool('full_sync_check_enabled'):
+        if not xbmcaddon.Addon().getSettingBool('full_sync_check_enabled'):
             return
         since_last = time.time() - self._full_sync_check_last_completed_at
         if since_last < _FULL_SYNC_CHECK_MIN_SECONDS_BETWEEN_RUNS:

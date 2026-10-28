@@ -27,6 +27,14 @@ health = connection_health.install(ADDON, log)
 _USER_AGENT = user_agent(ADDON.getAddonInfo('id'))
 
 
+def _read_connection():
+    """(base_url, api_key) as saved right now. A fresh xbmcaddon.Addon() every time: an Addon object made when the service started never
+    sees a key that the Settings page / device-auth flow saves later (Kodi caches settings per object), and the service would keep sending
+    the old key until Kodi was restarted."""
+    fresh = xbmcaddon.Addon()
+    return normalize_base_url(fresh.getSetting('chronicle_url')), fresh.getSetting('api_key')
+
+
 def find_shared_chronicle_url():
     """Another installed Chronicle add-on's saved server address, to pre-fill the "Edit Connection" prompt (see http_core)."""
     return _find_shared_url(ADDON.getAddonInfo('id'), log)
@@ -48,8 +56,7 @@ class ChronicleClient:
     """Talks to Chronicle's scraper-facing endpoints (api/v1/scraper/movies/*)."""
 
     def __init__(self):
-        self._base_url = normalize_base_url(ADDON.getSetting('chronicle_url'))
-        self._api_key  = ADDON.getSetting('api_key')
+        self._base_url, self._api_key = _read_connection()
 
     def refresh_settings(self):
         """Re-read URL and API key from addon settings.
@@ -57,8 +64,7 @@ class ChronicleClient:
         Call this after a device-auth flow completes so the client picks up
         the newly saved API key without needing to be reconstructed.
         """
-        self._base_url = normalize_base_url(ADDON.getSetting('chronicle_url'))
-        self._api_key  = ADDON.getSetting('api_key')
+        self._base_url, self._api_key = _read_connection()
 
     # ── scraper endpoints ────────────────────────────────────────────────────
 

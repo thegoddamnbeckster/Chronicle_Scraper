@@ -141,11 +141,17 @@ class ConnectionHealth:
             self._store.set(self._addon_id, '')
 
 
+def _saved_base_url():
+    """The saved Chronicle address, read through a fresh Addon object (an old one would not see a later change)."""
+    import xbmcaddon
+    return (xbmcaddon.Addon().getSetting('chronicle_url') or '').strip()
+
+
 def install(addon, log, base_url_getter=None):
     """Builds the ConnectionHealth for this add-on and makes it watch every http_core request. Returns it. base_url_getter: where the
     saved address is, when it is not this add-on's own chronicle_url setting (the rating add-on uses the scrobbler's)."""
     from lib import http_core
     health = ConnectionHealth(addon.getAddonInfo('id'), addon.getAddonInfo('name'), log,
-                              base_url_getter=base_url_getter or (lambda: (addon.getSetting('chronicle_url') or '').strip()))
+                              base_url_getter=base_url_getter or _saved_base_url)
     http_core.set_observer(health.observe)
     return health

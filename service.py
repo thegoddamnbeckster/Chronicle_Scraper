@@ -50,7 +50,7 @@ _DEFAULT_STARTUP_DELAY_SECONDS = 10
 
 def _startup_delay_seconds():
     try:
-        return max(0, ADDON.getSettingInt('startup_delay_seconds'))
+        return max(0, xbmcaddon.Addon().getSettingInt('startup_delay_seconds'))
     except Exception:
         return _DEFAULT_STARTUP_DELAY_SECONDS
 
@@ -314,7 +314,7 @@ class ChronicleMonitor(xbmc.Monitor):
         sync one after the other. Each touches Kodi only where it differs from Chronicle. A pass
         already running (the periodic one, say) is not run twice; a second onScanFinished within
         _POST_SCAN_MIN_SECONDS_BETWEEN_RUNS of a finished pass is skipped."""
-        if not ADDON.getSettingBool('full_sync_check_enabled'):
+        if not xbmcaddon.Addon().getSettingBool('full_sync_check_enabled'):
             return
         since_last = time.time() - self._post_scan_last_completed_at
         if since_last < _POST_SCAN_MIN_SECONDS_BETWEEN_RUNS:
@@ -435,7 +435,7 @@ def run():
     startup_sync_done = False
     last_watch_rating_sync = service_started_at
     last_watch_rating_check = 0.0  # forces the very first loop iteration to check
-    watch_rating_was_enabled = ADDON.getSettingBool('sync_watch_ratings_enabled')
+    watch_rating_was_enabled = xbmcaddon.Addon().getSettingBool('sync_watch_ratings_enabled')
 
     # Collection art sync timing state -- own anchor, same reasoning as watch/rating sync's own
     # started_at/was_enabled pair above, kept fully independent since the two features have
@@ -444,7 +444,7 @@ def run():
     collection_art_startup_done = False
     last_collection_art_sync = collection_art_started_at
     last_collection_art_check = 0.0  # forces the very first loop iteration to check
-    collection_art_was_enabled = ADDON.getSettingBool('sync_collections_enabled')
+    collection_art_was_enabled = xbmcaddon.Addon().getSettingBool('sync_collections_enabled')
 
     # Own anchor, deliberately not shared with service_started_at above -- that one gets reset
     # on a watch-rating off-to-on transition, which has nothing to do with this feature.
@@ -473,7 +473,7 @@ def run():
         now = time.time()
         if now - last_watch_rating_check >= _WATCH_RATING_CHECK_INTERVAL_SECONDS:
             last_watch_rating_check = now
-            watch_rating_enabled = ADDON.getSettingBool('sync_watch_ratings_enabled')
+            watch_rating_enabled = xbmcaddon.Addon().getSettingBool('sync_watch_ratings_enabled')
 
             if watch_rating_enabled and not watch_rating_was_enabled:
                 log.info('service: watch/rating sync re-enabled -- treating this as a fresh start')
@@ -487,12 +487,12 @@ def run():
                 # the one-time startup check on whichever single tick first noticed it.
                 if not startup_sync_done and now - service_started_at >= _startup_delay_seconds():
                     startup_sync_done = True
-                    if ADDON.getSettingBool('sync_on_kodi_start'):
-                        interval_seconds = max(30, ADDON.getSettingInt('sync_interval_minutes')) * 60
+                    if xbmcaddon.Addon().getSettingBool('sync_on_kodi_start'):
+                        interval_seconds = max(30, xbmcaddon.Addon().getSettingInt('sync_interval_minutes')) * 60
                         last_watch_rating_sync = _anchor_after_attempt(
                             now, interval_seconds, monitor.run_watch_rating_sync('startup'))
                 if startup_sync_done:
-                    interval_seconds = max(30, ADDON.getSettingInt('sync_interval_minutes')) * 60
+                    interval_seconds = max(30, xbmcaddon.Addon().getSettingInt('sync_interval_minutes')) * 60
                     if now - last_watch_rating_sync >= interval_seconds:
                         last_watch_rating_sync = _anchor_after_attempt(
                             now, interval_seconds, monitor.run_watch_rating_sync('scheduled'))
@@ -506,7 +506,7 @@ def run():
         # collection_art_started_at's own doc for why.
         if now - last_collection_art_check >= _WATCH_RATING_CHECK_INTERVAL_SECONDS:
             last_collection_art_check = now
-            collection_art_enabled = ADDON.getSettingBool('sync_collections_enabled')
+            collection_art_enabled = xbmcaddon.Addon().getSettingBool('sync_collections_enabled')
 
             if collection_art_enabled and not collection_art_was_enabled:
                 log.info('service: collection art sync re-enabled -- treating this as a fresh start')
@@ -518,12 +518,12 @@ def run():
                 if not collection_art_startup_done and \
                         now - collection_art_started_at >= _startup_delay_seconds():
                     collection_art_startup_done = True
-                    if ADDON.getSettingBool('sync_collections_on_kodi_start'):
-                        interval_seconds = max(30, ADDON.getSettingInt('sync_collections_interval_minutes')) * 60
+                    if xbmcaddon.Addon().getSettingBool('sync_collections_on_kodi_start'):
+                        interval_seconds = max(30, xbmcaddon.Addon().getSettingInt('sync_collections_interval_minutes')) * 60
                         last_collection_art_sync = _anchor_after_attempt(
                             now, interval_seconds, monitor.run_collection_art_sync('startup'))
                 if collection_art_startup_done:
-                    interval_seconds = max(30, ADDON.getSettingInt('sync_collections_interval_minutes')) * 60
+                    interval_seconds = max(30, xbmcaddon.Addon().getSettingInt('sync_collections_interval_minutes')) * 60
                     if now - last_collection_art_sync >= interval_seconds:
                         last_collection_art_sync = _anchor_after_attempt(
                             now, interval_seconds, monitor.run_collection_art_sync('scheduled'))

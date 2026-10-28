@@ -32,8 +32,8 @@ class _Base(unittest.TestCase):
         self.addon.getSettingBool.return_value = True
         self.dialog = mock.MagicMock()
         self.scanning = [False]
-        for target, new in (('ADDON', self.addon),):
-            p = mock.patch.object(service, target, new)
+        for obj, target, new in ((service, 'ADDON', self.addon), (service.xbmcaddon, 'Addon', mock.Mock(return_value=self.addon))):
+            p = mock.patch.object(obj, target, new)
             p.start()
             self.addCleanup(p.stop)
         p = mock.patch.object(service.xbmcgui, 'Dialog', return_value=self.dialog)
