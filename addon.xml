@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.26.2"
+       version="3.26.3"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,9 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.26.2 - FIX: the watch/rating sync no longer rewrites items that already match. When Kodi and Chronicle held the same watch time, the sync still pushed the watched state back on every pass, so hundreds of items (thousands counting episodes) were reported as changed each time though nothing differed. It now leaves an item alone when both sides agree and only writes when something differs (a leftover resume bookmark still gets cleared).
+    <news>v3.26.3 - FIX: a film Kodi read with the impossible year 65535 (a premiered date of "65535-11-30") kept it however often the sync "applied" the right year, so the same handful of films were reported as changed on every pass. Kodi takes a movie's year from its premiered date and ignores a year sent alone; the sync now corrects the date together with the year (Chronicle's own date when it has one, else 1 January of that year).
+
+v3.26.2 - FIX: the watch/rating sync no longer rewrites items that already match. When Kodi and Chronicle held the same watch time, the sync still pushed the watched state back on every pass, so hundreds of items (thousands counting episodes) were reported as changed each time though nothing differed. It now leaves an item alone when both sides agree and only writes when something differs (a leftover resume bookmark still gets cleared).
 
 v3.26.1 - FIX: a new API key now takes effect at once, with no Kodi restart. After you reconnected, the running service kept sending the old key (its settings were read once at start-up) and every request was rejected with 401 until Kodi was restarted. The key and address are now read from the saved settings at each use, as are the sync on/off switches and intervals.
 

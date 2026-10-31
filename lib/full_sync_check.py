@@ -153,6 +153,11 @@ def diff_movie(kodi_item, details):
     premiered = details.get('premiered')
     if premiered and kodi_item.get('premiered') != premiered[:10]:
         updates['premiered'] = premiered[:10]
+    # Kodi derives a movie's year from its premiered date and ignores a year sent alone: a film Kodi read as
+    # "65535-11-30" kept year 65535 however often the year was "applied" (every pass, reported 2026-10-31). When the year is
+    # being corrected, the date has to agree with it, and a Jan 1 stands in when Chronicle has no full date.
+    if 'year' in updates and 'premiered' not in updates             and (kodi_item.get('premiered') or '')[:4] != str(updates['year']):
+        updates['premiered'] = '{0}-01-01'.format(updates['year'])
 
     # List fields compared as sets, not ordered lists -- Kodi's own VideoLibrary.GetMovies
     # array-typed properties are not guaranteed to read back in the same order they were

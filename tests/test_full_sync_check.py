@@ -217,6 +217,23 @@ class TestImpossibleYear(unittest.TestCase):
         kodi = _kodi_item(year=65535, file='smb://n/Movies/X (2014)/X (2014).mkv')
         self.assertEqual(diff_movie(kodi, _chronicle_details(year=2016))['year'], 2016)
 
+    def test_the_date_is_corrected_with_the_year_because_kodi_ignores_a_year_sent_alone(self):
+        # Reported 2026-10-31: "65535-11-30" kept its year however often the year was applied.
+        kodi = _kodi_item(year=65535, premiered='65535-11-30', file='smb://n/Movies/X (2023)/X (2023).mkv')
+        updates = diff_movie(kodi, _chronicle_details(year=None))
+        self.assertEqual((updates['year'], updates['premiered']), (2023, '2023-01-01'))
+
+    def test_chronicles_own_date_is_used_when_it_has_one(self):
+        kodi = _kodi_item(year=65535, premiered='65535-11-30', file='smb://n/Movies/X (2023)/X (2023).mkv')
+        updates = diff_movie(kodi, _chronicle_details(year=2023, premiered='2023-02-15T00:00:00Z'))
+        self.assertEqual(updates['premiered'], '2023-02-15')
+
+    def test_a_matching_year_and_date_produce_no_update_so_the_sync_settles(self):
+        kodi = _kodi_item(year=2023, premiered='2023-01-01', file='smb://n/Movies/X (2023)/X (2023).mkv')
+        updates = diff_movie(kodi, _chronicle_details(year=2023, premiered=None))
+        self.assertNotIn('year', updates)
+        self.assertNotIn('premiered', updates)
+
     def test_a_plausible_kodi_year_is_left_alone_when_chronicle_has_none(self):
         kodi = _kodi_item(year=1984, file='smb://n/Movies/X (2014)/X (2014).mkv')
         self.assertNotIn('year', diff_movie(kodi, _chronicle_details(year=None)))
