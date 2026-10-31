@@ -194,6 +194,12 @@ def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item
 
     if _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_watched_at):
         return 'pull', kodi_lastplayed
+    # Both sides already hold this same play: nothing to reconcile, unless Kodi still carries a resume bookmark on
+    # it (the push is what clears that). Without this an equal pair always fell through to 'push', so every pass
+    # re-wrote identical playcount/lastplayed/resume and logged it as a change -- 500+ movies and thousands of
+    # episodes "applied" on every pass (reported 2026-10-31).
+    if not _kodi_lastplayed_is_older(kodi_lastplayed, chronicle_watched_at)             and not ((kodi_item.get('resume') or {}).get('position') or 0) > 0:
+        return None, None
     return 'push', chronicle_watched_at
 
 
@@ -276,6 +282,11 @@ def _parse_iso_time(s):
     instant (UTC 'Z', or in this device's zone with its offset); comparing its digits to Kodi's local digits
     directly was the six-hour error described in lib/timeutil.py."""
     return timeutil.chronicle_iso_to_local(s) or datetime.min
+
+
+def _kodi_lastplayed_is_older(kodi_lastplayed, chronicle_last_iso):
+    """True if Kodi's lastplayed is strictly OLDER than Chronicle's (equal is neither older nor newer)."""
+    return _parse_kodi_time(kodi_lastplayed) < _parse_iso_time(chronicle_last_iso)
 
 
 def _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_last_iso):

@@ -54,6 +54,12 @@ class TestWatchedDirection(unittest.TestCase):
         self.assertEqual(ps.resolve_watched_direction(True, CHRONICLE_AT, _kodi()), ('push', CHRONICLE_AT))
         self.assertEqual(ps.resolve_watched_direction(False, None, _kodi()), (None, None))
 
+    def test_the_same_play_on_both_sides_is_left_alone(self):
+        # Reported 2026-10-31: equal times fell through to 'push', so every pass re-wrote identical values.
+        same = '2026-10-01 12:00:00'
+        chronicle = ps.timeutil.kodi_local_to_iso(same)
+        self.assertEqual(ps.resolve_watched_direction(True, chronicle, _kodi(playcount=1, lastplayed=same)), (None, None))
+
     def test_a_playcount_without_a_play_time_is_not_a_watch(self):
         self.assertEqual(ps.resolve_watched_direction(False, None, _kodi(playcount=1, lastplayed='')), (None, None))
 

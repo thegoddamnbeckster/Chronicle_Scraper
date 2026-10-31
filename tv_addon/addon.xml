@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.tv"
        name="Chronicle Scraper (TV)"
-       version="1.23.1"
+       version="1.23.2"
        provider-name="Michael Beck">
 
   <requires>
@@ -58,7 +58,9 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (TV)</summary>
     <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. The corner status indicator lives in the Movies addon and covers both movies and TV shows together; this addon doesn't duplicate it. Neither addon writes a local NFO file of any kind -- Chronicle's own API is the source of truth both scrapers read from directly. It does have its own small background service that keeps Kodi's library in sync with newly-imported content, independent of the Movies addon -- see this version's changelog.</description>
-    <news>v1.23.1 - FIX: a new API key now takes effect at once, with no Kodi restart. After you reconnected, the running service kept sending the old key (its settings were read once at start-up) and every request was rejected with 401 until Kodi was restarted. The key and address are now read from the saved settings at each use, as are the sync on/off switches and intervals.
+    <news>v1.23.2 - FIX: the watch/rating sync no longer rewrites items that already match. When Kodi and Chronicle held the same watch time, the sync still pushed the watched state back on every pass, so hundreds of items (thousands counting episodes) were reported as changed each time though nothing differed. It now leaves an item alone when both sides agree and only writes when something differs (a leftover resume bookmark still gets cleared).
+
+v1.23.1 - FIX: a new API key now takes effect at once, with no Kodi restart. After you reconnected, the running service kept sending the old key (its settings were read once at start-up) and every request was rejected with 401 until Kodi was restarted. The key and address are now read from the saved settings at each use, as are the sync on/off switches and intervals.
 
 v1.23.0 - NEW: a warning on screen when this add-on is not really talking to Chronicle. A missing address or API key, a key Chronicle rejects (401/403) and a Chronicle that cannot be reached each raise a Kodi warning that says what to do, instead of the work carrying on as if all was well; the Settings status line now says when the key was rejected. And the syncs now take turns: the watch/rating sync, the collection art sync and the TV add-on's episode check run one after another, after the library scan, never at the same time.
 
