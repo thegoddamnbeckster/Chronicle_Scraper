@@ -438,14 +438,17 @@ class ChronicleClient:
         return self._get('/api/v1/users/me', 'get_current_user()', timeout=5)
 
     def test_connection(self):
-        """GET /api/health — verify connectivity and API key.
+        """GET /api/v1/users/me — verify connectivity AND the API key (/api/health answers without a key, so it would pass with a bad one).
 
         Returns a (success: bool, message: str) tuple.
         """
         if not self._base_url:
             return False, 'Chronicle URL is not configured.'
 
-        url = '{0}/api/health'.format(self._base_url)
+        if not self._api_key:
+            return False, 'No API key is saved. Choose Edit Connection to connect.'
+
+        url = '{0}/api/v1/users/me'.format(self._base_url)
         req = self._build_request(url)
 
         def _do():
@@ -458,6 +461,8 @@ class ChronicleClient:
                 return True, ''
             return False, 'Unexpected HTTP {0}'.format(status)
         except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                return False, 'Chronicle rejected the API key saved on this device (HTTP {0}). Choose Edit Connection to reconnect.'.format(exc.code)
             return False, 'HTTP {0}: {1}'.format(exc.code, exc.reason)
         except Exception as exc:
             return False, str(exc)

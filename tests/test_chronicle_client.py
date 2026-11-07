@@ -290,12 +290,18 @@ class TestBestEffortPosts(_Net):
 class TestConnectionTest(_Net):
     def test_results(self):
         c, _ = _client()
-        self._urlopen(_Resp(b'', status=200))
+        calls = self._urlopen(_Resp(b'', status=200))
         self.assertEqual(c.test_connection(), (True, ''))
+        # /api/health answers without a key, so only an authenticated call can prove the key is accepted
+        self.assertTrue(calls[0][0].full_url.endswith('/api/v1/users/me'))
         self._urlopen(_Resp(b'', status=204))
         self.assertEqual(c.test_connection(), (False, 'Unexpected HTTP 204'))
         self._urlopen(_http_error(401))
-        self.assertEqual(c.test_connection(), (False, 'HTTP 401: reason'))
+        ok, message = c.test_connection()
+        self.assertFalse(ok)
+        self.assertIn('rejected the API key saved on this device', message)
+        self.assertIn('Edit Connection', message)
+        self.assertEqual(_client('u', '')[0].test_connection()[1], 'No API key is saved. Choose Edit Connection to connect.')
         self._urlopen(urllib.error.URLError('refused'))
         ok, message = c.test_connection()
         self.assertFalse(ok)
