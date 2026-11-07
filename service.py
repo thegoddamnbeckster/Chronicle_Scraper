@@ -119,7 +119,6 @@ class ChronicleMonitor(xbmc.Monitor):
         self._post_scan_last_completed_at = 0.0
         # True between Kodi's onCleanStarted and onCleanFinished, so the corner status can say so.
         self.cleaning = False
-        self._defer_notice_shown = False
 
     def _should_defer_for_active_scan(self, task_label):
         """True if either Kodi's own library scan (Library.IsScanning) or EITHER addon's own
@@ -135,16 +134,7 @@ class ChronicleMonitor(xbmc.Monitor):
         if kodi_scanning or scraper_active:
             log.info('service: {0} deferred -- {1} still in progress'.format(
                      task_label, 'a Kodi library scan' if kodi_scanning else 'scraper activity'))
-            # Say so on screen ONCE per busy period (re-armed when the library goes idle): a task that
-            # quietly does nothing looks broken, but repeating it for hours of scan is just noise.
-            if not self._defer_notice_shown:
-                self._defer_notice_shown = True
-                xbmcgui.Dialog().notification(
-                    ADDON.getLocalizedString(32000),
-                    ADDON.getLocalizedString(32153).format(task_label),
-                    icon=xbmcgui.NOTIFICATION_INFO, time=6000)
             return True
-        self._defer_notice_shown = False
         return False
 
 

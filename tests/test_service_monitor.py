@@ -64,23 +64,15 @@ class TestAnchor(unittest.TestCase):
 
 
 class TestDeferral(_Base):
-    def test_idle_library_does_not_defer_and_rearms_the_notice(self):
-        self.monitor._defer_notice_shown = True
+    def test_idle_library_does_not_defer(self):
         self.assertFalse(self.monitor._should_defer_for_active_scan('task'))
-        self.assertFalse(self.monitor._defer_notice_shown)
 
-    def test_a_kodi_scan_or_scraper_activity_defers_and_says_so_once_per_busy_period(self):
+    def test_a_kodi_scan_or_scraper_activity_defers_without_any_toast(self):
         self.scanning[0] = True
         self.assertTrue(self.monitor._should_defer_for_active_scan('task'))
-        self.assertTrue(self.monitor._should_defer_for_active_scan('task'))
-        self.dialog.notification.assert_called_once()
         self.scanning[0], self.recent[0] = False, True
         self.assertTrue(self.monitor._should_defer_for_active_scan('task'))
-        self.scanning[0] = self.recent[0] = False
-        self.monitor._should_defer_for_active_scan('task')       # idle again: re-armed
-        self.recent[0] = True
-        self.monitor._should_defer_for_active_scan('task')
-        self.assertEqual(self.dialog.notification.call_count, 2)
+        self.dialog.notification.assert_not_called()
 
 
 class TestWatchRatingSync(_Base):

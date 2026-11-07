@@ -40,7 +40,7 @@ class TestTvFullSyncCheckReportsProgress(unittest.TestCase):
                           'resources', 'language', 'resource.language.en_gb', 'strings.po')
         with open(po, encoding='utf-8') as f:
             text = f.read()
-        for string_id in (32186, 32187, 32188, 32189, 32190, 32191):
+        for string_id in (32186, 32187, 32188, 32191):
             self.assertIn('msgctxt "#{0}"'.format(string_id), text)
 
 

@@ -111,14 +111,30 @@ class TestFullSyncCheck(_Base):
         self.monitor.run_full_sync_check('scan finished')
         self.assertTrue(captured['mid_scan'])
 
-    def test_result_notifications(self):
+    def test_only_corrections_are_announced(self):
         info, warning = service.xbmcgui.NOTIFICATION_INFO, service.xbmcgui.NOTIFICATION_WARNING
-        for result, icon in (({'aborted': 'down'}, warning), ({'cancelled': True}, info), ({'checked': 3, 'updated': 1}, info),
-                             ({'checked': 3, 'updated': 1, 'errors': 2}, warning)):
+        for result, icon in (({'checked': 3, 'updated': 1}, info), ({'checked': 3, 'updated': 1, 'errors': 2}, warning),
+                             ({'checked': 3, 'updated': 2, 'cancelled': True}, info)):
+            self.dialog.notification.reset_mock()
             self.monitor._notify_full_sync_check_result(result)
             self.assertEqual(self.dialog.notification.call_args[1]['icon'], icon, result)
+            self.assertIn('S32188', self.dialog.notification.call_args[0][1])
+
+    def test_nothing_corrected_shows_nothing(self):
+        for result in ({'checked': 900, 'updated': 0}, {'checked': 900, 'updated': 0, 'errors': 4}, {'cancelled': True},
+                       {'aborted': 'down'}, {}):
+            self.monitor._notify_full_sync_check_result(result)
+        self.dialog.notification.assert_not_called()
+
+    def test_a_check_that_could_not_run_is_logged_not_shown(self):
+        with mock.patch.object(service.log, 'warning') as warning:
+            self.monitor._notify_full_sync_check_result({'aborted': 'down'})
+        self.assertIn('down', warning.call_args[0][0])
+        self.dialog.notification.assert_not_called()
+
+    def test_a_notification_failure_is_swallowed(self):
         self.dialog.notification.side_effect = RuntimeError('ui gone')
-        self.monitor._notify_full_sync_check_result({'checked': 1})   # swallowed
+        self.monitor._notify_full_sync_check_result({'updated': 1})
 
 
 class TestStartupRefresh(_Base):

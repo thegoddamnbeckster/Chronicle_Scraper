@@ -229,10 +229,6 @@ msgctxt "#32152"
 msgid "Cleaning the video library..."
 msgstr ""
 
-msgctxt "#32153"
-msgid "Waiting for the library scan to finish before {0}"
-msgstr ""
-
 msgctxt "#32154"
 msgid "Scanning"
 msgstr ""

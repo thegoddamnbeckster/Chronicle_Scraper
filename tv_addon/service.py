@@ -174,22 +174,21 @@ class ChronicleTVMonitor(xbmc.Monitor):
         threading.Thread(target=_do, name='chronicle-tv-full-sync-check', daemon=True).start()
 
     def _notify_full_sync_check_result(self, result):
-        """Says how the post-scan check ended, so a pass that ran (and refreshed the screens) never ends
-        silently. Best-effort: a notification problem must not look like a failed check."""
+        """Says how many episodes the post-scan check corrected, and nothing else: a pass that corrected nothing (including one that
+        was cut short or could not run) is silent on screen -- the log has the full result. Best-effort: a notification problem
+        must not look like a failed check."""
         try:
-            icon = xbmcgui.NOTIFICATION_INFO
             if result.get('aborted'):
-                icon = xbmcgui.NOTIFICATION_WARNING
-                message = ADDON.getLocalizedString(32190).format(result['aborted'])
-            elif result.get('cancelled'):
-                message = ADDON.getLocalizedString(32189)
-            else:
-                if result.get('errors'):
-                    icon = xbmcgui.NOTIFICATION_WARNING
-                message = ADDON.getLocalizedString(32188).format(
-                    result.get('checked', 0), result.get('updated', 0),
-                    ADDON.getLocalizedString(32191).format(result['errors']) if result.get('errors') else '')
-            xbmcgui.Dialog().notification(ADDON.getLocalizedString(32000), message, icon=icon, time=8000)
+                log.warning('service: the full sync-check could not run -- {0}'.format(result['aborted']))
+            updated = result.get('updated') or 0
+            if not updated:
+                return
+            errors = result.get('errors') or 0
+            message = ADDON.getLocalizedString(32188).format(
+                updated, ADDON.getLocalizedString(32191).format(errors) if errors else '')
+            xbmcgui.Dialog().notification(
+                ADDON.getLocalizedString(32000), message,
+                icon=xbmcgui.NOTIFICATION_WARNING if errors else xbmcgui.NOTIFICATION_INFO, time=8000)
         except Exception as exc:
             log.warning('service: could not show the full sync-check result: {0}'.format(exc))
 
