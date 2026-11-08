@@ -202,6 +202,14 @@ class TestRun(_Base):
             self._run('?action=getdetails&url=%7B%22chronicleId%22%3A5%7D')
         sc.xbmcplugin.endOfDirectory.assert_called_once_with(3)
 
+    def test_every_call_yields_to_a_video_that_is_playing_before_it_scans_and_still_does_the_work(self):
+        # Scanning carries on at a lower priority while something is watched: the pause comes first, the scan is not skipped.
+        order = []
+        with mock.patch.object(sc.playback_pacing, 'yield_to_playback', side_effect=lambda: order.append('pace')), \
+             mock.patch.object(sc, 'search_for_movie', side_effect=lambda *a: order.append('find')):
+            self._run('?action=find&title=Heat&year=1995')
+        self.assertEqual(order, ['pace', 'find'])
+
     def test_getartwork_and_unknown_actions(self):
         with mock.patch.object(sc, 'get_artwork', return_value=True) as artwork:
             self._run('?action=getartwork&id=5')

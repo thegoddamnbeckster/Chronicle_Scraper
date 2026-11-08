@@ -58,6 +58,7 @@ from lib.kodi_video_info import (
 from lib.movie_art_sync import sync_movie_art, find_movie_location
 from lib import progress_sync
 from lib import recent_play
+from lib import playback_pacing
 
 log = Logger('scraper')
 ADDON = xbmcaddon.Addon()
@@ -411,6 +412,8 @@ def _parse_year(raw):
 
 
 def run():
+    # Scanning carries on while a video plays, at a lower priority: each call waits a moment first (lib/playback_pacing.py).
+    playback_pacing.yield_to_playback()
     params = get_params(sys.argv[1:])
     enddir = True
 

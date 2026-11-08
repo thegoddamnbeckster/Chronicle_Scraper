@@ -45,6 +45,7 @@ import xbmcplugin
 # addon root where lib/ actually lives.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from lib import playback_pacing
 from lib.logger import Logger
 from lib import activity_tracker
 from lib.chronicle_client import ChronicleClient
@@ -378,6 +379,8 @@ def _resolve_lookup_id(params):
 
 
 def run():
+    # Scanning carries on while a video plays, at a lower priority: each call waits a moment first (lib/playback_pacing.py).
+    playback_pacing.yield_to_playback()
     params = get_params(sys.argv[1:])
 
     action = params.get('action')

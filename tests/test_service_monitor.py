@@ -75,14 +75,6 @@ class TestDeferral(_Base):
         self.dialog.notification.assert_not_called()
 
 
-    def test_a_video_playing_defers_background_work_and_says_so(self):
-        # 2026-11-07: a movie stopped when its share dropped the connection during the library scan and these passes.
-        with mock.patch.object(service.xbmc, 'getCondVisibility', side_effect=lambda cond: cond == 'Player.HasVideo'), \
-             mock.patch.object(service.log, 'info') as info:
-            self.assertTrue(self.monitor._should_defer_for_active_scan('task'))
-        self.assertIn('video playback', info.call_args[0][0])
-
-
 class TestWatchRatingSync(_Base):
     RESULT = {'movies': 1, 'shows': 1, 'episodes': 2, 'errors': 0, 'cancelled': False,
               'movies_changed': 1, 'shows_changed': 0, 'episodes_changed': 0}

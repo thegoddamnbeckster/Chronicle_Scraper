@@ -238,6 +238,14 @@ class TestRun(_Base):
         with mock.patch.object(ts.sys, 'argv', ['plugin', '3', query]):
             ts.run()
 
+    def test_every_call_yields_to_a_video_that_is_playing_before_it_scans_and_still_does_the_work(self):
+        # Scanning carries on at a lower priority while something is watched: the pause comes first, the scan is not skipped.
+        order = []
+        with mock.patch.object(ts.playback_pacing, 'yield_to_playback', side_effect=lambda: order.append('pace')), \
+             mock.patch.object(ts, 'find_show', side_effect=lambda *a: order.append('find')):
+            self._run('?action=find&title=Heat&year=1995')
+        self.assertEqual(order, ['pace', 'find'])
+
     def test_the_dispatch_log_line_never_carries_the_add_ons_settings(self):
         settings = json.dumps({'api_key': 'chr_live_S3CRET', 'chronicle_url': 'http://nas:7979'})
         query = '?action=nothing&pathSettings=' + __import__('urllib.parse').parse.quote(settings)
