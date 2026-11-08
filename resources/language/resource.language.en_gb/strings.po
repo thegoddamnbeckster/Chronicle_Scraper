@@ -296,3 +296,11 @@ msgstr ""
 msgctxt "#32174"
 msgid "Stopped after {0} of {1} movies. Run it again to carry on."
 msgstr ""
+
+msgctxt "#32175"
+msgid "Waiting for the library scan to finish..."
+msgstr ""
+
+msgctxt "#32176"
+msgid "Waiting for another Chronicle sync to finish..."
+msgstr ""

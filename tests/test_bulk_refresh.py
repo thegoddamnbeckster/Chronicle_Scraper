@@ -75,7 +75,7 @@ class TestRun(unittest.TestCase):
     def test_it_waits_for_a_library_scan_to_finish_before_asking_for_anything(self):
         sim = _Sim(ids=(1,), scanning_for=3)
         self._run(sim)
-        self.assertEqual(sim.slept[:3], [5, 5, 5])
+        self.assertEqual([s for s in sim.slept if s == 5], [5, 5, 5])
         self.assertEqual(len(sim.requests), 1)
 
     def test_a_refusal_is_counted_and_the_rest_carry_on(self):
@@ -93,12 +93,48 @@ class TestRun(unittest.TestCase):
     def test_progress_is_reported_for_each_title_as_it_starts(self):
         sim, seen = _Sim(ids=(1, 2)), []
         self._run(sim, progress_callback=lambda i, n, label: seen.append((i, n, label)))
-        self.assertEqual(seen, [(1, 2, 'T1 (2001)'), (2, 2, 'T2 (2002)')])
+        # the first entry says it is waiting for its turn; it is replaced as soon as the first title starts
+        self.assertEqual([entry for entry in seen if entry[0] > 0], [(1, 2, 'T1 (2001)'), (2, 2, 'T2 (2002)')])
+        self.assertEqual(seen[0][0], 0)
 
     def test_a_kodi_that_cannot_list_the_library_is_an_error_not_a_crash(self):
         with mock.patch.object(xbmc, 'executeJSONRPC', side_effect=RuntimeError('down')):
             result = bulk_refresh.run('movie', sleep=lambda s: None)
         self.assertEqual((result['total'], result['errors']), (0, 1))
+
+    def test_a_wait_for_the_library_scan_is_shown_and_logged_not_silent(self):
+        sim, seen = _Sim(ids=(1,), scanning_for=2), []
+        with mock.patch.object(bulk_refresh.log, 'info') as info:
+            self._run(sim, progress_callback=lambda i, n, label: seen.append((i, label)), messages={'scan': 'WAIT-SCAN'})
+        self.assertIn((0, 'WAIT-SCAN'), seen)
+        self.assertTrue(any('waiting for the library scan' in str(c) for c in info.call_args_list))
+
+    def test_a_second_refresh_waits_its_turn_behind_the_first_and_then_runs(self):
+        # the movie and TV refreshes share one activity signal, so they must not run at once
+        owner = bulk_refresh.sync_baton.owner_id('someone-else')
+        store = bulk_refresh.sync_baton._STORE
+        sim = _Sim(ids=(1,))
+        store.set('{0}|{1}|the movie refresh'.format(owner, sim.now + 20))   # held, and gives up the claim 20s from now
+        seen = []
+        result = self._run(sim, kind='tvshow', progress_callback=lambda i, n, label: seen.append(label), messages={'turn': 'WAIT-TURN'})
+        self.assertEqual(seen[0], 'WAIT-TURN')
+        self.assertEqual(result['refreshed'], 1)
+        self.assertGreaterEqual(sum(sim.slept), 20)       # it did wait for the claim to lapse before asking Kodi for anything
+        store.set('')
+
+    def test_the_baton_is_released_when_it_finishes_and_when_it_is_stopped(self):
+        store = bulk_refresh.sync_baton._STORE
+        self._run(_Sim(ids=(1, 2)))
+        self.assertEqual(store.get(), '')
+        sim = _Sim(ids=(1, 2, 3))
+        self._run(sim, is_cancelled=lambda: len(sim.requests) >= 1)
+        self.assertEqual(store.get(), '')
+
+    def test_the_claim_is_renewed_as_it_goes_so_a_long_refresh_does_not_lose_its_turn(self):
+        sim = _Sim(ids=(1, 2, 3))
+        with mock.patch.object(bulk_refresh.sync_baton, 'renew') as renew:
+            self._run(sim)
+        self.assertEqual(renew.call_count, 3)
 
     def test_it_goes_slowly_while_a_video_plays(self):
         sim = _Sim(ids=(1,))
@@ -108,7 +144,7 @@ class TestRun(unittest.TestCase):
 
 
 class TestSettingsButton(unittest.TestCase):
-    TEXT = {'title': 1, 'confirm': 2, 'stop': 3, 'done': 4, 'stopped': 5}
+    TEXT = {'title': 1, 'confirm': 2, 'stop': 3, 'done': 4, 'stopped': 5, 'waiting_scan': 6, 'waiting_turn': 7}
 
     def setUp(self):
         self.props = {}
@@ -117,7 +153,7 @@ class TestSettingsButton(unittest.TestCase):
         window.setProperty.side_effect = lambda k, v: self.props.__setitem__(k, v)
         self.dialog = mock.MagicMock()
         self.addon = mock.MagicMock()
-        self.addon.getLocalizedString.side_effect = lambda i: {1: 'Title', 2: 'Sure?', 3: 'Stop it?', 4: '{0}/{1} {2} {3}', 5: 'Stopped {0}/{1}'}[i]
+        self.addon.getLocalizedString.side_effect = lambda i: {1: 'Title', 2: 'Sure?', 3: 'Stop it?', 4: '{0}/{1} {2} {3}', 5: 'Stopped {0}/{1}', 6: 'scan wait', 7: 'turn wait'}[i]
         for obj, name, new in ((xbmcgui, 'Window', mock.Mock(return_value=window)), (xbmcgui, 'Dialog', mock.Mock(return_value=self.dialog)),
                                (xbmcgui, 'DialogProgressBG', mock.Mock(return_value=mock.MagicMock()))):
             p = mock.patch.object(obj, name, new, create=True)

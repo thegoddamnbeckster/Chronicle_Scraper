@@ -318,3 +318,11 @@ msgstr ""
 msgctxt "#32201"
 msgid "Stopped after {0} of {1} shows. Run it again to carry on."
 msgstr ""
+
+msgctxt "#32202"
+msgid "Waiting for the library scan to finish..."
+msgstr ""
+
+msgctxt "#32203"
+msgid "Waiting for another Chronicle sync to finish..."
+msgstr ""

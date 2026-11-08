@@ -348,7 +348,8 @@ def _library_repair_undo():
 
 def _refresh_all_now():
     """The \"Refresh all\" button: re-reads every title from Chronicle, one at a time (lib/bulk_refresh.py)."""
-    bulk_refresh.run_from_settings(ADDON, 'tvshow', {'title': 32196, 'confirm': 32198, 'stop': 32199, 'done': 32200, 'stopped': 32201})
+    bulk_refresh.run_from_settings(ADDON, 'tvshow', {'title': 32196, 'confirm': 32198, 'stop': 32199, 'done': 32200, 'stopped': 32201,
+                                        'waiting_scan': 32202, 'waiting_turn': 32203})
 
 
 if __name__ == '__main__':

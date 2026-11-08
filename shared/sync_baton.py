@@ -119,6 +119,15 @@ def _acquire(owner, label, log, is_aborted, wait_seconds, store, clock, sleep):
         sleep(POLL_SECONDS)
 
 
+def renew(owner, label, store=None, clock=time.time):
+    """Extends the holder's claim for another BATON_TTL_SECONDS. A task that outlasts the expiry (a refresh of the whole library takes
+    hours) calls this as it goes, or the baton would count as abandoned and the next in line would start alongside it. Does nothing when
+    `owner` is not the current holder."""
+    store = store or _STORE
+    if _parse(store.get())[0] == owner:
+        store.set('{0}|{1}|{2}'.format(owner, clock() + BATON_TTL_SECONDS, label))
+
+
 def _release(owner, store):
     with _held_here_lock:
         count = _held_here.get(owner, 0) - 1
