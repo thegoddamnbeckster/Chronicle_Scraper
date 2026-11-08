@@ -22,16 +22,15 @@ since the last tick (plus a one-time look-back when the service starts mid-scan)
 movie_art_sync source-listing cache for the totals.
 """
 
-import json
 import re
 import threading
 import time
 
-import xbmc
 import xbmcvfs
 
 from lib import activity_tracker
 from lib import movie_art_sync
+from lib import kodi_rpc
 from lib.logger import Logger
 
 log = Logger('scan_progress')
@@ -208,7 +207,7 @@ def _library_counts():
     for key, method in _LIBRARY_METHODS:
         request = {'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': {'limits': {'start': 0, 'end': 1}}}
         try:
-            response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+            response = kodi_rpc.send(request)
             counts[key] = response['result']['limits']['total']
         except Exception:
             counts[key] = None

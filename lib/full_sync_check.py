@@ -17,11 +17,10 @@ before anything a scraper or SetMovieDetails' art parameter offers, so art goes 
 movie_art_sync.sync_movie_art() (which writes the local file and skip-caches an unchanged one).
 """
 
-import json
 import re
 
-import xbmc
 
+from lib import kodi_rpc
 from lib.logger import Logger
 
 log = Logger('full_sync_check')
@@ -80,19 +79,7 @@ def refresh_movie(movieid):
     cast. The scrape goes through this addon, which answers with Chronicle's current data. Only ever
     called for a movie whose identity-level text was just corrected AND whose cast differs, never for
     a cast-only difference (names/order differ harmlessly all the time)."""
-    request = {
-        'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.RefreshMovie',
-        'params': {'movieid': movieid, 'ignorenfo': True},
-    }
-    try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
-    except Exception as exc:
-        log.warning('full_sync_check: RefreshMovie({0}) failed: {1}'.format(movieid, exc))
-        return False
-    if 'error' in response:
-        log.warning('full_sync_check: RefreshMovie({0}) rejected: {1}'.format(movieid, response['error']))
-        return False
-    return True
+    return kodi_rpc.refresh_item('movie', movieid, ignore_nfo=True, who='full_sync_check')
 
 
 def set_differs(kodi_item, details):

@@ -26,12 +26,12 @@ import json
 
 import urllib.parse
 
-import xbmc
 import xbmcaddon
 import xbmcvfs
 
 from lib.chronicle_client import ChronicleClient
 from lib.kodi_art import kodi_art_url
+from lib import kodi_rpc
 from lib.logger import Logger
 
 log = Logger('collection_art_sync')
@@ -74,7 +74,7 @@ def _get_kodi_sets():
     request = {'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetMovieSets',
                'params': {'properties': ['art']}}
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning("Couldn't query VideoLibrary.GetMovieSets: {0}".format(exc))
         return None
@@ -89,7 +89,7 @@ def _set_movie_set_art(setid, art):
     request = {'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.SetMovieSetDetails',
                'params': {'setid': setid, 'art': art}}
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning("Couldn't update set art for setid {0}: {1}".format(setid, exc))
         return False

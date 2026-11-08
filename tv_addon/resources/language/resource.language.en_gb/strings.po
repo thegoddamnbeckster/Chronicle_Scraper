@@ -326,3 +326,7 @@ msgstr ""
 msgctxt "#32203"
 msgid "Waiting for another Chronicle sync to finish..."
 msgstr ""
+
+msgctxt "#32204"
+msgid "Could not read the show list from Kodi, see kodi.log"
+msgstr ""

@@ -64,6 +64,7 @@ from urllib.parse import unquote
 import xbmc
 import xbmcvfs
 
+from lib import kodi_rpc
 from lib.logger import Logger
 
 log = Logger('movie_art_sync')
@@ -294,7 +295,7 @@ def _lookup_by_known_filename(filename):
         'params': {'properties': ['file']},
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning("Couldn't query VideoLibrary for known filename {0!r}: {1}".format(filename, exc))
         return None, None
@@ -352,7 +353,7 @@ def _lookup_movie_file(title, year):
         },
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning("Couldn't query VideoLibrary for {0!r}: {1}".format(title, exc))
         return None, None
@@ -446,7 +447,7 @@ def get_video_sources():
     just costs a little time, never breaks anything."""
     request = {'jsonrpc': '2.0', 'id': 1, 'method': 'Files.GetSources', 'params': {'media': 'video'}}
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning("Couldn't get video sources: {0}".format(exc))
         return []
@@ -808,7 +809,7 @@ def _invalidate_texture(path):
         },
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning("Couldn't query Textures.GetTextures for {0}: {1}".format(path, exc))
         return
@@ -826,7 +827,7 @@ def _invalidate_texture(path):
             'params': {'textureid': texture.get('textureid')},
         }
         try:
-            xbmc.executeJSONRPC(json.dumps(remove))
+            kodi_rpc.send(remove)
             removed += 1
         except Exception as exc:
             log.warning("Couldn't remove cached texture {0}: {1}".format(

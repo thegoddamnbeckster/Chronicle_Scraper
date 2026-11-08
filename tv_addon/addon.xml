@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.tv"
        name="Chronicle Scraper (TV)"
-       version="1.23.9"
+       version="1.23.10"
        provider-name="Michael Beck">
 
   <requires>
@@ -58,7 +58,9 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (TV)</summary>
     <description lang="en_GB">A Kodi metadata scraper for TV shows, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TheTVDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- seasons and episodes, multi-source ratings, and all. Movies are a separate sibling addon, script.chronicle.scraper.movie -- install both if you track both. They have to be separate addons: Kodi resolves which script to run for a scrape by addon id alone, not by which extension point (movies vs tvshows) triggered the call, so one addon declaring both would silently run the wrong script for TV every time. Has its own "Connect to Chronicle" QR/PIN flow and its own API key, independent of the Movies addon -- open the addon (or its Settings) to connect. The corner status indicator lives in the Movies addon and covers both movies and TV shows together; this addon doesn't duplicate it. Neither addon writes a local NFO file of any kind -- Chronicle's own API is the source of truth both scrapers read from directly. It does have its own small background service that keeps Kodi's library in sync with newly-imported content, independent of the Movies addon -- see this version's changelog.</description>
-    <news>v1.23.9 - FIX: Refresh all now takes its turn: the movie and TV refreshes run one after the other (not at once, which made each mistake the other's activity for its own), after any other Chronicle background sync. While it waits for a library scan or another sync it now says so on the progress bar and in the log, where it used to sit silent. Progress is logged every 100 titles.
+    <news>v1.23.10 - FIX: Refresh all no longer holds every other Chronicle sync off for hours. It takes its turn a few titles at a time and lets go in between, so the post-scan syncs and the episode check are not dropped; the movie and TV refreshes take turns with each other; a refresh whose script was killed (for example by updating the add-on) no longer leaves the button stuck on already running; shows get a longer settle time because their episodes arrive with gaps; progress is checked every 2 seconds instead of every second; and a library Kodi cannot list says so. Internally, every JSON-RPC call to Kodi and every library refresh request now go through one shared helper (lib/kodi_rpc.py) and Test Connection through one shared check, replacing near-identical copies; behaviour is unchanged.
+
+v1.23.9 - FIX: Refresh all now takes its turn: the movie and TV refreshes run one after the other (not at once, which made each mistake the other's activity for its own), after any other Chronicle background sync. While it waits for a library scan or another sync it now says so on the progress bar and in the log, where it used to sit silent. Progress is logged every 100 titles.
 
 v1.23.8 - NEW: Settings, Start-up and Library Scans, Refresh all shows from Chronicle. Kodi has no refresh-everything, and a library scan only looks at new or changed folders, so a fix to what this add-on hands Kodi (such as actor photos) never reached shows Kodi already had. This re-reads every show, and its episodes, from Chronicle, one show at a time, waiting for the scraper to finish each one. It waits out any library scan and goes slowly while a video plays; you can keep using Kodi. Press the button again to stop it; it is safe to run again.
 

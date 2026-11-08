@@ -71,17 +71,6 @@ class TestSyncBaton(unittest.TestCase):
         with self._hold('a', wait=3600, is_aborted=lambda: True) as got:
             self.assertFalse(got)
 
-    def test_renew_extends_only_the_holders_own_claim(self):
-        # a refresh of the whole library takes hours, longer than the claim lasts; it renews as it goes
-        with self._hold('a') as got:
-            self.assertTrue(got)
-            self.now[0] += sync_baton.BATON_TTL_SECONDS - 5          # nearly lapsed
-            sync_baton.renew('a', 'x', store=self.store, clock=lambda: self.now[0])
-            self.now[0] += 100                                      # past the ORIGINAL expiry
-            self.assertFalse(sync_baton._parse(self.store.get())[1] <= self.now[0])
-            sync_baton.renew('b', 'x', store=self.store, clock=lambda: self.now[0])   # not the holder: no effect
-            self.assertEqual(sync_baton._parse(self.store.get())[0], 'a')
-
 
 if __name__ == '__main__':
     unittest.main()

@@ -28,7 +28,6 @@ wasted provider-facing load, and a real (if small) risk of a title/year drift ev
 different item on a later resolve.
 """
 
-import json
 import posixpath
 
 import xbmc
@@ -42,6 +41,7 @@ from lib import progress_sync
 from lib import recent_play
 from lib.kodi_art import kodi_art_url
 from lib.chronicle_client import ChronicleClient
+from lib import kodi_rpc
 from lib.logger import Logger
 
 log = Logger('watch_rating_sync')
@@ -562,7 +562,7 @@ def _get_all_movies():
         'params': {'properties': _MOVIE_STATE_PROPERTIES},
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.error("Couldn't get movie list: {0}".format(exc))
         return []
@@ -578,7 +578,7 @@ def _get_all_tvshows():
         'params': {'properties': _SHOW_PROPERTIES},
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.error("Couldn't get TV show list: {0}".format(exc))
         return []
@@ -594,7 +594,7 @@ def _get_episodes_for_show(tvshowid):
         'params': {'tvshowid': tvshowid, 'properties': _EPISODE_STATE_PROPERTIES},
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.error("Couldn't get episodes for tvshowid {0}: {1}".format(tvshowid, exc))
         return []
@@ -684,7 +684,7 @@ def _set_tvshow_rating(tvshowid, rating):
 
 def _execute_set(request, method_label, item_id):
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning("{0}({1}): failed: {2}".format(method_label, item_id, exc))
         return

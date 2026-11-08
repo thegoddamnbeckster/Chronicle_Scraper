@@ -29,9 +29,9 @@ import posixpath
 import re
 import time
 
-import xbmc
 import xbmcvfs
 
+from lib import kodi_rpc
 from lib.logger import Logger
 from lib.movie_art_sync import get_video_sources, normalize, year_tolerant_match
 from lib.movie_art_sync import _SOURCE_LISTING_FRESH_SECONDS, list_source_dirs_cached
@@ -163,7 +163,7 @@ def _lookup_show(title, year):
         },
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning("Couldn't query VideoLibrary for {0!r}: {1}".format(title, exc))
         return None, None

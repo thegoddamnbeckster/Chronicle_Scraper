@@ -49,11 +49,8 @@ def _kodi_setting_timezone():
     global _setting_cache
     if _setting_cache is None:
         try:
-            import json
-            import xbmc
-            reply = json.loads(xbmc.executeJSONRPC(json.dumps({
-                'jsonrpc': '2.0', 'id': 1, 'method': 'Settings.GetSettingValue',
-                'params': {'setting': 'locale.timezone'}})))
+            from lib import kodi_rpc
+            reply = kodi_rpc.call('Settings.GetSettingValue', {'setting': 'locale.timezone'})
             value = (reply.get('result') or {}).get('value')
             _setting_cache = value if isinstance(value, str) else ''
         except Exception:

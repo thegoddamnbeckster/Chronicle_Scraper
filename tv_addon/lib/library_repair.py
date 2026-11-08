@@ -75,6 +75,7 @@ import xbmc
 import xbmcaddon
 import xbmcvfs
 
+from lib import kodi_rpc
 from lib.logger import Logger
 
 log = Logger('library_repair')
@@ -287,7 +288,7 @@ def _cross_check_live_counts(db_path):
 def _live_show_count():
     request = {'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetTVShows', 'params': {'properties': []}}
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning("Couldn't get live TV show count: {0}".format(exc))
         return None
@@ -505,7 +506,7 @@ def _list_real_subfolders(root_path):
         'params': {'directory': root_path, 'media': 'video'},
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning("Couldn't browse {0}: {1}".format(root_path, exc))
         return None
@@ -549,7 +550,7 @@ def repair_stale_shows(stale_shows, db_path):
             'params': {'tvshowid': show['tvshowid']},
         }
         try:
-            response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+            response = kodi_rpc.send(request)
         except Exception as exc:
             log.warning('RemoveTVShow({0}) failed: {1}'.format(show['tvshowid'], exc))
             continue
@@ -1239,7 +1240,7 @@ _FABRICATED_MANIFEST_NAME = 'fabricated_watched_manifest.json'
 def _jsonrpc(method, params):
     request = {'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning('{0} call failed: {1}'.format(method, exc))
         return None
@@ -1325,7 +1326,7 @@ def trigger_scan(directories):
             'params': {'directory': directory, 'showdialogs': False},
         }
         try:
-            response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+            response = kodi_rpc.send(request)
         except Exception as exc:
             log.warning('VideoLibrary.Scan({0}) call failed: {1}'.format(directory, exc))
             continue

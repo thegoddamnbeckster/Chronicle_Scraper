@@ -13,6 +13,17 @@ import xbmc
 PLAYBACK_PACE_SECONDS = 3.0
 
 
+_monitor = None
+
+
+def _wait(seconds):
+    """Kodi's abort-aware wait, on one Monitor kept for the process instead of a new one for every paced call."""
+    global _monitor
+    if _monitor is None:
+        _monitor = xbmc.Monitor()
+    return _monitor.waitForAbort(seconds)
+
+
 def is_video_playing():
     try:
         return bool(xbmc.getCondVisibility('Player.HasVideo'))
@@ -22,8 +33,8 @@ def is_video_playing():
 
 def yield_to_playback(wait=None, pace=PLAYBACK_PACE_SECONDS):
     """Waits `pace` seconds when a video is playing; returns True when it waited. `wait(seconds)` is injectable for tests; by default it
-    is Kodi's abort-aware wait, so a Kodi shutdown is never held up by it."""
+    is Kodi's abort-aware wait (_wait), so a Kodi shutdown is never held up by it."""
     if not is_video_playing():
         return False
-    (wait or xbmc.Monitor().waitForAbort)(pace)
+    (wait or _wait)(pace)
     return True

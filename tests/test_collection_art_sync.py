@@ -72,7 +72,7 @@ class _Base(unittest.TestCase):
             return '{"result": {}}'
 
         for obj, name, new in ((cas, 'ChronicleClient', mock.Mock(return_value=self.client)),
-                               (cas.xbmc, 'executeJSONRPC', mock.Mock(side_effect=execute))):
+                               (cas.kodi_rpc.xbmc, 'executeJSONRPC', mock.Mock(side_effect=execute))):
             p = mock.patch.object(obj, name, new)
             p.start()
             self.addCleanup(p.stop)
@@ -183,7 +183,7 @@ class TestRun(_Base):
         self.assertNotIn(cas._STATE_PATH, stubs._FAKE_FILES)
 
     def test_kodi_not_answering_does_nothing_at_all(self):
-        cas.xbmc.executeJSONRPC.side_effect = RuntimeError('rpc down')
+        cas.kodi_rpc.xbmc.executeJSONRPC.side_effect = RuntimeError('rpc down')
 
         result = cas.run()
 

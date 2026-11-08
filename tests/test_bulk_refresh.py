@@ -1,5 +1,6 @@
 """Bulk refresh: re-reads every title from Chronicle one at a time, waits out scans and playback, and is safe to stop (lib/bulk_refresh.py)."""
 import json
+import time
 import unittest
 from unittest import mock
 
@@ -70,7 +71,7 @@ class TestRun(unittest.TestCase):
         sim = _Sim(ids=(1, 2), ignored=(1,))
         result = self._run(sim)
         self.assertEqual((result['refreshed'], result['skipped']), (1, 1))
-        self.assertLessEqual(sum(sim.slept), bulk_refresh.START_WAIT_SECONDS + 2 * bulk_refresh.QUIET_SECONDS + 10)
+        self.assertLessEqual(sum(sim.slept), bulk_refresh.START_WAIT_SECONDS + 2 * bulk_refresh.KINDS['movie'][4] + 10)
 
     def test_it_waits_for_a_library_scan_to_finish_before_asking_for_anything(self):
         sim = _Sim(ids=(1,), scanning_for=3)
@@ -130,11 +131,33 @@ class TestRun(unittest.TestCase):
         self._run(sim, is_cancelled=lambda: len(sim.requests) >= 1)
         self.assertEqual(store.get(), '')
 
-    def test_the_claim_is_renewed_as_it_goes_so_a_long_refresh_does_not_lose_its_turn(self):
-        sim = _Sim(ids=(1, 2, 3))
-        with mock.patch.object(bulk_refresh.sync_baton, 'renew') as renew:
-            self._run(sim)
-        self.assertEqual(renew.call_count, 3)
+    def test_the_baton_is_let_go_between_chunks_so_a_waiting_sync_can_take_its_turn(self):
+        # held throughout, a hours-long refresh would starve the syncs that ask for the baton once and give up after an hour
+        store = bulk_refresh.sync_baton._STORE
+        sim, free_at_handover = _Sim(ids=(1, 2, 3, 4, 5)), []
+        plain_sleep = sim.sleep
+
+        def sleep(seconds):
+            if seconds == bulk_refresh.HANDOVER_SECONDS:
+                free_at_handover.append(store.get())
+            plain_sleep(seconds)
+        sim.sleep = sleep
+        with mock.patch.object(bulk_refresh, 'TITLES_PER_TURN', 2):
+            result = self._run(sim)
+        self.assertEqual(free_at_handover, ['', ''])                 # three chunks (2, 2, 1): two handovers, baton free at each
+        self.assertEqual(result['refreshed'], 5)
+
+    def test_a_pause_between_titles_beats_the_heartbeat_so_a_dead_run_can_be_told_from_a_live_one(self):
+        beats = []
+        self._run(_Sim(ids=(1, 2)), heartbeat=lambda: beats.append(1))
+        self.assertGreater(len(beats), 2)
+
+    def test_a_show_gets_a_longer_quiet_than_a_movie_because_its_episodes_arrive_with_gaps(self):
+        self.assertGreater(bulk_refresh.KINDS['tvshow'][4], bulk_refresh.KINDS['movie'][4])
+
+    def test_a_library_kodi_could_not_list_is_marked_unreadable(self):
+        with mock.patch.object(xbmc, 'executeJSONRPC', side_effect=RuntimeError('down')):
+            self.assertTrue(bulk_refresh.run('movie', sleep=lambda s: None)['unreadable'])
 
     def test_it_goes_slowly_while_a_video_plays(self):
         sim = _Sim(ids=(1,))
@@ -144,7 +167,7 @@ class TestRun(unittest.TestCase):
 
 
 class TestSettingsButton(unittest.TestCase):
-    TEXT = {'title': 1, 'confirm': 2, 'stop': 3, 'done': 4, 'stopped': 5, 'waiting_scan': 6, 'waiting_turn': 7}
+    TEXT = {'title': 1, 'confirm': 2, 'stop': 3, 'done': 4, 'stopped': 5, 'waiting_scan': 6, 'waiting_turn': 7, 'failed': 8}
 
     def setUp(self):
         self.props = {}
@@ -153,7 +176,7 @@ class TestSettingsButton(unittest.TestCase):
         window.setProperty.side_effect = lambda k, v: self.props.__setitem__(k, v)
         self.dialog = mock.MagicMock()
         self.addon = mock.MagicMock()
-        self.addon.getLocalizedString.side_effect = lambda i: {1: 'Title', 2: 'Sure?', 3: 'Stop it?', 4: '{0}/{1} {2} {3}', 5: 'Stopped {0}/{1}', 6: 'scan wait', 7: 'turn wait'}[i]
+        self.addon.getLocalizedString.side_effect = lambda i: {1: 'Title', 2: 'Sure?', 3: 'Stop it?', 4: '{0}/{1} {2} {3}', 5: 'Stopped {0}/{1}', 6: 'scan wait', 7: 'turn wait', 8: 'could not read'}[i]
         for obj, name, new in ((xbmcgui, 'Window', mock.Mock(return_value=window)), (xbmcgui, 'Dialog', mock.Mock(return_value=self.dialog)),
                                (xbmcgui, 'DialogProgressBG', mock.Mock(return_value=mock.MagicMock()))):
             p = mock.patch.object(obj, name, new, create=True)
@@ -177,10 +200,21 @@ class TestSettingsButton(unittest.TestCase):
         self.assertEqual(self.dialog.notification.call_args[0][1], '4/5 1 0')
 
     def test_pressing_it_again_while_running_offers_to_stop_instead_of_starting_a_second(self):
-        self.props['chronicle.bulkrefresh.movie'] = 'running'
+        self.props['chronicle.bulkrefresh.movie'] = 'running|{0}'.format(time.time())
         self.dialog.yesno.return_value = True
         self._press().assert_not_called()
-        self.assertEqual(self.props['chronicle.bulkrefresh.movie'], 'stop')
+        self.assertTrue(self.props['chronicle.bulkrefresh.movie'].startswith('stop|'))
+
+    def test_a_flag_left_by_a_killed_script_is_ignored_so_the_button_still_starts_a_run(self):
+        # an add-on update stops its scripts without letting them clean up: the flag must not block the button until Kodi restarts
+        self.props['chronicle.bulkrefresh.movie'] = 'running|{0}'.format(time.time() - bulk_refresh.STALE_SECONDS - 5)
+        self.dialog.yesno.return_value = True
+        self._press().assert_called_once()
+
+    def test_a_listing_failure_says_so_instead_of_reporting_a_finished_run(self):
+        self.dialog.yesno.return_value = True
+        self._press({'total': 0, 'refreshed': 0, 'skipped': 0, 'errors': 1, 'cancelled': False, 'unreadable': True})
+        self.assertEqual(self.dialog.notification.call_args[0][1], 'could not read')
 
     def test_a_stopped_run_says_how_far_it_got(self):
         self.dialog.yesno.return_value = True

@@ -145,7 +145,7 @@ def _sync_collections_now():
 def _refresh_all_now():
     """The \"Refresh all\" button: re-reads every title from Chronicle, one at a time (lib/bulk_refresh.py)."""
     bulk_refresh.run_from_settings(ADDON, 'movie', {'title': 32169, 'confirm': 32171, 'stop': 32172, 'done': 32173, 'stopped': 32174,
-                                        'waiting_scan': 32175, 'waiting_turn': 32176})
+                                        'waiting_scan': 32175, 'waiting_turn': 32176, 'failed': 32177})
 
 
 if __name__ == '__main__':

@@ -15,12 +15,13 @@ build time from this file (see build.ps1), not maintained twice. xbmcaddon.Addon
 is what makes the same file behave correctly for whichever add-on runs it.
 """
 
-import json
 import time
 
 import xbmc
 
+from lib import kodi_rpc
 from lib.chronicle_client import ChronicleClient
+from lib import kodi_rpc
 from lib.logger import Logger
 
 log = Logger('kodi_scan_signal')
@@ -41,7 +42,7 @@ def _read_native_startup_scan_setting():
     try:
         request = {'jsonrpc': '2.0', 'id': 1, 'method': 'Settings.GetSettingValue',
                    'params': {'setting': 'videolibrary.updateonstartup'}}
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
         return response.get('result', {}).get('value')
     except Exception as exc:
         log.warning('kodi_scan_signal: could not read videolibrary.updateonstartup: {0}'.format(exc))
@@ -123,13 +124,6 @@ def run_startup_refresh(kinds, is_aborted=None):
 # Each addon calls check_and_refresh with only the kind(s) it actually owns (Movies: "movie";
 # TV: "episode", "tvshow") from its own run_startup_refresh call in its own service.py.
 
-_REFRESH_METHOD_BY_KIND = {
-    'movie':   ('VideoLibrary.RefreshMovie', 'movieid'),
-    'episode': ('VideoLibrary.RefreshEpisode', 'episodeid'),
-    'tvshow':  ('VideoLibrary.RefreshTVShow', 'tvshowid'),
-}
-
-
 def check_and_refresh(kinds):
     """Polls Chronicle for items of the given kinds (e.g. ['movie'] or ['episode', 'tvshow'])
     that are due for a local refresh, and fires one VideoLibrary.Refresh* per item. Best-effort
@@ -149,22 +143,10 @@ def check_and_refresh(kinds):
         for item in items:
             kind = item.get('kind')
             kodi_id = item.get('kodiId')
-            method_param = _REFRESH_METHOD_BY_KIND.get(kind)
-            if method_param is None or not kodi_id:
+            if kind not in kodi_rpc.REFRESH or not kodi_id:
                 log.warning('kodi_scan_signal: refresh-signal -- skipping unrecognized item '
                             '{0!r}'.format(item))
                 continue
-            method, param_name = method_param
-            request = {'jsonrpc': '2.0', 'id': 1, 'method': method,
-                       'params': {param_name: kodi_id}}
-            try:
-                response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
-            except Exception as exc:
-                log.warning('kodi_scan_signal: refresh-signal -- {0}({1}={2}) call failed: '
-                            '{3}'.format(method, param_name, kodi_id, exc))
-                continue
-            if 'error' in response:
-                log.warning('kodi_scan_signal: refresh-signal -- {0}({1}={2}) rejected: '
-                            '{3}'.format(method, param_name, kodi_id, response['error']))
+            kodi_rpc.refresh_item(kind, kodi_id, who='kodi_scan_signal: refresh-signal')
     except Exception as exc:
         log.warning('kodi_scan_signal: refresh-signal check failed: {0}'.format(exc))

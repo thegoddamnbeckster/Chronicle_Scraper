@@ -16,7 +16,7 @@ import xbmcaddon
 
 from lib import timeutil
 from lib.http_core import (
-    call_with_retries, call_with_timeout, find_shared_chronicle_url as _find_shared_url, normalize_base_url, user_agent)
+    call_with_retries, call_with_timeout, check_connection, find_shared_chronicle_url as _find_shared_url, normalize_base_url, user_agent)
 from lib import connection_health
 from lib.logger import Logger
 
@@ -456,34 +456,8 @@ class ChronicleClient:
         return self._get('/api/v1/users/me', 'get_current_user()', timeout=5)
 
     def test_connection(self):
-        """GET /api/v1/users/me — verify connectivity AND the API key (/api/health answers without a key, so it would pass with a bad one).
-
-        Returns a (success: bool, message: str) tuple.
-        """
-        if not self._base_url:
-            return False, 'Chronicle URL is not configured.'
-
-        if not self._api_key:
-            return False, 'No API key is saved. Choose Edit Connection to connect.'
-
-        url = '{0}/api/v1/users/me'.format(self._base_url)
-        req = self._build_request(url)
-
-        def _do():
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return resp.status
-
-        try:
-            status = call_with_timeout(_do, 10)
-            if status == 200:
-                return True, ''
-            return False, 'Unexpected HTTP {0}'.format(status)
-        except urllib.error.HTTPError as exc:
-            if exc.code in (401, 403):
-                return False, 'Chronicle rejected the API key saved on this device (HTTP {0}). Choose Edit Connection to reconnect.'.format(exc.code)
-            return False, 'HTTP {0}: {1}'.format(exc.code, exc.reason)
-        except Exception as exc:
-            return False, str(exc)
+        """Returns a (success: bool, message: str) tuple; see http_core.check_connection."""
+        return check_connection(self._base_url, self._api_key, lambda path: self._build_request(self._base_url + path))
 
     # ── private ─────────────────────────────────────────────────────────────────
 

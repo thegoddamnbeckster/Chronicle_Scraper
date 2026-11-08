@@ -22,14 +22,13 @@ get_details()/get_episode_details() -- no lookup needed, so it isn't in this
 module at all.
 """
 
-import json
 import calendar
 import time
 from datetime import datetime, timedelta
 
-import xbmc
 
 from lib import timeutil
+from lib import kodi_rpc
 from lib.logger import Logger
 
 log = Logger('progress_sync')
@@ -74,7 +73,7 @@ def lookup_episode_state(tvshowid, season, episode):
         },
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning('lookup_episode_state(tvshowid={0}): failed: {1}'.format(tvshowid, exc))
         return None

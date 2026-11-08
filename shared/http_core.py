@@ -15,6 +15,7 @@ import threading
 import time
 import urllib.error
 import urllib.parse
+import urllib.request
 
 # urlopen(timeout=N) only bounds the socket once it exists -- the DNS lookup (getaddrinfo) before that is NOT covered by that
 # timeout on any platform. A dead DNS server or a stale hostname can hang a "timed" call forever, well past the timeout passed in:
@@ -107,6 +108,33 @@ def _call_with_timeout(fn, timeout):
     if 'error' in result:
         raise result['error']
     return result.get('value')
+
+
+def check_connection(base_url, api_key, build_request, timeout=10):
+    """The add-ons' "Test Connection": asks Chronicle who this key belongs to (/api/v1/users/me). Not /api/health, which answers without
+    a key and so passes with a bad one. build_request(path) returns the urllib request for a path on this server. Returns (ok, message).
+    Goes through call_with_timeout, so the outcome also reaches the connection-health observer and a hung network cannot freeze the
+    Settings dialog it is called from."""
+    if not base_url:
+        return False, 'Chronicle URL is not configured.'
+    if not api_key:
+        return False, 'No API key is saved. Choose Edit Connection to connect.'
+    req = build_request('/api/v1/users/me')
+
+    def _do():
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status
+
+    try:
+        status = call_with_timeout(_do, timeout)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return False, ('Chronicle rejected the API key saved on this device (HTTP {0}). '
+                           'Choose Edit Connection to reconnect.'.format(exc.code))
+        return False, 'HTTP {0}: {1}'.format(exc.code, exc.reason)
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+    return (True, '') if status == 200 else (False, 'Unexpected HTTP {0}'.format(status))
 
 
 def call_with_retries(fn, timeout, log_label, log, sleep=time.sleep, backoff=None):

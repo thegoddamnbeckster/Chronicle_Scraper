@@ -33,14 +33,13 @@ VideoLibrary.SetMovieDetails/SetEpisodeDetails/SetTVShowDetails from the periodi
 lookup needed, so it isn't in this module at all.
 """
 
-import json
 import calendar
 import time
 from datetime import datetime, timedelta
 
-import xbmc
 
 from lib import timeutil
+from lib import kodi_rpc
 from lib.logger import Logger
 
 log = Logger('progress_sync')
@@ -90,7 +89,7 @@ def lookup_movie_state(title, year):
         },
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning('lookup_movie_state({0!r}): failed: {1}'.format(title, exc))
         return None

@@ -22,13 +22,12 @@ involves Chronicle's own server calling this device's JSON-RPC --
 same pull-only architecture as every other feature in this addon.
 """
 
-import json
 import posixpath
 
-import xbmc
 
 from lib.chronicle_client import ChronicleClient
 from lib.kodi_art import kodi_art_url
+from lib import kodi_rpc
 from lib.logger import Logger
 
 log = Logger('full_sync_check')
@@ -42,7 +41,7 @@ def _get_all_tvshows():
         'params': {'properties': ['title']},
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.error("full_sync_check: couldn't get TV show list: {0}".format(exc))
         return []
@@ -58,7 +57,7 @@ def _get_episodes_for_show(tvshowid):
         'params': {'tvshowid': tvshowid, 'properties': _EPISODE_PROPERTIES},
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.error("full_sync_check: couldn't get episodes for tvshowid {0}: {1}".format(tvshowid, exc))
         return []
@@ -103,7 +102,7 @@ def _set_episode_details(episodeid, updates):
         'params': dict(updates, episodeid=episodeid),
     }
     try:
-        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+        response = kodi_rpc.send(request)
     except Exception as exc:
         log.warning('full_sync_check: SetEpisodeDetails({0}) failed: {1}'.format(episodeid, exc))
         return False

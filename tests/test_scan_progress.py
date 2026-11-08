@@ -140,7 +140,7 @@ class TestTickOutput(unittest.TestCase):
         with patch.object(scan_progress.movie_art_sync, 'get_video_sources', return_value=list(listings)), \
              patch.object(scan_progress.movie_art_sync, 'list_source_dirs_cached',
                           side_effect=lambda root, **kw: listings[root]), \
-             patch.object(scan_progress.xbmc, 'executeJSONRPC', side_effect=_rpc_counts(*counts)), \
+             patch.object(scan_progress.kodi_rpc.xbmc, 'executeJSONRPC', side_effect=_rpc_counts(*counts)), \
              patch.object(scan_progress.activity_tracker, 'read_activity',
                           return_value={'timestamp': 0, 'count': 7, 'last_label': 'Red Planet'}), \
              patch.object(scan_progress.log, 'info', side_effect=lines.append):
