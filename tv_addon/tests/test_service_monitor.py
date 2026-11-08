@@ -64,6 +64,11 @@ class TestFullSyncCheck(_Base):
         self.scanning[0], self.recent[0] = False, True
         self.assertTrue(self.monitor._should_defer_for_active_scan('t'))
 
+    def test_a_video_playing_defers_the_episode_check(self):
+        # 2026-11-07: a movie stopped when its share dropped the connection while background work was reading from it.
+        with mock.patch.object(service.xbmc, 'getCondVisibility', side_effect=lambda cond: cond == 'Player.HasVideo'):
+            self.assertTrue(self.monitor._should_defer_for_active_scan('t'))
+
     def test_only_the_video_library_triggers_it(self):
         self.monitor.onScanFinished('music')
         self.run.assert_not_called()

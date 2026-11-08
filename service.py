@@ -130,10 +130,14 @@ class ChronicleMonitor(xbmc.Monitor):
         returned as a simple bool (not raised) so callers can just `if deferred: return`.
         """
         kodi_scanning = xbmc.getCondVisibility('Library.IsScanning')
+        # A film or episode being watched comes first (2026-11-07: a movie stopped when the share it was streaming from
+        # dropped the connection while Kodi's own startup scan and then these passes were reading from it). Background
+        # work waits until nothing is playing; a pass already running stops at its next item, like for a scan.
+        playing = xbmc.getCondVisibility('Player.HasVideo')
         scraper_active = activity_tracker.is_recently_active(_ACTIVITY_IDLE_TIMEOUT_SECONDS)
-        if kodi_scanning or scraper_active:
+        if kodi_scanning or playing or scraper_active:
             log.info('service: {0} deferred -- {1} still in progress'.format(
-                     task_label, 'a Kodi library scan' if kodi_scanning else 'scraper activity'))
+                     task_label, 'a Kodi library scan' if kodi_scanning else 'video playback' if playing else 'scraper activity'))
             return True
         return False
 
