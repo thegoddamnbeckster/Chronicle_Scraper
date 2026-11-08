@@ -58,6 +58,7 @@
     <category label="32137">
         <setting id="startup_delay_seconds" type="slider" label="32167" default="10" range="0,5,300" option="int" help="32168"/>
         <setting id="full_sync_check_enabled" type="bool" label="32149" default="true" help="32150"/>
+        <setting id="refresh_all_now" type="action" label="32169" action="RunScript(script.chronicle.scraper.movie,action=refresh_all)" help="32170"/>
     </category>
 
 </settings>

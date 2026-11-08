@@ -19,6 +19,7 @@ from lib.chronicle_client import ChronicleClient, health
 from lib.connection_ui import ConnectionUi, parse_script_args
 from lib.device_auth import DeviceAuthManager
 from lib import collection_art_sync
+from lib import bulk_refresh
 from lib import device_registration
 from lib import watch_rating_sync
 
@@ -68,6 +69,9 @@ def show_menu():
         return
     if args.get('action') == 'sync_collections':
         _sync_collections_now()
+        return
+    if args.get('action') == 'refresh_all':
+        _refresh_all_now()
         return
     if args.get('action') == 'test_connection':
         _test_connection()
@@ -136,6 +140,11 @@ def _sync_collections_now():
         icon=xbmcgui.NOTIFICATION_INFO if not result['errors'] else xbmcgui.NOTIFICATION_WARNING,
         time=8000,
     )
+
+
+def _refresh_all_now():
+    """The \"Refresh all\" button: re-reads every title from Chronicle, one at a time (lib/bulk_refresh.py)."""
+    bulk_refresh.run_from_settings(ADDON, 'movie', {'title': 32169, 'confirm': 32171, 'stop': 32172, 'done': 32173, 'stopped': 32174})
 
 
 if __name__ == '__main__':

@@ -16,14 +16,15 @@ class TestDispatch(unittest.TestCase):
                 mock.patch.object(default, '_test_connection') as test, \
                 mock.patch.object(default, '_sync_watch_ratings_now') as watch, \
                 mock.patch.object(default, '_sync_collections_now') as collections, \
+                mock.patch.object(default, '_refresh_all_now') as refresh_all, \
                 mock.patch.object(default, '_refresh_auth_status') as refresh, \
                 mock.patch.object(default, 'ADDON') as addon:
             default.show_menu()
         return {'auth': connect, 'change_url': change, 'test_connection': test, 'sync_watch_ratings': watch,
-                'sync_collections': collections, 'refresh': refresh, 'addon': addon}
+                'sync_collections': collections, 'refresh_all': refresh_all, 'refresh': refresh, 'addon': addon}
 
     def test_each_action_runs_only_its_own_handler_and_does_not_open_settings(self):
-        for action in ('auth', 'change_url', 'test_connection', 'sync_watch_ratings', 'sync_collections'):
+        for action in ('auth', 'change_url', 'test_connection', 'sync_watch_ratings', 'sync_collections', 'refresh_all'):
             calls = self._run('action=' + action)
             for name, mocked in calls.items():
                 if name == 'addon':

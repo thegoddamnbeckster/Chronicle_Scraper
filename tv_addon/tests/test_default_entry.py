@@ -42,7 +42,7 @@ class _Base(unittest.TestCase):
 class TestDispatch(_Base):
     def _run(self, *argv):
         names = ('_connect_to_chronicle', '_change_chronicle_url', '_test_connection', '_library_repair_explain', '_library_repair_preview',
-                 '_library_repair', '_library_repair_undo', '_refresh_auth_status')
+                 '_library_repair', '_library_repair_undo', '_refresh_all_now', '_refresh_auth_status')
         mocks = {n: mock.patch.object(default, n).start() for n in names}
         self.addCleanup(mock.patch.stopall)
         with mock.patch.object(default.sys, 'argv', ['default.py'] + list(argv)):
@@ -52,7 +52,7 @@ class TestDispatch(_Base):
     def test_each_action_runs_only_its_own_handler(self):
         table = {'auth': '_connect_to_chronicle', 'change_url': '_change_chronicle_url', 'test_connection': '_test_connection',
                  'library_repair_explain': '_library_repair_explain', 'library_repair_preview': '_library_repair_preview',
-                 'library_repair': '_library_repair', 'library_repair_undo': '_library_repair_undo'}
+                 'library_repair': '_library_repair', 'library_repair_undo': '_library_repair_undo', 'refresh_all': '_refresh_all_now'}
         for action, handler in table.items():
             mocks = self._run('action=' + action)
             mock.patch.stopall()

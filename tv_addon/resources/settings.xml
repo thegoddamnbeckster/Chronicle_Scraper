@@ -32,6 +32,7 @@
         <setting id="startup_delay_seconds" type="slider" label="32194" default="10" range="0,5,300" option="int" help="32195"/>
         <setting id="full_sync_check_enabled" type="bool" label="32180" default="true" help="32181"/>
         <setting id="remove_local_show_poster" type="bool" label="32192" default="true" help="32193"/>
+        <setting id="refresh_all_now" type="action" label="32196" action="RunScript(script.chronicle.scraper.tv,action=refresh_all)" help="32197"/>
     </category>
 
     <!-- ============================================================================ -->

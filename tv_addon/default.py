@@ -52,6 +52,7 @@ from lib.logger import Logger
 from lib.chronicle_client import ChronicleClient, health
 from lib.connection_ui import ConnectionUi, parse_script_args
 from lib.device_auth import DeviceAuthManager
+from lib import bulk_refresh
 from lib import device_registration
 from lib import library_repair
 
@@ -94,6 +95,9 @@ def show_menu():
         return
     if args.get('action') == 'change_url':
         _change_chronicle_url()
+        return
+    if args.get('action') == 'refresh_all':
+        _refresh_all_now()
         return
     if args.get('action') == 'test_connection':
         _test_connection()
@@ -340,6 +344,11 @@ def _library_repair_undo():
         message += ADDON.getLocalizedString(32185).format(restored_watched)
     xbmcgui.Dialog().ok(heading, message)
     ADDON.setSetting('library_repair_last_result', message)
+
+
+def _refresh_all_now():
+    """The \"Refresh all\" button: re-reads every title from Chronicle, one at a time (lib/bulk_refresh.py)."""
+    bulk_refresh.run_from_settings(ADDON, 'tvshow', {'title': 32196, 'confirm': 32198, 'stop': 32199, 'done': 32200, 'stopped': 32201})
 
 
 if __name__ == '__main__':

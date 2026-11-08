@@ -272,3 +272,27 @@ msgstr ""
 msgctxt "#32168"
 msgid "How long after Kodi starts before this add-on does anything: the watch history, ratings and collection art syncs that run at start-up, and the check for items Chronicle says changed. Raise it if your network drives need longer to mount, or lower it to 0 to start straight away. Default 10 seconds. It cannot delay Kodi's own start-up library scan, which Kodi runs on its own schedule."
 msgstr ""
+
+msgctxt "#32169"
+msgid "Refresh all movies from Chronicle"
+msgstr ""
+
+msgctxt "#32170"
+msgid "Re-reads every movie in your library from Chronicle, one at a time, so changes such as actor photos reach movies Kodi already has. A library scan only looks at new or changed folders. It waits for a scan to finish and slows down while a video plays."
+msgstr ""
+
+msgctxt "#32171"
+msgid "Re-read every movie from Chronicle, one at a time? This can take hours. It waits for any library scan to finish and slows down while a video is playing, and you can keep using Kodi. Press the button again to stop it."
+msgstr ""
+
+msgctxt "#32172"
+msgid "A refresh is already running. Stop it?"
+msgstr ""
+
+msgctxt "#32173"
+msgid "Refreshed {0} of {1} movies; {2} skipped, {3} error(s)"
+msgstr ""
+
+msgctxt "#32174"
+msgid "Stopped after {0} of {1} movies. Run it again to carry on."
+msgstr ""
