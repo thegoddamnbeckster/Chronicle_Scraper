@@ -10,11 +10,22 @@ scraper's deprecated setInfo('video', {...}) dict style.
 
 import re
 
+import xbmc
+
 from lib.logger import Logger
 
 log = Logger('video_info')
 
 _YOUTUBE_RE = re.compile(r'(?:v=|youtu\.be/)([\w-]{6,})')
+
+
+def build_actors(cast):
+    """Chronicle's cast as Kodi actors, each with its photo. Chronicle sends the headshot as 'thumbUrl'; leaving it out (as the scrapers
+    did until 2026-11-07) gives every actor Kodi has no photo for a silhouette, whatever Chronicle holds. A missing link stays blank."""
+    return [
+        xbmc.Actor(name=actor.get('name') or '', role=actor.get('role') or '', order=i, thumbnail=actor.get('thumbUrl') or '')
+        for i, actor in enumerate(cast or [])
+    ]
 
 
 def youtube_trailer_uri(trailer_url):

@@ -86,7 +86,7 @@ class TestGetDetails(_Base):
                'crew': [{'name': 'Mann', 'job': 'Director'}, {'name': 'W', 'job': 'Screenplay'}, 'junk'],
                'collection': {'name': 'Heat Collection', 'overview': 'o', 'posterUrl': 'http://c/sp.jpg', 'backdropUrl': 'http://c/sb.jpg'},
                'ratings': {}, 'artwork': {'poster': [{'url': 'http://c/p.jpg'}]}, 'userRating': 9,
-               'cast': [{'name': 'Al', 'role': 'Vincent'}], 'trailerUrl': 'https://youtu.be/abcdef123'}
+               'cast': [{'name': 'Al', 'role': 'Vincent', 'thumbUrl': 'https://img/al.jpg'}, {'name': 'Bo', 'role': None, 'thumbUrl': None}], 'trailerUrl': 'https://youtu.be/abcdef123'}
 
     def _run(self, quick=True, **overrides):
         self.addon.getSettingBool.return_value = quick
@@ -103,6 +103,8 @@ class TestGetDetails(_Base):
         vtag.setUserRating.assert_called_with(9)
         vtag.setTrailer.assert_called_once()
         self.assertEqual(vtag.setCast.call_args[0][0][0].name, 'Al')
+        # Chronicle sends each actor's photo; leaving it out gave every actor Kodi had no photo for a silhouette (Musk, 2026-11-07)
+        self.assertEqual([a.thumbnail for a in vtag.setCast.call_args[0][0]], ['https://img/al.jpg', ''])
         sc.xbmcplugin.setResolvedUrl.assert_called_once()
 
     def test_quick_scan_defers_art_files_and_watch_sync(self):

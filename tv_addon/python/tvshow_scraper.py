@@ -49,7 +49,7 @@ from lib import playback_pacing
 from lib.logger import Logger
 from lib import activity_tracker
 from lib.chronicle_client import ChronicleClient
-from lib.kodi_video_info import apply_common_video_info, apply_ratings, apply_artwork
+from lib.kodi_video_info import apply_common_video_info, apply_ratings, apply_artwork, build_actors
 from lib.tvshow_location import find_show_location
 from lib.show_art_repair import remove_local_show_posters
 from lib import progress_sync
@@ -155,10 +155,7 @@ def get_details(show_id, handle):
         vtag.setUserRating(details['userRating'])
 
     if details.get('cast'):
-        vtag.setCast([
-            xbmc.Actor(name=actor.get('name') or '', role=actor.get('role') or '', order=i)
-            for i, actor in enumerate(details['cast'])
-        ])
+        vtag.setCast(build_actors(details['cast']))
 
     # Kodi echoes this back verbatim as the "url" param to getepisodelist.
     vtag.setEpisodeGuide(build_lookup_string(show_id))
@@ -308,10 +305,7 @@ def get_episode_details(encoded_ids, handle):
             vtag.setResumePoint(0, 0)
 
     if details.get('cast'):
-        vtag.setCast([
-            xbmc.Actor(name=actor.get('name') or '', role=actor.get('role') or '', order=i)
-            for i, actor in enumerate(details['cast'])
-        ])
+        vtag.setCast(build_actors(details['cast']))
     if details.get('thumbUrl'):
         listitem.setArt({'thumb': details['thumbUrl']})
         vtag.addAvailableArtwork(details['thumbUrl'], 'thumb')

@@ -53,6 +53,7 @@ from lib.logger import Logger
 from lib import activity_tracker
 from lib.chronicle_client import ChronicleClient
 from lib.kodi_video_info import (
+    build_actors,
     apply_common_video_info, apply_ratings, apply_artwork, youtube_trailer_uri,
 )
 from lib.movie_art_sync import sync_movie_art, find_movie_location
@@ -326,10 +327,7 @@ def get_details(media_item_id, handle):
     t_movie_art = time.time()
 
     if details.get('cast'):
-        vtag.setCast([
-            xbmc.Actor(name=actor.get('name') or '', role=actor.get('role') or '', order=i)
-            for i, actor in enumerate(details['cast'])
-        ])
+        vtag.setCast(build_actors(details['cast']))
 
     trailer_uri = youtube_trailer_uri(details.get('trailerUrl'))
     if trailer_uri:

@@ -76,7 +76,7 @@ class TestFindShow(_Base):
 class TestGetDetails(_Base):
     DETAILS = {'title': 'Show', 'year': 2020, 'tagline': 'tag', 'status': 'Ended', 'runtimeMinutes': 45, 'userRating': 8,
                'seasons': [{'number': 1, 'name': 'One', 'posterUrl': 'http://c/s1.jpg'}, {'number': None}, {'number': 2}],
-               'cast': [{'name': 'Actor', 'role': 'Hero'}], 'ratings': {}, 'artwork': {'poster': [{'url': 'http://c/p.jpg'}]},
+               'cast': [{'name': 'Actor', 'role': 'Hero', 'thumbUrl': 'https://img/a.jpg'}], 'ratings': {}, 'artwork': {'poster': [{'url': 'http://c/p.jpg'}]},
                'externalIds': {'tvdb': '5'}}
 
     def test_everything_is_sent_to_kodi_and_a_resolved_url_is_set(self):
@@ -89,6 +89,8 @@ class TestGetDetails(_Base):
         vtag.setDuration.assert_called_with(2700)
         vtag.setUserRating.assert_called_with(8)
         vtag.setEpisodeGuide.assert_called_with(ts.build_lookup_string(5))
+        # each actor reaches Kodi with Chronicle's photo, not a silhouette (Musk, 2026-11-07)
+        self.assertEqual([x.thumbnail for x in vtag.setCast.call_args[0][0]], ['https://img/a.jpg'])
         self.assertEqual([c[0][0] for c in vtag.addSeason.call_args_list], [1, 2])     # the season without a number is skipped
         ts.xbmcplugin.setResolvedUrl.assert_called_once()
         ts.remove_local_show_posters.assert_called_once()
@@ -135,7 +137,7 @@ class TestEpisodeDetails(_Base):
     DETAILS = {'title': 'Pilot', 'showTitle': 'Show', 'showYear': 2020, 'season': 1, 'episode': 2, 'overview': 'Plot', 'year': 2020,
                'aired': '2020-05-01T00:00:00Z', 'runtimeMinutes': 40, 'userRating': 9, 'thumbUrl': 'http://c/t.jpg',
                'crew': [{'name': 'Dir', 'job': 'Director'}, {'name': 'Wri', 'job': 'Teleplay'}, 'junk', {'name': 'Other', 'job': 'Gaffer'}],
-               'externalIds': {'tvdb': '5', 'imdb': 'tt1'}, 'cast': [{'name': 'A', 'role': 'R'}], 'ratings': {}}
+               'externalIds': {'tvdb': '5', 'imdb': 'tt1'}, 'cast': [{'name': 'A', 'role': 'R', 'thumbUrl': 'https://img/e.jpg'}], 'ratings': {}}
 
     def _run(self, **overrides):
         details = dict(self.DETAILS, **overrides)
@@ -149,6 +151,7 @@ class TestEpisodeDetails(_Base):
         vtag.setDirectors.assert_called_with(['Dir'])
         vtag.setWriters.assert_called_with(['Wri'])
         vtag.setUniqueIDs.assert_called_with({'imdb': 'tt1', 'tvdb': '5'}, 'imdb')
+        self.assertEqual([x.thumbnail for x in vtag.setCast.call_args[0][0]], ['https://img/e.jpg'])
         vtag.setUserRating.assert_called_with(9)
         ts.find_show_location.assert_called_once_with('Show', 2020)
         self.assertEqual(self.items[0]._art, {'thumb': 'http://c/t.jpg'})
