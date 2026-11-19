@@ -179,6 +179,27 @@ class TestGetEndpoints(_Net):
         self.assertIsNone(c.get_episode_list(3))
         self.assertEqual(len(calls), 1)
 
+    def test_a_failure_says_whether_chronicle_was_unavailable_or_simply_said_no(self):
+        """A None alone cannot tell "Chronicle is down" from "that does not exist"; callers that discard things on an empty
+        answer need to know (live 2026-11-18: a ten-minute outage dropped good cached ids)."""
+        c, _ = _client()
+        self.assertFalse(c.last_call_transient)
+        for exc, transient in ((_http_error(500), True), (_http_error(503), True), (_http_error(429), True), (_http_error(408), True),
+                               (urllib.error.URLError('down'), True), (TimeoutError('slow'), True), (ValueError('bad json'), True),
+                               (_http_error(404), False), (_http_error(401), False), (_http_error(400), False)):
+            self._urlopen(exc)
+            self.assertIsNone(c.get_episode_list(3))
+            self.assertEqual(c.last_call_transient, transient, exc)
+
+    def test_a_later_success_clears_the_flag(self):
+        c, _ = _client()
+        self._urlopen(_http_error(500))
+        c.get_episode_list(3)
+        self.assertTrue(c.last_call_transient)
+        self._urlopen(_Resp({'data': [1]}))
+        self.assertEqual(c.get_episode_list(3), [1])
+        self.assertFalse(c.last_call_transient)
+
     def test_envelope_without_data_is_none(self):
         c, _ = _client()
         self._urlopen(_Resp({'success': True}))

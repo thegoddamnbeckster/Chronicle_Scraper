@@ -40,13 +40,28 @@ from lib.full_sync_check import diff_movie, needs_cast_refresh, refresh_movie, s
 from lib import progress_sync
 from lib import recent_play
 from lib.kodi_art import kodi_art_url
-from lib.chronicle_client import ChronicleClient
+from lib.chronicle_client import ChronicleClient, ChronicleUnavailable
 from lib import kodi_rpc
 from lib.logger import Logger
 
 log = Logger('watch_rating_sync')
 
 _MIN_ITEM_SPACING_SECONDS = 0.2
+
+# After this many items in a row that Chronicle could not answer, the pass stops instead of working through the rest of a
+# library one failed request at a time: Chronicle is down or restarting, and the next scheduled pass will do the work.
+_MAX_CONSECUTIVE_UNAVAILABLE = 5
+
+
+def _raise_if_unavailable(client, what):
+    """Call when a lookup came back empty and the caller is about to treat that as "gone": if Chronicle simply did not
+    answer (server error, rate limit, timeout, no connection) raise ChronicleUnavailable instead, so the cached id is kept
+    and the item is counted as an error, not silently skipped. A real "not found" (404) falls through to the old handling.
+    `is True` so a client double with no such attribute never reads as unavailable."""
+    if getattr(client, 'last_call_transient', False) is True:
+        raise ChronicleUnavailable(
+            '{0}: Chronicle did not answer (a server error or no connection); its cached id was kept and nothing was '
+            'changed -- will try again next pass'.format(what))
 
 # recent_play.load() for the pass in progress, so thousands of items don't each re-read the file.
 _run_plays = None
@@ -110,6 +125,8 @@ def run(is_cancelled=None, progress_callback=None):
               'movies_changed': 0, 'shows_changed': 0, 'episodes_changed': 0}
     processed = 0
     cancelled = False
+    consecutive_unavailable = 0
+    gave_up = False
 
     for movie in movies:
         if is_cancelled is not None and is_cancelled():
@@ -122,13 +139,22 @@ def run(is_cancelled=None, progress_callback=None):
             if _sync_one_movie(client, cache, movie):
                 counts['movies_changed'] += 1
             counts['movies'] += 1
+            consecutive_unavailable = 0
+        except ChronicleUnavailable as exc:
+            counts['errors'] += 1
+            consecutive_unavailable += 1
+            log.warning('watch_rating_sync: movie "{0}" not synced: {1}'.format(label, exc))
+            if consecutive_unavailable >= _MAX_CONSECUTIVE_UNAVAILABLE:
+                gave_up = True
+                break
         except Exception as exc:
             counts['errors'] += 1
+            consecutive_unavailable = 0
             log.warning('watch_rating_sync: movie "{0}" failed: {1}'.format(label, exc))
         processed += 1
         xbmc.sleep(int(_MIN_ITEM_SPACING_SECONDS * 1000))
 
-    if not cancelled:
+    if not cancelled and not gave_up:
         for show in shows:
             if is_cancelled is not None and is_cancelled():
                 cancelled = True
@@ -143,8 +169,17 @@ def run(is_cancelled=None, progress_callback=None):
                 counts['episodes'] += episode_count
                 counts['shows_changed'] += 1 if show_changed else 0
                 counts['episodes_changed'] += episodes_changed
+                consecutive_unavailable = 0
+            except ChronicleUnavailable as exc:
+                counts['errors'] += 1
+                consecutive_unavailable += 1
+                log.warning('watch_rating_sync: show "{0}" not synced: {1}'.format(label, exc))
+                if consecutive_unavailable >= _MAX_CONSECUTIVE_UNAVAILABLE:
+                    gave_up = True
+                    break
             except Exception as exc:
                 counts['errors'] += 1
+                consecutive_unavailable = 0
                 log.warning('watch_rating_sync: show "{0}" failed: {1}'.format(label, exc))
             processed += 1
             xbmc.sleep(int(_MIN_ITEM_SPACING_SECONDS * 1000))
@@ -158,6 +193,10 @@ def run(is_cancelled=None, progress_callback=None):
             counts['movies'], counts['shows'], counts['episodes'],
             counts['movies_changed'], counts['shows_changed'], counts['episodes_changed'],
             counts['errors'], ' (cancelled)' if cancelled else ''))
+    if gave_up:
+        log.error('watch_rating_sync: stopped early -- Chronicle did not answer for {0} items in a row; nothing was '
+                  'discarded and the next pass will carry on'.format(_MAX_CONSECUTIVE_UNAVAILABLE))
+        counts['unavailable'] = True
     counts['cancelled'] = cancelled
     return counts
 
@@ -183,6 +222,7 @@ def _resolve_movie_id(client, cache, movie):
 
     result = client.search_movie(title, year, filename=filename)
     if not result or not result.get('id'):
+        _raise_if_unavailable(client, 'search_movie({0!r})'.format(title))
         return None
     cache[key] = result['id']
     return result['id']
@@ -209,6 +249,8 @@ def _sync_one_movie(client, cache, movie):
 
     details = client.get_movie_details(media_item_id)
     if not details:
+        # Chronicle not answering is not "the id is gone": keep the cached id and leave this item for the next pass.
+        _raise_if_unavailable(client, '"{0}"'.format(label))
         # A CACHED id that no longer resolves (deleted/merged in Chronicle since it was cached) --
         # drop it and retry once via a fresh search, same self-healing reasoning as
         # media_id_cache.py's own doc describes. An id the search just returned is not retried: searching
@@ -218,6 +260,8 @@ def _sync_one_movie(client, cache, movie):
                      're-resolving'.format(label, media_item_id))
             media_item_id = _resolve_movie_id(client, cache, movie)
             details = client.get_movie_details(media_item_id) if media_item_id else None
+            if not details:
+                _raise_if_unavailable(client, '"{0}"'.format(label))
         if not details:
             log.info('watch_rating_sync: "{0}" -- no details returned, skipping'.format(label))
             return
@@ -232,6 +276,8 @@ def _sync_one_movie(client, cache, movie):
         cache.pop(key, None)
         media_item_id = _resolve_movie_id(client, cache, movie)
         details = client.get_movie_details(media_item_id) if media_item_id else None
+        if not details:
+            _raise_if_unavailable(client, '"{0}"'.format(label))
         if not details or not media_id_cache.titles_agree(title, details.get('title')):
             cache.pop(key, None)
             log.warning('watch_rating_sync: "{0}" -- no Chronicle item with a matching title; '
@@ -249,6 +295,7 @@ def _sync_one_movie(client, cache, movie):
         media_item_id = _resolve_movie_id(client, cache, movie)
         details = client.get_movie_details(media_item_id) if media_item_id else None
         if not details:
+            _raise_if_unavailable(client, '"{0}"'.format(label))
             return
         if details.get('year') and _contradicts(path_years, details['year']):
             # Still the wrong film after a fresh lookup: write nothing rather than cross-link it.
@@ -325,10 +372,13 @@ def _resolve_show_id(client, cache, show):
         result = client.resolve_show_by_external_id(source, external_id)
         if result and result.get('id'):
             break
+        # Chronicle not answering must not fall through to the title search below: that one resolves OR CREATES.
+        _raise_if_unavailable(client, 'resolve_show_by_external_id({0}, {1})'.format(source, external_id))
         result = None
     if result is None:
         result = client.search_show(show.get('title'), show.get('year'))
     if not result or not result.get('id'):
+        _raise_if_unavailable(client, 'search_show({0!r})'.format(show.get('title')))
         return None
     cache[key] = result['id']
     return result['id']
@@ -357,12 +407,15 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
 
     show_details = client.get_show_details(show_id)
     if not show_details:
+        _raise_if_unavailable(client, '"{0}"'.format(label))
         # Same cached-id self-heal as _sync_one_movie -- see that function's own comment.
         if was_cached and cache.pop(key, None) is not None:
             log.info('watch_rating_sync: "{0}" -- cached id {1} no longer resolves, '
                      're-resolving'.format(label, show_id))
             show_id = _resolve_show_id(client, cache, show)
             show_details = client.get_show_details(show_id) if show_id else None
+            if not show_details:
+                _raise_if_unavailable(client, '"{0}"'.format(label))
         if not show_details:
             log.info('watch_rating_sync: "{0}" -- no details returned, skipping episodes '
                      'too'.format(label))
@@ -378,6 +431,8 @@ def _sync_one_show(client, cache, show, is_cancelled, progress_callback, process
         cache.pop(key, None)
         show_id = _resolve_show_id(client, cache, show)
         show_details = client.get_show_details(show_id) if show_id else None
+        if not show_details:
+            _raise_if_unavailable(client, '"{0}"'.format(label))
         if not show_details or not media_id_cache.titles_agree(title, show_details.get('title')):
             cache.pop(key, None)
             log.warning('watch_rating_sync: "{0}" -- no Chronicle show with a matching title; '

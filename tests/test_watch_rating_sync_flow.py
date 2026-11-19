@@ -289,6 +289,67 @@ class TestSyncOneEpisode(unittest.TestCase):
         write.assert_not_called()
 
 
+class TestChronicleUnavailable(_MovieBase):
+    """Live 2026-11-18: Chronicle was stopped for ten minutes during a scheduled pass. Every 500 was read as "this cached id no
+    longer resolves", so the pass dropped the cached id of every item it reached, searched again (also failing), and reported
+    "done, 0 error(s)". A Chronicle that does not answer is not an item that is gone."""
+
+    def _down(self):
+        self.client.last_call_transient = True
+
+    def test_a_cached_id_survives_chronicle_not_answering(self):
+        self.cache['movie:5'] = 42
+        self._down()
+        self.client.get_movie_details.return_value = None
+        with self.assertRaises(wrs.ChronicleUnavailable):
+            self._sync()
+        self.assertEqual(self.cache, {'movie:5': 42})        # kept
+        self.client.search_movie.assert_not_called()         # and no resolve-or-create search was started
+        self.patches['_set_movie_details'].assert_not_called()
+
+    def test_a_real_not_found_still_drops_the_cached_id_and_re_resolves(self):
+        self.cache['movie:5'] = 42
+        self.client.last_call_transient = False              # Chronicle answered, and said no
+        self.client.get_movie_details.side_effect = [None, _details()]
+        self.client.search_movie.return_value = {'id': 77}
+        self.patches['_build_state_updates'].return_value = {'userrating': 8}
+        self.assertTrue(self._sync())
+        self.assertEqual(self.cache['movie:5'], 77)
+
+    def test_a_search_that_fails_because_chronicle_is_down_is_not_an_unresolvable_movie(self):
+        self._down()
+        self.client.search_movie.return_value = None
+        with self.assertRaises(wrs.ChronicleUnavailable):
+            wrs._resolve_movie_id(self.client, self.cache, _movie())
+        self.assertEqual(self.cache, {})
+
+    def test_a_real_title_mismatch_whose_re_resolve_cannot_reach_chronicle_is_an_error_not_a_quiet_skip(self):
+        self.cache['movie:5'] = 42
+        self.client.get_movie_details.return_value = _details(title='Casino')   # a genuine title mismatch
+        self.client.search_movie.return_value = None
+        self._down()
+        with self.assertRaises(wrs.ChronicleUnavailable):
+            self._sync()
+        self.patches['_set_movie_details'].assert_not_called()
+
+    def test_a_show_is_treated_the_same(self):
+        self.cache['tvshow:7'] = 55
+        self._down()
+        self.client.get_show_details.return_value = None
+        with self.assertRaises(wrs.ChronicleUnavailable):
+            wrs._sync_one_show(self.client, self.cache, {'tvshowid': 7, 'title': 'Show', 'year': 2020}, None, None, 0, 1)
+        self.assertEqual(self.cache, {'tvshow:7': 55})
+        self.client.search_show.assert_not_called()
+
+    def test_show_id_lookup_does_not_fall_through_to_the_create_search_when_chronicle_is_down(self):
+        self._down()
+        self.client.resolve_show_by_external_id.return_value = None
+        with mock.patch.object(wrs, '_show_external_ids', return_value=[('imdb', 'tt1')]):
+            with self.assertRaises(wrs.ChronicleUnavailable):
+                wrs._resolve_show_id(self.client, self.cache, {'tvshowid': 7, 'title': 'Show'})
+        self.client.search_show.assert_not_called()
+
+
 class TestRun(unittest.TestCase):
     def setUp(self):
         for name, new in (('ChronicleClient', mock.Mock()), ('_get_all_movies', mock.Mock(return_value=[_movie(), _movie(movieid=6, title='Ronin')])),
@@ -337,3 +398,38 @@ class TestRun(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestRunWhenChronicleIsDown(unittest.TestCase):
+    def setUp(self):
+        self.movies = [_movie(movieid=i, title='M{0}'.format(i)) for i in range(1, 11)]
+        for name, new in (('ChronicleClient', mock.Mock()), ('_get_all_movies', mock.Mock(return_value=self.movies)),
+                          ('_get_all_tvshows', mock.Mock(return_value=[{'tvshowid': 7, 'title': 'Show'}])),
+                          ('_sync_one_movie', mock.Mock(side_effect=wrs.ChronicleUnavailable('down'))),
+                          ('_sync_one_show', mock.Mock(return_value=(0, False, 0)))):
+            p = mock.patch.object(wrs, name, new)
+            setattr(self, name, p.start())
+            self.addCleanup(p.stop)
+        for target in ('load', 'save'):
+            p = mock.patch.object(media_id_cache, target, return_value={})
+            setattr(self, 'cache_' + target, p.start())
+            self.addCleanup(p.stop)
+        p = mock.patch.object(wrs.xbmc, 'sleep')
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_the_pass_stops_early_instead_of_failing_every_item_one_request_at_a_time(self):
+        result = wrs.run()
+        self.assertEqual(self._sync_one_movie.call_count, wrs._MAX_CONSECUTIVE_UNAVAILABLE)
+        self.assertEqual(result['errors'], wrs._MAX_CONSECUTIVE_UNAVAILABLE)   # counted, not "0 error(s)"
+        self.assertTrue(result['unavailable'])
+        self._sync_one_show.assert_not_called()
+        self.cache_save.assert_called_once()                                   # the cache is saved, untouched
+
+    def test_an_isolated_outage_does_not_stop_the_pass(self):
+        self._sync_one_movie.side_effect = [wrs.ChronicleUnavailable('blip'), True] * 5
+        result = wrs.run()
+        self.assertEqual(self._sync_one_movie.call_count, 10)
+        self.assertEqual(result['errors'], 5)
+        self.assertNotIn('unavailable', result)
+        self.assertEqual(self._sync_one_show.call_count, 1)

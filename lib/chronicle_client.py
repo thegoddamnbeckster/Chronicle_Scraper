@@ -22,6 +22,12 @@ from lib.logger import Logger
 
 ADDON = xbmcaddon.Addon()
 log   = Logger('client')
+
+
+class ChronicleUnavailable(Exception):
+    """Chronicle did not answer properly (a server error, a rate limit, a timeout or no connection) -- as opposed to
+    answering "no, that does not exist". A caller that is about to discard something because a lookup came back empty
+    raises this instead, so a Chronicle that is down or restarting is never mistaken for an item that is gone."""
 health = connection_health.install(ADDON, log)
 
 _USER_AGENT = user_agent(ADDON.getAddonInfo('id'))
@@ -57,6 +63,10 @@ class ChronicleClient:
 
     def __init__(self):
         self._base_url, self._api_key = _read_connection()
+        # True when the most recent _get() failed because Chronicle did not answer properly (HTTP 5xx, 408, 429, a timeout
+        # or no connection), False when it succeeded or answered a definite "no" (404, 401...). A None result alone cannot
+        # tell those apart, and treating "Chronicle is down" as "the item is gone" discards good cached ids.
+        self.last_call_transient = False
 
     def refresh_settings(self):
         """Re-read URL and API key from addon settings.
@@ -463,7 +473,9 @@ class ChronicleClient:
 
     def _get(self, path_or_url: str, log_label: str, full_url: bool = False, timeout: int = 20):
         """Shared GET helper: builds the request, parses the {success,data} envelope,
-        logs and swallows any failure so callers just get None back."""
+        logs and swallows any failure so callers just get None back. Sets last_call_transient so a caller that
+        must not act on a transient failure can tell it from a real "not found"."""
+        self.last_call_transient = False
         if not health.not_configured(self._base_url, self._api_key):
             log.warning('Chronicle URL or API key not configured — {0} skipped'.format(log_label))
             return None
@@ -484,13 +496,17 @@ class ChronicleClient:
             # key). Distinct from "not reachable at all" below -- worth telling
             # those apart when reading the log later.
             log.error('{0}: Chronicle returned HTTP {1} ({2})'.format(log_label, exc.code, exc.reason))
+            self.last_call_transient = exc.code >= 500 or exc.code in (408, 429)
             return None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
             log.error('{0}: Chronicle not reachable at {1} after retrying ({2})'.format(
                       log_label, self._base_url, exc))
+            self.last_call_transient = True
             return None
         except Exception as exc:
             log.error('{0}: unexpected error: {1}'.format(log_label, exc))
+            # An answer that could not be read (an error page from something in front of Chronicle, say) is not a "no".
+            self.last_call_transient = True
             return None
 
     def _post(self, path: str, body: dict, log_label: str, timeout: int = 20):
