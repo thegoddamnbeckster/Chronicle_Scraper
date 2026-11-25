@@ -106,6 +106,10 @@ class TestRewatchInProgress(unittest.TestCase):
         self.assertEqual(ps.resolve_watched_direction(True, self.FINISHED, _kodi()), ('push', self.FINISHED))
         self.assertEqual(self._dir(_kodi(), None), ('push', self.FINISHED))
 
+    def test_a_device_finish_older_than_the_position_does_not_erase_it(self):
+        # Newer than Chronicle's finish (1 Oct) but older than the position (23 Nov): nothing to report.
+        self.assertEqual(self._dir(_kodi(playcount=1, lastplayed='2026-11-10 12:00:00'), self.RESUMED_LATER), (None, None))
+
     def test_a_newer_play_on_the_device_still_pulls(self):
         self.assertEqual(self._dir(_kodi(playcount=1, lastplayed='2026-12-01 12:00:00'), self.RESUMED_LATER),
                          ('pull', '2026-12-01 12:00:00'))

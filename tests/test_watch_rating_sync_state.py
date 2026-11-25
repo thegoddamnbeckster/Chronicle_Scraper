@@ -55,6 +55,14 @@ class TestBuildStateUpdates(unittest.TestCase):
         updates = self._build({'isWatched': False, 'watchResetAt': '2020-06-01T00:00:00Z'}, _kodi(playcount=1, lastplayed=KODI_OLDER))
         self.assertEqual(updates, {'playcount': 0, 'resume': {'position': 0, 'total': 0}})
 
+    def test_a_rewatch_in_progress_reaches_the_device_as_a_position_not_as_watched(self):
+        # Chronicle: finished 1 Oct, then a rewatch at 75.86% recorded 23 Nov. Pushing 'watched' here would zero the position.
+        updates = self._build({'isWatched': True, 'lastWatchedAt': CHRONICLE_AT, 'resumePositionPercent': 75.86,
+                               'resumeUpdatedAt': '2026-11-23T18:57:35Z', 'runtimeMinutes': 100}, _kodi())
+        self.assertEqual(updates['resume']['total'], 6000)
+        self.assertAlmostEqual(updates['resume']['position'], 4551.6, places=1)
+        self.assertNotIn('playcount', updates)
+
     def test_kodis_newer_watch_is_reported_to_chronicle(self):
         self._build({'isWatched': True, 'lastWatchedAt': CHRONICLE_AT}, _kodi(playcount=1, lastplayed=KODI_NEWER))
         self.client.push_watched.assert_called_once()

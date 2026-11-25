@@ -199,10 +199,14 @@ def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item
     if has_chronicle and not has_kodi:
         return (None, None) if in_progress_is_newer else ('push', chronicle_watched_at)
 
+    if in_progress_is_newer:
+        # Chronicle's latest word is the position, so only a play on this device newer than THAT is worth reporting; an
+        # older finish here would otherwise be pulled in as 'watched' and erase the position on every device.
+        if _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_resume_at):
+            return 'pull', kodi_lastplayed
+        return None, None
     if _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_watched_at):
         return 'pull', kodi_lastplayed
-    if in_progress_is_newer:
-        return None, None
     # Both sides already hold this same play: nothing to reconcile, unless Kodi still carries a resume bookmark on
     # it (the push is what clears that). Without this an equal pair always fell through to 'push', so every pass
     # re-wrote identical playcount/lastplayed/resume and logged it as a change -- 500+ movies and thousands of
