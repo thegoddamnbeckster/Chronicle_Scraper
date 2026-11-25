@@ -633,9 +633,13 @@ def _get_all_movies():
 
 
 def _get_all_tvshows():
+    """Every show in this device's library that has at least one episode. A show row with none (an empty folder, a show
+    whose episodes were never scraped or were cleaned away) is not something this Kodi has, and Kodi does not list it: asking
+    Chronicle about it, and resolving it by title, would only touch shows that are not here. A reply that carries no episode
+    count at all is kept."""
     request = {
         'jsonrpc': '2.0', 'id': 1, 'method': 'VideoLibrary.GetTVShows',
-        'params': {'properties': _SHOW_PROPERTIES},
+        'params': {'properties': _SHOW_PROPERTIES + ['episode']},
     }
     try:
         response = kodi_rpc.send(request)
@@ -645,7 +649,11 @@ def _get_all_tvshows():
     if 'error' in response:
         log.error('VideoLibrary.GetTVShows rejected: {0}'.format(response['error']))
         return []
-    return response.get('result', {}).get('tvshows') or []
+    shows = response.get('result', {}).get('tvshows') or []
+    present = [s for s in shows if s.get('episode') != 0]
+    if len(present) != len(shows):
+        log.info('watch_rating_sync: {0} show(s) in the library have no episodes -- not synced'.format(len(shows) - len(present)))
+    return present
 
 
 def _get_episodes_for_show(tvshowid):

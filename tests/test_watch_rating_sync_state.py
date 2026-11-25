@@ -121,6 +121,19 @@ class TestRpc(unittest.TestCase):
             with self._rpc(exc=RuntimeError('down')):
                 self.assertEqual(call(), [])
 
+    def test_a_show_with_no_episodes_is_not_synced_but_one_without_a_count_is(self):
+        shows = [{'tvshowid': 1, 'title': 'Has files', 'episode': 12},
+                 {'tvshowid': 2, 'title': 'Empty folder', 'episode': 0},
+                 {'tvshowid': 3, 'title': 'No count given'}]
+        with self._rpc({'result': {'tvshows': shows}}):
+            kept = wrs._get_all_tvshows()
+        self.assertEqual([s['tvshowid'] for s in kept], [1, 3])
+
+    def test_the_show_listing_asks_kodi_for_the_episode_count(self):
+        with self._rpc({'result': {'tvshows': []}}) as sent:
+            wrs._get_all_tvshows()
+        self.assertIn('episode', json.loads(sent.call_args[0][0])['params']['properties'])
+
     def test_writers_name_the_right_method_and_id_and_never_raise(self):
         cases = [(lambda: wrs._set_movie_details(5, {'userrating': 8}), 'VideoLibrary.SetMovieDetails', {'userrating': 8, 'movieid': 5}),
                  (lambda: wrs._set_episode_details(6, {'playcount': 1}), 'VideoLibrary.SetEpisodeDetails', {'playcount': 1, 'episodeid': 6}),
