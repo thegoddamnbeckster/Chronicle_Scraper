@@ -208,6 +208,20 @@ class TestWriteAndSync(unittest.TestCase):
         self.assertEqual(stubs._FAKE_FILES[base + 'thumb.jpg'], b'POSTER')   # the thumbnail is the poster
         self.invalidate.assert_not_called()                                   # nothing was replaced
 
+    def test_the_poster_and_the_thumb_share_one_download(self):
+        import urllib.request
+        self._sync()
+        fetched = [c.args[0] for c in urllib.request.urlopen.call_args_list]
+        self.assertEqual(sorted(fetched), ['http://c/f.jpg', 'http://c/p.jpg'])      # not poster, fanart, poster again
+        base = 'smb://n/Heat (1995)/Heat (1995)-'
+        self.assertEqual(stubs._FAKE_FILES[base + 'thumb.jpg'], stubs._FAKE_FILES[base + 'poster.jpg'])
+
+    def test_a_failed_download_is_retried_for_the_next_file_not_remembered_as_data(self):
+        self.responses.update({'http://c/f.jpg': b'FANART'})        # the poster address answers with nothing (KeyError)
+        self.assertTrue(mas.sync_movie_art('Heat', 1995, self.ART, location=('smb://n/Heat (1995)/', 'Heat (1995)')))
+        self.assertNotIn('smb://n/Heat (1995)/Heat (1995)-poster.jpg', stubs._FAKE_FILES)
+        self.assertNotIn('smb://n/Heat (1995)/Heat (1995)-thumb.jpg', stubs._FAKE_FILES)
+
     def test_an_unchanged_url_with_an_unchanged_file_is_not_downloaded_again(self):
         self._sync()
         self.responses.clear()                  # a second download would KeyError

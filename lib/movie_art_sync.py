@@ -186,6 +186,7 @@ def sync_movie_art(title, year, artwork, location=None):
         return
 
     wrote_any = False
+    downloaded = {}   # url -> bytes for this movie only: poster and thumb share one download
     for dest_art_type, ext, source_art_type in _ART_FILES:
         candidates = artwork.get(source_art_type)
         if not candidates:
@@ -204,7 +205,7 @@ def sync_movie_art(title, year, artwork, location=None):
         existed = xbmcvfs.exists(dest)
         log.info('sync_movie_art: "{0}" ({1}) -- writing {2} from {3} to {4}'.format(
             title, year, dest_art_type, url, dest))
-        size = _write_remote_file(dest, url)
+        size = _write_remote_file(dest, url, downloaded)
         if size is not None:
             _mark_art_synced(dest, url, size)
             if existed:
@@ -704,18 +705,26 @@ def _find_video_filename(folder):
     return None
 
 
-def _write_remote_file(dest_path, url):
+def _write_remote_file(dest_path, url, downloaded=None):
     """Returns the downloaded byte count on success (used to populate the art-sync cache --
     see this module's own top-of-file note), or None on failure. Deliberately not a bool:
     0 bytes downloaded successfully is still a real, cacheable outcome, distinct from a
-    download/write failure."""
+    download/write failure.
+
+    downloaded, if given, is a url -> bytes dict shared by the writes of ONE movie: an address already fetched
+    for an earlier file is written again from memory instead of being downloaded a second time (a movie's poster
+    and thumb are the same image, and fetching it twice could even leave the two files different)."""
     import urllib.request
-    try:
-        with urllib.request.urlopen(url, timeout=20) as resp:
-            data = resp.read()
-    except Exception as exc:
-        log.warning("Couldn't download {0}: {1}".format(url, exc))
-        return None
+    data = downloaded.get(url) if downloaded is not None else None
+    if data is None:
+        try:
+            with urllib.request.urlopen(url, timeout=20) as resp:
+                data = resp.read()
+        except Exception as exc:
+            log.warning("Couldn't download {0}: {1}".format(url, exc))
+            return None
+        if downloaded is not None:
+            downloaded[url] = data
 
     try:
         f = xbmcvfs.File(dest_path, 'w')

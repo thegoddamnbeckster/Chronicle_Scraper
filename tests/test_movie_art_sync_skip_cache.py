@@ -81,7 +81,8 @@ class TestSyncMovieArtSkipsRedundantDownloads(unittest.TestCase):
 
         with patch('urllib.request.urlopen', self._fake_urlopen(b'x' * 42)) as mock_urlopen:
             movie_art_sync.sync_movie_art('Movie', 2020, artwork, location=location)
-        self.assertEqual(mock_urlopen.call_count, 2)
+        # Two files, ONE download: the thumb is written again from the poster's bytes already in memory.
+        self.assertEqual(mock_urlopen.call_count, 1)
 
         with patch('urllib.request.urlopen', self._fake_urlopen(b'x' * 42)) as mock_urlopen_2:
             movie_art_sync.sync_movie_art('Movie', 2020, artwork, location=location)
@@ -99,9 +100,9 @@ class TestSyncMovieArtSkipsRedundantDownloads(unittest.TestCase):
             movie_art_sync.sync_movie_art(
                 'Movie', 2020, {'poster': [{'url': 'http://example/poster-v2.jpg', 'source': 'tmdb'}]},
                 location=location)
-        # Both -poster.jpg and -thumb.jpg source from 'poster' and must both re-download once
-        # the url changes.
-        self.assertEqual(mock_urlopen.call_count, 2)
+        # Both -poster.jpg and -thumb.jpg source from 'poster': the changed url is downloaded once and
+        # written to both files.
+        self.assertEqual(mock_urlopen.call_count, 1)
 
     def test_thumb_file_kept_in_sync_with_the_poster_candidate(self):
         # Root-caused live (2026-09-20): Kodi's own generic "thumbnail" field resolved to a
