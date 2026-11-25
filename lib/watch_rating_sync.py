@@ -576,7 +576,9 @@ def _build_state_updates(details, kodi_item, client, media_item_id, log_label, p
 
     watched_direction, watched_value = progress_sync.resolve_watched_direction(
         details.get('isWatched'), details.get('lastWatchedAt'), kodi_item,
-        chronicle_reset_at=details.get('watchResetAt'))
+        chronicle_reset_at=details.get('watchResetAt'),
+        chronicle_resume_pct=details.get('resumePositionPercent'),
+        chronicle_resume_at=details.get('resumeUpdatedAt'))
     if watched_direction == 'push' and watched_value:
         updates['playcount'] = 1
         updates['lastplayed'] = progress_sync.timeutil.chronicle_iso_to_kodi(watched_value)

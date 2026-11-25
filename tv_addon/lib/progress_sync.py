@@ -130,7 +130,8 @@ def resolve_progress_direction(chronicle_pct, chronicle_ts, kodi_item):
     return 'push', chronicle_pct
 
 
-def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item, chronicle_reset_at=None):
+def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item, chronicle_reset_at=None,
+                              chronicle_resume_pct=None, chronicle_resume_at=None):
     """Sibling of resolve_progress_direction, for FULLY WATCHED status rather than partial
     resume position -- per-user request (2026-09-05): an episode completed on one Shield
     stayed permanently unwatched on another. resolve_progress_direction alone can never fix
@@ -148,6 +149,12 @@ def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item
     pre-reset echo, not a new play: returns ('reset', None) so the caller clears Kodi's own
     playcount instead of pulling the old watch straight back into Chronicle (which is what
     made every Chronicle-side reset undo itself within minutes).
+
+    chronicle_resume_pct / chronicle_resume_at: Chronicle's own resume position and when it was recorded. Per-user
+    rule (2026-11-25): every Kodi syncs whatever Chronicle's MOST RECENT status is. A rewatch started after the last
+    finish leaves Chronicle 'in progress at N%' (it keeps the old finish and stores the new position), so when that
+    position is newer than the finish there is no watched state to push: returns (None, None) and the resume push
+    (resolve_progress_direction) carries the N% to the device, instead of this function pushing 'watched' and zeroing it.
 
     Returns ('push', chronicle_watched_at) to mark Kodi as watched from Chronicle's side,
     ('pull', kodi_lastplayed) to report Kodi's own watched state into Chronicle instead, or
@@ -168,11 +175,14 @@ def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item
         if chronicle_reset_at and not _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_reset_at):
             return 'reset', None
         return 'pull', kodi_lastplayed
+    in_progress_is_newer = chronicle_progress_is_newer(chronicle_watched_at, chronicle_resume_pct, chronicle_resume_at)
     if has_chronicle and not has_kodi:
-        return 'push', chronicle_watched_at
+        return (None, None) if in_progress_is_newer else ('push', chronicle_watched_at)
 
     if _kodi_lastplayed_is_newer(kodi_lastplayed, chronicle_watched_at):
         return 'pull', kodi_lastplayed
+    if in_progress_is_newer:
+        return None, None
     # Both sides already hold this same play: nothing to reconcile, unless Kodi still carries a resume bookmark on
     # it (the push is what clears that). Without this an equal pair always fell through to 'push', so every pass
     # re-wrote identical playcount/lastplayed/resume and logged it as a change -- 500+ movies and thousands of
@@ -180,6 +190,19 @@ def resolve_watched_direction(chronicle_watched, chronicle_watched_at, kodi_item
     if not _kodi_lastplayed_is_older(kodi_lastplayed, chronicle_watched_at)             and not ((kodi_item.get('resume') or {}).get('position') or 0) > 0:
         return None, None
     return 'push', chronicle_watched_at
+
+
+def chronicle_progress_is_newer(chronicle_watched_at, chronicle_resume_pct, chronicle_resume_at):
+    """True when Chronicle holds an in-progress position (above 0, below the 'finished' threshold) recorded AFTER its
+    last finish: its most recent status is 'in progress at N%', not 'watched'. A position with no finish on record also
+    counts."""
+    if not chronicle_resume_pct or chronicle_resume_pct <= 0 or chronicle_resume_pct >= _RESUME_SKIP_THRESHOLD_PERCENT:
+        return False
+    resume_at = timeutil.chronicle_iso_to_local(chronicle_resume_at)
+    if resume_at is None:
+        return False
+    watched_at = timeutil.chronicle_iso_to_local(chronicle_watched_at)
+    return watched_at is None or resume_at > watched_at
 
 
 def apply_watched_push(vtag, watched_at_iso):

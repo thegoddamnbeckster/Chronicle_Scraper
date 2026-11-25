@@ -308,7 +308,9 @@ def get_details(media_item_id, handle):
             # nothing was trying to reconcile watched status at all.
             watched_direction, watched_value = progress_sync.resolve_watched_direction(
                 details.get('isWatched'), details.get('lastWatchedAt'), kodi_state,
-                chronicle_reset_at=details.get('watchResetAt'))
+                chronicle_reset_at=details.get('watchResetAt'),
+                chronicle_resume_pct=details.get('resumePositionPercent'),
+                chronicle_resume_at=details.get('resumeUpdatedAt'))
             if watched_direction == 'push':
                 progress_sync.apply_watched_push(vtag, watched_value)
             elif watched_direction == 'reset':

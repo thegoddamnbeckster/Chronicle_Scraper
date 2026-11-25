@@ -73,6 +73,44 @@ class TestWatchedDirection(unittest.TestCase):
         self.assertEqual(ps.resolve_watched_direction(False, None, _kodi(playcount=1, lastplayed=KODI_NEWER), reset_at), ('pull', KODI_NEWER))
 
 
+class TestRewatchInProgress(unittest.TestCase):
+    """Every Kodi syncs Chronicle's MOST RECENT status (2026-11-25): a finished item that is being watched again is
+    'in progress at N%', not 'watched' -- pushing 'watched' here used to zero the new position on every other device."""
+    FINISHED = '2026-10-01T12:00:00Z'
+    RESUMED_LATER = '2026-11-23T18:57:35Z'
+    RESUMED_EARLIER = '2026-09-01T12:00:00Z'
+
+    def _dir(self, kodi, resume_at, pct=75.86, **kw):
+        return ps.resolve_watched_direction(True, self.FINISHED, kodi, None, pct, resume_at, **kw)
+
+    def test_a_rewatch_in_progress_is_not_pushed_as_watched_to_a_device_that_never_saw_it(self):
+        self.assertEqual(self._dir(_kodi(), self.RESUMED_LATER), (None, None))
+
+    def test_a_rewatch_in_progress_is_not_pushed_as_watched_over_an_older_play_on_the_device(self):
+        self.assertEqual(self._dir(_kodi(playcount=1, lastplayed=KODI_OLDER), self.RESUMED_LATER), (None, None))
+
+    def test_the_position_is_what_reaches_the_device(self):
+        self.assertEqual(ps.resolve_progress_direction(75.86, self.RESUMED_LATER, _kodi()), ('push', 75.86))
+        self.assertEqual(ps.resolve_progress_direction(75.86, self.RESUMED_LATER, _kodi(playcount=1, lastplayed=KODI_OLDER)), ('push', 75.86))
+
+    def test_a_position_older_than_the_finish_changes_nothing(self):
+        self.assertEqual(self._dir(_kodi(), self.RESUMED_EARLIER), ('push', self.FINISHED))
+
+    def test_a_finish_newer_than_the_position_still_wins(self):
+        self.assertEqual(self._dir(_kodi(), self.RESUMED_EARLIER, pct=40.0), ('push', self.FINISHED))
+
+    def test_a_position_at_the_finished_threshold_is_not_a_rewatch(self):
+        self.assertEqual(self._dir(_kodi(), self.RESUMED_LATER, pct=99.0), ('push', self.FINISHED))
+
+    def test_no_position_at_all_changes_nothing(self):
+        self.assertEqual(ps.resolve_watched_direction(True, self.FINISHED, _kodi()), ('push', self.FINISHED))
+        self.assertEqual(self._dir(_kodi(), None), ('push', self.FINISHED))
+
+    def test_a_newer_play_on_the_device_still_pulls(self):
+        self.assertEqual(self._dir(_kodi(playcount=1, lastplayed='2026-12-01 12:00:00'), self.RESUMED_LATER),
+                         ('pull', '2026-12-01 12:00:00'))
+
+
 class TestStaleResume(unittest.TestCase):
     def test_a_leftover_bookmark_on_a_finished_item_is_stale(self):
         kodi = _kodi(playcount=1, position=500, total=1000, lastplayed='2026-10-01 18:00:00')

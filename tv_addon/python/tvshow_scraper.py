@@ -291,7 +291,9 @@ def get_episode_details(encoded_ids, handle):
         # on completion and gave resolve_progress_direction nothing to compare).
         watched_direction, watched_value = progress_sync.resolve_watched_direction(
             details.get('isWatched'), details.get('lastWatchedAt'), kodi_state,
-            chronicle_reset_at=details.get('watchResetAt'))
+            chronicle_reset_at=details.get('watchResetAt'),
+            chronicle_resume_pct=details.get('resumePositionPercent'),
+            chronicle_resume_at=details.get('resumeUpdatedAt'))
         if watched_direction == 'push':
             progress_sync.apply_watched_push(vtag, watched_value)
         elif watched_direction == 'reset':
