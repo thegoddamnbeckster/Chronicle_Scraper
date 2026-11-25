@@ -597,7 +597,10 @@ def _build_state_updates(details, kodi_item, client, media_item_id, log_label, p
         # a playcount is set to 0); lastplayed is deliberately not sent, since one rejected
         # property would fail the whole Set*Details call and lose the rating update with it.
         updates['playcount'] = 0
-        updates['resume'] = {'position': 0, 'total': 0}
+        # Zero the bookmark too -- unless Chronicle pushed a position above: a reset that leaves the user part-way through a
+        # rewatch must not wipe that position in the same pass.
+        if 'resume' not in updates:
+            updates['resume'] = {'position': 0, 'total': 0}
     elif watched_direction == 'pull':
         client.push_watched(media_item_id, progress_sync.kodi_lastplayed_to_iso(kodi_lastplayed))
 

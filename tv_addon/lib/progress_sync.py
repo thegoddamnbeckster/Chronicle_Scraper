@@ -227,6 +227,12 @@ def apply_watched_push(vtag, watched_at_iso):
     vtag.setResumePoint(0, 0)
 
 
+def resume_push_applies(resume_pct, runtime_minutes):
+    """True when apply_resume_push() would really set a bookmark (a position above 0 and below the finished threshold, and a
+    runtime to turn it into seconds)."""
+    return bool(runtime_minutes) and resume_pct is not None and 0 < resume_pct < _RESUME_SKIP_THRESHOLD_PERCENT
+
+
 def apply_resume_push(vtag, resume_pct, runtime_minutes):
     """Sets Kodi's resume point via InfoTagVideo.setResumePoint() -- part of the
     SAME getdetails/getepisodedetails response Kodi is already consuming this
@@ -241,12 +247,13 @@ def apply_resume_push(vtag, resume_pct, runtime_minutes):
     vtag.setResumePoint(resume_pct / 100.0 * total_seconds, total_seconds)
 
 
-def apply_watched_reset(vtag):
+def apply_watched_reset(vtag, keep_resume=False):
     """Clears Kodi's playcount/lastplayed/resume via InfoTagVideo -- the counterpart of
     apply_watched_push for a Chronicle-side "rewatch" reset (see resolve_watched_direction)."""
     vtag.setPlaycount(0)
     vtag.setLastPlayed('')
-    vtag.setResumePoint(0, 0)
+    if not keep_resume:   # a position pushed in the same pass (a rewatch in progress) survives the reset
+        vtag.setResumePoint(0, 0)
 
 
 def kodi_lastplayed_to_iso(kodi_lastplayed):

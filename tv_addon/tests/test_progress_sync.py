@@ -73,6 +73,26 @@ class TestWatchedDirection(unittest.TestCase):
         self.assertEqual(ps.resolve_watched_direction(False, None, _kodi(playcount=1, lastplayed=KODI_NEWER), reset_at), ('pull', KODI_NEWER))
 
 
+class TestResetKeepsPosition(unittest.TestCase):
+    def test_a_reset_clears_the_bookmark_unless_a_position_was_just_pushed(self):
+        vtag = mock.MagicMock()
+        ps.apply_watched_reset(vtag)
+        vtag.setResumePoint.assert_called_once_with(0, 0)
+        vtag = mock.MagicMock()
+        ps.apply_watched_reset(vtag, keep_resume=True)
+        vtag.setPlaycount.assert_called_once_with(0)
+        vtag.setResumePoint.assert_not_called()
+
+
+class TestResumePushApplies(unittest.TestCase):
+    def test_only_a_real_position_with_a_runtime_counts(self):
+        self.assertTrue(ps.resume_push_applies(75.86, 54))
+        self.assertFalse(ps.resume_push_applies(75.86, None))
+        self.assertFalse(ps.resume_push_applies(0, 54))
+        self.assertFalse(ps.resume_push_applies(None, 54))
+        self.assertFalse(ps.resume_push_applies(99.0, 54))
+
+
 class TestRewatchInProgress(unittest.TestCase):
     """Every Kodi syncs Chronicle's MOST RECENT status (2026-11-25): a finished item that is being watched again is
     'in progress at N%', not 'watched' -- pushing 'watched' here used to zero the new position on every other device."""

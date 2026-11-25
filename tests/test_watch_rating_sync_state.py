@@ -63,6 +63,16 @@ class TestBuildStateUpdates(unittest.TestCase):
         self.assertAlmostEqual(updates['resume']['position'], 4551.6, places=1)
         self.assertNotIn('playcount', updates)
 
+    def test_a_reset_that_leaves_a_position_keeps_the_position(self):
+        # After a Chronicle reset the user is part-way through a rewatch (75.86%). The device still carries the old watch,
+        # so its play count is cleared by the reset -- and the position pushed in the same pass must survive that.
+        updates = self._build({'isWatched': False, 'watchResetAt': '2020-06-01T00:00:00Z', 'resumePositionPercent': 75.86,
+                               'resumeUpdatedAt': '2026-11-23T18:57:35Z', 'runtimeMinutes': 100},
+                              _kodi(playcount=1, lastplayed=KODI_OLDER))
+        self.assertEqual(updates['playcount'], 0)
+        self.assertAlmostEqual(updates['resume']['position'], 4551.6, places=1)
+        self.assertEqual(updates['resume']['total'], 6000)
+
     def test_kodis_newer_watch_is_reported_to_chronicle(self):
         self._build({'isWatched': True, 'lastWatchedAt': CHRONICLE_AT}, _kodi(playcount=1, lastplayed=KODI_NEWER))
         self.client.push_watched.assert_called_once()
