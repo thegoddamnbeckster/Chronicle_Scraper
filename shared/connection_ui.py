@@ -98,16 +98,19 @@ class ConnectionUi:
             self._addon.setSetting('chronicle_url', '')
         return keep
 
-    def connect(self):
-        """"Edit Connection": prompts for the URL when none is saved, then runs the QR device-auth flow to obtain an API key."""
+    def connect(self, ask_url=False, prefill=None):
+        """"Edit Connection": prompts for the URL when none is saved (or always, with ask_url), then runs the QR device-auth flow to
+        obtain an API key. prefill: the address the prompt starts with (Change URL passes the old one, so a typo is a quick fix)."""
         addon, log = self._addon, self._log
-        current = addon.getSetting('chronicle_url')
-        log.info('connect: invoked; chronicle_url on disk = {0!r}'.format(current))
+        # ask_url never re-reads the setting: Change URL has just cleared it, and Kodi can hand back the old value right after a
+        # setSetting (seen live 2026-11-26 on the Shield) -- which used to reconnect to the old address and leave the URL blank on disk.
+        current = '' if ask_url else addon.getSetting('chronicle_url')
+        log.info('connect: invoked; chronicle_url on disk = {0!r}, ask_url = {1}'.format(current, ask_url))
 
         if not current:
-            shared_url = find_shared_chronicle_url(addon.getAddonInfo('id'), log)
+            shared_url = prefill or find_shared_chronicle_url(addon.getAddonInfo('id'), log)
             if shared_url:
-                log.info('connect: pre-filling the URL prompt from a sibling add-on: {0!r}'.format(shared_url))
+                log.info('connect: pre-filling the URL prompt with {0!r}'.format(shared_url))
             entered = (xbmcgui.Dialog().input(self._text(32002), defaultt=shared_url or '') or '').strip()
             log.info('connect: URL prompt returned {0!r}'.format(entered))
             if not entered:
@@ -134,6 +137,8 @@ class ConnectionUi:
         log.info('connect: device-auth flow returned {0}'.format(connected))
 
         if connected:
+            # The address the key was issued by is saved again with it, so a key can never be left on disk without its URL.
+            addon.setSetting('chronicle_url', current)
             if self._on_connected:
                 self._on_connected()
         else:
@@ -152,7 +157,7 @@ class ConnectionUi:
             addon.setSetting('chronicle_url', '')
             addon.setSetting('api_key', '')
             self._log.info('change_url: cleared saved URL {0!r} and the API key'.format(current))
-        self.connect()
+        self.connect(ask_url=True, prefill=current or None)
 
 
 def parse_script_args(argv):

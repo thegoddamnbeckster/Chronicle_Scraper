@@ -169,6 +169,20 @@ class TestChangeUrl(_Base):
         self.assertEqual(self.addon.settings['chronicle_url'], 'http://new:1')
         self.assertEqual(self.addon.settings['api_key'], '')
 
+    def test_a_stale_read_after_clearing_still_asks_and_saves_the_url_with_the_key(self):
+        # Seen live on the Shield: right after setSetting('chronicle_url', '') Kodi still answered the old address, so the flow
+        # reconnected to it without asking and left the URL blank on disk next to a fresh key ("not connected").
+        self.addon.settings.update(chronicle_url='http://old:8888', api_key='k')
+        stale = self.addon.getSetting
+        self.addon.getSetting = lambda key: 'http://old:8888' if key == 'chronicle_url' else stale(key)
+        self.dialog.yesno.return_value = True
+        self.dialog.input.return_value = 'http://old:8888'
+        self.ui.change_url()
+        self.assertEqual(self.dialog.input.call_args[1]['defaultt'], 'http://old:8888')   # asked, starting from the old address
+        self.auth_factory.assert_called_once_with('http://old:8888')
+        self.assertEqual(self.addon.settings['chronicle_url'], 'http://old:8888')        # saved again after the key arrived
+        self.assertEqual(self.addon.writes[-1], ('chronicle_url', 'http://old:8888'))
+
     def test_declined_change_keeps_everything(self):
         self.addon.settings.update(chronicle_url='http://old', api_key='k')
         self.dialog.yesno.return_value = False
