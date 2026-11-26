@@ -162,6 +162,8 @@ def run(is_cancelled=None, progress_callback=None, everything=False):
     listing = client.get_changed_collections(since=None if ask_for_all else since)
     if listing is None:
         counts['errors'] += 1
+        # No connection at all: the connection warning already says so once; the pass adds no toast of its own.
+        counts['unavailable'] = getattr(client, 'last_call_unreachable', False) is True
         return counts
 
     collections = listing['collections']
@@ -207,6 +209,8 @@ def describe_result(result, get_string):
     (changed nothing, no errors). String ids: 32147 "Updated {0} collection(s){1}", 32136 the errors
     suffix."""
     errors = result.get('errors') or 0
+    if result.get('unavailable') and not result.get('changed'):
+        return None                                      # Chronicle could not be reached: told once by the connection warning
     if not result.get('changed') and not errors:
         return None
     return get_string(32147).format(

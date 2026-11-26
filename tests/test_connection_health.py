@@ -73,6 +73,31 @@ class TestConnectionHealth(unittest.TestCase):
         self.assertEqual(len(self.shown), 1)
         self.assertIn('http://c:8888', self.shown[0][1])
 
+    def test_unreachable_is_said_once_per_outage_however_long_it_lasts(self):
+        for _ in range(10):
+            self.health.observe('unreachable', OSError('x'))
+        self.now[0] += ch.RENOTIFY_AFTER_SECONDS * 3        # an all-day outage
+        for _ in range(10):
+            self.health.observe('unreachable', OSError('x'))
+        self.assertEqual(len(self.shown), 1)
+
+    def test_unreachable_is_said_once_for_every_add_on_on_the_kodi(self):
+        other = ch.ConnectionHealth('script.y', 'Chronicle Y', _Log(), notify=lambda h, t: self.shown.append((h, t)),
+                                    store=self.store, clock=lambda: self.now[0])
+        for health in (self.health, other, self.health, other):
+            health.observe('unreachable', OSError('x'))
+            health.observe('unreachable', OSError('x'))
+        self.assertEqual(len(self.shown), 1)
+
+    def test_a_new_outage_after_recovery_and_the_quiet_period_is_said_again(self):
+        self.health.observe('unreachable', OSError('x'))
+        self.health.observe('unreachable', OSError('x'))
+        self.health.observe('ok')
+        self.now[0] += ch.RENOTIFY_AFTER_SECONDS + 1
+        self.health.observe('unreachable', OSError('x'))
+        self.health.observe('unreachable', OSError('x'))
+        self.assertEqual(len(self.shown), 2)
+
     def test_success_clears_the_current_problem_without_repeating_the_warning(self):
         self.health.observe('http', 401)
         self.health.observe('ok')                        # e.g. an unauthenticated health check

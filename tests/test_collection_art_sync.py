@@ -182,6 +182,18 @@ class TestRun(_Base):
         self.assertEqual(self.writes(), [])
         self.assertNotIn(cas._STATE_PATH, stubs._FAKE_FILES)
 
+    def test_no_connection_at_all_adds_no_toast_of_its_own(self):
+        self.kodi_sets = {'A': (1, {})}
+        self.client.get_changed_collections.return_value = None
+        self.client.last_call_unreachable = True
+
+        result = cas.run()
+
+        self.assertTrue(result['unavailable'])
+        self.assertIsNone(cas.describe_result(result, lambda i: '{0}{1}'))
+        self.client.last_call_unreachable = False                  # a server error still gets its toast
+        self.assertIsNotNone(cas.describe_result(cas.run(), lambda i: '{0}{1}' if i == 32147 else ' ({0})'))
+
     def test_kodi_not_answering_does_nothing_at_all(self):
         cas.kodi_rpc.xbmc.executeJSONRPC.side_effect = RuntimeError('rpc down')
 

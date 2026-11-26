@@ -2,8 +2,9 @@
 """Tells the user when an add-on is not really talking to Chronicle.
 
 Without this the add-ons failed quietly: a missing or revoked API key just logged a line and every scan, scrobble and sync carried on
-"successfully" with nothing done, while the Settings page still said "Connected as ...". Now the first time a problem shows up (and
-again every few hours while it lasts) the add-on raises a Kodi warning that says what is wrong and what to do about it.
+"successfully" with nothing done, while the Settings page still said "Connected as ...". Now the first time a problem shows up the
+add-on raises a Kodi warning that says what is wrong and what to do about it. A missing or rejected key is raised again every few hours
+while it lasts; "cannot be reached" is raised once per outage for the whole Kodi (see _report).
 
 Three problems are reported:
   * not_configured -- no Chronicle address or no API key is saved, so no request can even be made.
@@ -120,9 +121,18 @@ class ConnectionHealth:
         """Marks the problem as current and raises the warning, unless this same problem was already raised within
         RENOTIFY_AFTER_SECONDS. The time of the last warning is kept per problem and survives _clear(): a request that happens to be
         answered (an unauthenticated health check, say) between two failures must not make the same warning pop up again each time."""
+        already_current = self._store.get(self._addon_id) == problem
         self._store.set(self._addon_id, problem)
         now = self._clock()
         stamp_key = '{0}.{1}'.format(self._addon_id, problem)
+        if problem == UNREACHABLE:
+            # One warning per outage, for the whole Kodi: every Chronicle add-on on it talks to the same server, so when one has
+            # said it cannot be reached the others stay quiet, and an outage that lasts all day is not announced again. Only an
+            # answer (which clears the problem) followed by a new outage, after RENOTIFY_AFTER_SECONDS, warns again.
+            # Per-user request (2026-11-26): "One is more than enough."
+            if already_current:
+                return
+            stamp_key = 'any.' + UNREACHABLE
         try:
             if now - float(self._store.get(stamp_key)) < RENOTIFY_AFTER_SECONDS:
                 return

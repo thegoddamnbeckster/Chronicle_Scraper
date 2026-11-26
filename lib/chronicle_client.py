@@ -67,6 +67,9 @@ class ChronicleClient:
         # or no connection), False when it succeeded or answered a definite "no" (404, 401...). A None result alone cannot
         # tell those apart, and treating "Chronicle is down" as "the item is gone" discards good cached ids.
         self.last_call_transient = False
+        # True only when the most recent _get() got no answer at all (timeout, refused, no route) after its retries: Chronicle
+        # cannot be reached, so the next request will not do better and a pass should stop rather than wait out every item.
+        self.last_call_unreachable = False
 
     def refresh_settings(self):
         """Re-read URL and API key from addon settings.
@@ -476,6 +479,7 @@ class ChronicleClient:
         logs and swallows any failure so callers just get None back. Sets last_call_transient so a caller that
         must not act on a transient failure can tell it from a real "not found"."""
         self.last_call_transient = False
+        self.last_call_unreachable = False
         if not health.not_configured(self._base_url, self._api_key):
             log.warning('Chronicle URL or API key not configured — {0} skipped'.format(log_label))
             return None
@@ -502,6 +506,7 @@ class ChronicleClient:
             log.error('{0}: Chronicle not reachable at {1} after retrying ({2})'.format(
                       log_label, self._base_url, exc))
             self.last_call_transient = True
+            self.last_call_unreachable = True
             return None
         except Exception as exc:
             log.error('{0}: unexpected error: {1}'.format(log_label, exc))

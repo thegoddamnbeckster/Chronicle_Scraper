@@ -53,6 +53,13 @@ _MIN_ITEM_SPACING_SECONDS = 0.2
 _MAX_CONSECUTIVE_UNAVAILABLE = 5
 
 
+def _unreachable(client):
+    """True when the client's last request got no answer at all (after its retries). The pass stops there: every further item
+    would wait out the same timeouts, keeping the progress banner up for minutes with nothing to show. `is True` so a client
+    double without the attribute never reads as unreachable."""
+    return getattr(client, 'last_call_unreachable', False) is True
+
+
 def _raise_if_unavailable(client, what):
     """Call when a lookup came back empty and the caller is about to treat that as "gone": if Chronicle simply did not
     answer (server error, rate limit, timeout, no connection) raise ChronicleUnavailable instead, so the cached id is kept
@@ -91,6 +98,8 @@ def describe_result(result, get_string):
         if result.get(key):
             parts.append(get_string(string_id).format(result[key]))
     errors = result.get('errors') or 0
+    if result.get('unreachable') and not parts:
+        return None             # no connection: the connection warning says so once; a pass toast would only repeat it
     if parts:
         return get_string(32135).format(', '.join(parts)) + (get_string(32136).format(errors) if errors else '')
     if errors:
@@ -127,6 +136,7 @@ def run(is_cancelled=None, progress_callback=None):
     cancelled = False
     consecutive_unavailable = 0
     gave_up = False
+    unreachable = False
 
     for movie in movies:
         if is_cancelled is not None and is_cancelled():
@@ -144,6 +154,9 @@ def run(is_cancelled=None, progress_callback=None):
             counts['errors'] += 1
             consecutive_unavailable += 1
             log.warning('watch_rating_sync: movie "{0}" not synced: {1}'.format(label, exc))
+            if _unreachable(client):
+                unreachable = gave_up = True
+                break
             if consecutive_unavailable >= _MAX_CONSECUTIVE_UNAVAILABLE:
                 gave_up = True
                 break
@@ -174,6 +187,9 @@ def run(is_cancelled=None, progress_callback=None):
                 counts['errors'] += 1
                 consecutive_unavailable += 1
                 log.warning('watch_rating_sync: show "{0}" not synced: {1}'.format(label, exc))
+                if _unreachable(client):
+                    unreachable = gave_up = True
+                    break
                 if consecutive_unavailable >= _MAX_CONSECUTIVE_UNAVAILABLE:
                     gave_up = True
                     break
@@ -193,7 +209,11 @@ def run(is_cancelled=None, progress_callback=None):
             counts['movies'], counts['shows'], counts['episodes'],
             counts['movies_changed'], counts['shows_changed'], counts['episodes_changed'],
             counts['errors'], ' (cancelled)' if cancelled else ''))
-    if gave_up:
+    if unreachable:
+        log.error('watch_rating_sync: stopped early -- Chronicle could not be reached at all; nothing was discarded and the '
+                  'next pass will carry on')
+        counts['unavailable'] = counts['unreachable'] = True
+    elif gave_up:
         log.error('watch_rating_sync: stopped early -- Chronicle did not answer for {0} items in a row; nothing was '
                   'discarded and the next pass will carry on'.format(_MAX_CONSECUTIVE_UNAVAILABLE))
         counts['unavailable'] = True

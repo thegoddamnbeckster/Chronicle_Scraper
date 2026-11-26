@@ -426,6 +426,14 @@ class TestRunWhenChronicleIsDown(unittest.TestCase):
         self._sync_one_show.assert_not_called()
         self.cache_save.assert_called_once()                                   # the cache is saved, untouched
 
+    def test_no_connection_at_all_stops_at_the_first_item_and_adds_no_toast(self):
+        self.ChronicleClient.return_value.last_call_unreachable = True
+        result = wrs.run()
+        self.assertEqual(self._sync_one_movie.call_count, 1)        # not five items of 60 s each with the banner up
+        self.assertTrue(result['unreachable'])
+        self._sync_one_show.assert_not_called()
+        self.assertIsNone(wrs.describe_result(result, lambda i: '{0}'))   # the connection warning has already said it
+
     def test_an_isolated_outage_does_not_stop_the_pass(self):
         self._sync_one_movie.side_effect = [wrs.ChronicleUnavailable('blip'), True] * 5
         result = wrs.run()
