@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.chronicle.scraper.movie"
        name="Chronicle Scraper (Movies)"
-       version="3.26.19"
+       version="3.26.20"
        provider-name="Michael Beck">
 
   <requires>
@@ -59,7 +59,8 @@
     </assets>
     <summary lang="en_GB">Chronicle Scraper (Movies)</summary>
     <description lang="en_GB">A Kodi metadata scraper for movies, backed by your self-hosted Chronicle server. Unlike a normal scraper, it never talks to TMDB or any other upstream source directly -- it only ever asks Chronicle, which resolves-and-creates the item through whichever metadata providers you've already configured there, so Kodi always ends up seeing exactly what Chronicle itself would show for that title -- movie sets, multi-source ratings, trailers and all. Distinct from Chronicle_Scrobbler (which reports watch progress) -- this addon supplies library metadata during "Change Content" / library scans. TV shows are a separate sibling addon, script.chronicle.scraper.tv -- install both if you track both; see that addon's own description for why they can't be one addon.</description>
-    <news>v3.26.19 - IMPROVEMENT: a Chronicle outage is announced once. 'Cannot reach Chronicle' is shown once per outage for the whole Kodi (not once per add-on, and not again every few hours while it lasts); a watch/rating sync that cannot reach Chronicle stops at the first item instead of waiting out five, and neither sync adds an error toast of its own for a lost connection.
+    <news>v3.26.20 - FIX: the watch history and ratings sync no longer rewrites episode titles, plots, air dates and thumbs while the TV add-on's episode check is on; that check (which matches each episode by its own file) alone does it. The two passes matched some episodes differently and undid each other on every run, so the check said 'Corrected N episode(s)' after every scan.
+v3.26.19 - IMPROVEMENT: a Chronicle outage is announced once. 'Cannot reach Chronicle' is shown once per outage for the whole Kodi (not once per add-on, and not again every few hours while it lasts); a watch/rating sync that cannot reach Chronicle stops at the first item instead of waiting out five, and neither sync adds an error toast of its own for a lost connection.
 v3.26.18 - FIX: Change URL no longer leaves the add-on disconnected. After the old address was cleared, Kodi could still hand it back, so the add-on skipped the address prompt, reconnected to the old server, saved the new key, and left the address blank: 'not connected' straight after a successful connect. Change URL now always asks for the address (starting from the old one), and the address is saved again together with the key.
 v3.26.17 - FIX: the watch history and ratings sync no longer visits shows this device does not have. A show row with no episodes (an empty folder, or a show whose episodes were never scraped or were cleaned away) was still looked up in Chronicle and could even be resolved by title, though Kodi does not list it and there is nothing here to sync. Only shows with at least one episode are visited now, and the log says how many were left out.
 v3.26.16 - IMPROVEMENT: a movie's poster and thumb are the same image, and each was downloaded separately. It is now downloaded once and written to both files, which saves about a third of the time on every movie whose artwork has to be written, and means the two files can no longer end up as different versions of the picture. Nothing about which image is chosen, or what is skipped as already up to date, has changed.

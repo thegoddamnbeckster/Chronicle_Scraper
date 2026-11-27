@@ -47,5 +47,40 @@ class TestDiffEpisodeText(unittest.TestCase):
         self.assertEqual(updates['art'], {'thumb': 'https://t/b.jpg', 'fanart': 'f'})
 
 
+class TestOneWriterForEpisodeText(unittest.TestCase):
+    """With the TV add-on's episode check on, only it writes an episode's text: two passes matching episodes differently
+    undid each other on every run (downstairs, 2026-11-26)."""
+
+    def _sync(self, check_enabled, tv_installed=True):
+        import xbmcaddon
+        from unittest import mock
+        from lib import watch_rating_sync as w
+
+        def addon(addon_id=None):
+            if addon_id == w._TV_ADDON_ID and not tv_installed:
+                raise RuntimeError('Unknown addon id')
+            a = mock.MagicMock()
+            a.getSettingBool.return_value = check_enabled
+            return a
+
+        client = mock.MagicMock()
+        client.get_episode_details.return_value = {'title': 'The Blinds (3)', 'overview': 'Plot.'}
+        with mock.patch.object(xbmcaddon, 'Addon', side_effect=addon), \
+                mock.patch.object(w, '_build_state_updates', return_value={}), \
+                mock.patch.object(w, '_set_episode_details') as set_details:
+            w._sync_one_episode(client, {'title': 'The Voice'},
+                                {'episodeid': 7, 'season': 29, 'episode': 3, 'title': 'Worst Cooks', 'plot': 'Plot.'}, 99)
+        return set_details
+
+    def test_the_tv_check_alone_writes_episode_text_when_it_is_on(self):
+        self._sync(check_enabled=True).assert_not_called()
+
+    def test_this_pass_writes_it_when_the_check_is_off(self):
+        self._sync(check_enabled=False).assert_called_once_with(7, {'title': 'The Blinds (3)'})
+
+    def test_this_pass_writes_it_when_there_is_no_tv_add_on(self):
+        self._sync(check_enabled=True, tv_installed=False).assert_called_once_with(7, {'title': 'The Blinds (3)'})
+
+
 if __name__ == '__main__':
     unittest.main()

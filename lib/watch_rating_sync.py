@@ -537,7 +537,8 @@ def _sync_one_episode(client, show, kodi_ep, episode_id):
     client.report_kodi_id(episode_id, 'episode', kodi_ep['episodeid'])
 
     updates = _build_state_updates(details, kodi_ep, client, episode_id, log_label=label)
-    updates.update(diff_episode_text(kodi_ep, details))
+    if not tv_episode_check_owns_text():
+        updates.update(diff_episode_text(kodi_ep, details))
     if updates:
         _set_episode_details(kodi_ep['episodeid'], updates)
         log.info('watch_rating_sync: "{0}" -- applied {1}'.format(label, ', '.join(sorted(updates.keys()))))
@@ -706,6 +707,22 @@ def _set_episode_details(episodeid, updates):
         'params': dict(updates, episodeid=episodeid),
     }
     _execute_set(request, 'SetEpisodeDetails', episodeid)
+
+
+_TV_ADDON_ID = 'script.chronicle.scraper.tv'
+
+
+def tv_episode_check_owns_text():
+    """True when the TV add-on's post-scan episode check is on. It then alone writes an episode's title, plot, air date and
+    thumb, matched by the episode's own file. Before, this pass (matched by show and numbers) wrote them too, and where the two
+    disagreed -- Chronicle holding a second, misfiled entry for the same season and episode -- each pass undid the other on
+    every run, and the check announced "Corrected 309 episodes" after every scan (downstairs, 2026-11-26). False when the TV
+    add-on is not installed, so a Kodi with only this add-on still gets its episodes' text corrected."""
+    try:
+        import xbmcaddon
+        return bool(xbmcaddon.Addon(_TV_ADDON_ID).getSettingBool('full_sync_check_enabled'))
+    except Exception:
+        return False
 
 
 def diff_episode_text(kodi_ep, details):

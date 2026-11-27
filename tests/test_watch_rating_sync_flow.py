@@ -272,6 +272,7 @@ class TestSyncOneEpisode(unittest.TestCase):
         client.get_episode_details.return_value = {'title': 'Pilot'}
         with mock.patch.object(wrs, '_build_state_updates', return_value={'playcount': 1}), \
                 mock.patch.object(wrs, 'diff_episode_text', return_value={'plot': 'x'}), \
+                mock.patch.object(wrs, 'tv_episode_check_owns_text', return_value=False), \
                 mock.patch.object(wrs, '_set_episode_details') as write:
             self.assertTrue(wrs._sync_one_episode(client, {'title': 'Show'}, {'episodeid': 4, 'season': 1, 'episode': 1}, 100))
         write.assert_called_once_with(4, {'playcount': 1, 'plot': 'x'})
