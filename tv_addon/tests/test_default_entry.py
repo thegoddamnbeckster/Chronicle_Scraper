@@ -42,7 +42,7 @@ class _Base(unittest.TestCase):
 class TestDispatch(_Base):
     def _run(self, *argv):
         names = ('_connect_to_chronicle', '_change_chronicle_url', '_test_connection', '_library_repair_explain', '_library_repair_preview',
-                 '_library_repair', '_library_repair_undo', '_refresh_all_now', '_refresh_auth_status')
+                 '_library_repair', '_library_repair_undo', '_refresh_all_now', '_show_settings')
         mocks = {n: mock.patch.object(default, n).start() for n in names}
         self.addCleanup(mock.patch.stopall)
         with mock.patch.object(default.sys, 'argv', ['default.py'] + list(argv)):
@@ -60,10 +60,8 @@ class TestDispatch(_Base):
                 self.assertEqual(mocked.called, name == handler, '{0} for {1}'.format(name, action))
         self.addon.openSettings.assert_not_called()
 
-    def test_no_action_opens_settings_after_refreshing_the_status(self):
-        mocks = self._run()
-        mocks['_refresh_auth_status'].assert_called_once()
-        self.addon.openSettings.assert_called_once()
+    def test_no_action_opens_settings(self):
+        self._run()['_show_settings'].assert_called_once()
 
 
 class TestProgress(_Base):

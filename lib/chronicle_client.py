@@ -462,7 +462,7 @@ class ChronicleClient:
         Short 5s timeout (vs. the 20s default elsewhere in this client):
         this runs every time the addon's menu opens, so a slow/unreachable
         server must not make the menu itself feel stuck; a plain "Connected"
-        fallback (see default.py's _refresh_auth_status()) covers the miss.
+        fallback (see ConnectionUi.refresh_auth_status()) covers the miss.
 
         Returns {'username', 'displayName', ...} dict, or None on any
         failure (not configured, network error, revoked key)."""

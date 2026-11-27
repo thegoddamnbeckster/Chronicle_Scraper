@@ -135,6 +135,21 @@ for _key in _ADDONS:
     setattr(TestAddonAssembly, 'test_{0}_localized_strings_defined'.format(_key), _strings)
 
 
+class TestConnectionActionsCloseSettings(unittest.TestCase):
+    def test_edit_connection_and_change_url_save_and_close_the_settings_window_first(self):
+        # With the window open Kodi holds the new key there until OK, and Test Connection reads the old one from disk.
+        for key in ('movie', 'tv', 'scrobbler'):
+            folder = _ADDONS[key][0]
+            if not os.path.isdir(folder):
+                continue
+            with open(os.path.join(folder, 'resources', 'settings.xml'), encoding='utf-8') as f:
+                lines = f.read().splitlines()
+            for action in ('auth', 'change_url'):
+                found = [line for line in lines if ',action={0})"'.format(action) in line]
+                self.assertEqual(len(found), 1, '{0} {1}'.format(key, action))
+                self.assertIn('option="close"', found[0], '{0} {1}'.format(key, action))
+
+
 class TestConnectionFlowStrings(unittest.TestCase):
     def test_every_addon_using_connection_ui_defines_its_string_ids(self):
         import tests.kodi_stubs  # noqa: F401

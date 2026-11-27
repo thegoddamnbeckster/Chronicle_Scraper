@@ -17,11 +17,11 @@ class TestDispatch(unittest.TestCase):
                 mock.patch.object(default, '_sync_watch_ratings_now') as watch, \
                 mock.patch.object(default, '_sync_collections_now') as collections, \
                 mock.patch.object(default, '_refresh_all_now') as refresh_all, \
-                mock.patch.object(default, '_refresh_auth_status') as refresh, \
+                mock.patch.object(default, '_show_settings') as settings, \
                 mock.patch.object(default, 'ADDON') as addon:
             default.show_menu()
         return {'auth': connect, 'change_url': change, 'test_connection': test, 'sync_watch_ratings': watch,
-                'sync_collections': collections, 'refresh_all': refresh_all, 'refresh': refresh, 'addon': addon}
+                'sync_collections': collections, 'refresh_all': refresh_all, 'settings': settings, 'addon': addon}
 
     def test_each_action_runs_only_its_own_handler_and_does_not_open_settings(self):
         for action in ('auth', 'change_url', 'test_connection', 'sync_watch_ratings', 'sync_collections', 'refresh_all'):
@@ -29,19 +29,16 @@ class TestDispatch(unittest.TestCase):
             for name, mocked in calls.items():
                 if name == 'addon':
                     mocked.openSettings.assert_not_called()
-                elif name == 'refresh':
+                elif name == 'settings':
                     mocked.assert_not_called()
                 else:
                     self.assertEqual(mocked.called, name == action, '{0} with action={1}'.format(name, action))
 
-    def test_no_action_refreshes_the_status_then_opens_settings(self):
-        calls = self._run()
-        calls['refresh'].assert_called_once()
-        calls['addon'].openSettings.assert_called_once()
+    def test_no_action_opens_settings(self):
+        self._run()['settings'].assert_called_once()
 
     def test_an_unknown_action_falls_through_to_settings(self):
-        calls = self._run('action=bogus')
-        calls['addon'].openSettings.assert_called_once()
+        self._run('action=bogus')['settings'].assert_called_once()
 
 
 class TestManualSyncs(unittest.TestCase):

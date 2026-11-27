@@ -36,6 +36,10 @@ class _Base(unittest.TestCase):
         self.addon = mock.MagicMock()
         self.addon.getSetting.return_value = ''
         self.addon.getLocalizedString.side_effect = lambda i: '#{0}'.format(i)
+        self.fresh_addon = mock.MagicMock()   # the Addon() made to save the key
+        p = mock.patch.object(device_auth.xbmcaddon, 'Addon', return_value=self.fresh_addon)
+        p.start()
+        self.addCleanup(p.stop)
         for target, new in (('ADDON', self.addon), ('get_device_name', mock.Mock(return_value='Shield'))):
             p = mock.patch.object(device_auth, target, new)
             p.start()
@@ -190,8 +194,9 @@ class TestRun(_Base):
         with mock.patch.object(self.manager, '_initiate', return_value=dict(_GOOD)), \
                 mock.patch.object(self.manager, '_download_qr', return_value='special://temp/q.png'), self._poll_result(key='KEY'):
             self.assertTrue(self.manager.run())
-        self.addon.setSetting.assert_any_call('api_key', 'KEY')
-        self.addon.setSetting.assert_any_call('auth_status', '#32081')
+        self.fresh_addon.setSetting.assert_any_call('api_key', 'KEY')
+        self.fresh_addon.setSetting.assert_any_call('auth_status', '#32081')
+        self.addon.setSetting.assert_not_called()   # the module's old copy would write old values back
         self.assertEqual((self.shown['display_code'], self.shown['expires_in']), ('ABCD-1234', 600))
 
     def test_cancelled_or_expired_returns_false_without_saving(self):
@@ -199,6 +204,7 @@ class TestRun(_Base):
                 mock.patch.object(self.manager, '_download_qr', return_value=''), self._poll_result():
             self.assertFalse(self.manager.run())
         self.addon.setSetting.assert_not_called()
+        self.fresh_addon.setSetting.assert_not_called()
 
     def test_terminal_poll_error_is_shown(self):
         with mock.patch.object(self.manager, '_initiate', return_value=dict(_GOOD)), \

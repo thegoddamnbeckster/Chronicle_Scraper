@@ -40,7 +40,7 @@ def _get_args():
     return parse_script_args(sys.argv)
 
 
-_refresh_auth_status = _ui.refresh_auth_status
+_show_settings = _ui.show_settings
 _test_connection = _ui.test_connection
 _connect_to_chronicle = _ui.connect
 _change_chronicle_url = _ui.change_url
@@ -77,8 +77,7 @@ def show_menu():
         _test_connection()
         return
 
-    _refresh_auth_status()
-    ADDON.openSettings()
+    _show_settings()
 
 
 def _sync_watch_ratings_now():

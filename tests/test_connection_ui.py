@@ -14,6 +14,7 @@ class _Addon:
     def __init__(self, **settings):
         self.settings = dict(settings)
         self.writes = []
+        self.opened = 0
 
     def getSetting(self, key):
         return self.settings.get(key, '')
@@ -22,11 +23,37 @@ class _Addon:
         self.writes.append((key, value))
         self.settings[key] = value
 
+    def openSettings(self):
+        self.opened += 1
+
     def getAddonInfo(self, key):
         return 'script.chronicle.scraper.movie'
 
     def getLocalizedString(self, string_id):
         return {32120: 'Connected as {0}'}.get(string_id, 's{0}'.format(string_id))
+
+
+class _Disk:
+    """Kodi with the Settings window closed: a new Addon() loads settings.xml, and each setSetting writes that object's WHOLE copy back."""
+    def __init__(self, **settings):
+        self.settings = dict(settings)
+        self.shown = []   # what each opened Settings window was showing
+
+    def addon(self):
+        return _SnapshotAddon(self)
+
+
+class _SnapshotAddon(_Addon):
+    def __init__(self, disk):
+        super().__init__(**disk.settings)
+        self.disk = disk
+
+    def setSetting(self, key, value):
+        super().setSetting(key, value)
+        self.disk.settings = dict(self.settings)
+
+    def openSettings(self):
+        self.disk.shown.append(dict(self.settings))
 
 
 class _Log:
@@ -52,7 +79,8 @@ class _Base(unittest.TestCase):
         self.ui = self._ui()
 
     def _ui(self, on_connected=True):
-        return ConnectionUi(self.addon, _Log(), lambda: self.client, self.auth_factory, self.connected if on_connected else None)
+        return ConnectionUi(self.addon, _Log(), lambda: self.client, self.auth_factory, self.connected if on_connected else None,
+                            addon_factory=lambda: self.addon)
 
 
 class TestStatus(_Base):
@@ -112,8 +140,9 @@ class TestConnect(_Base):
     def test_cancelled_prompt_does_nothing(self):
         self.dialog.input.return_value = None
         self.ui.connect()
-        self.assertEqual(self.addon.writes, [])
+        self.assertEqual(self.addon.writes, [('auth_status', 's32082')])   # only the status line is refreshed
         self.auth_factory.assert_not_called()
+        self.assertEqual(self.addon.opened, 1)
 
     def test_invalid_address_is_refused_and_not_saved(self):
         self.dialog.input.return_value = 'file:///etc/passwd'
@@ -181,7 +210,7 @@ class TestChangeUrl(_Base):
         self.assertEqual(self.dialog.input.call_args[1]['defaultt'], 'http://old:8888')   # asked, starting from the old address
         self.auth_factory.assert_called_once_with('http://old:8888')
         self.assertEqual(self.addon.settings['chronicle_url'], 'http://old:8888')        # saved again after the key arrived
-        self.assertEqual(self.addon.writes[-1], ('chronicle_url', 'http://old:8888'))
+        self.assertEqual([w for w in self.addon.writes if w[0] == 'chronicle_url'][-1], ('chronicle_url', 'http://old:8888'))
 
     def test_declined_change_keeps_everything(self):
         self.addon.settings.update(chronicle_url='http://old', api_key='k')
@@ -195,6 +224,57 @@ class TestChangeUrl(_Base):
         self.ui.change_url()
         self.dialog.yesno.assert_not_called()
         self.auth_factory.assert_called_once_with('http://new:1')
+
+
+class TestSettingsOnDisk(unittest.TestCase):
+    """Edit Connection and Change URL run with the Settings window closed, so what they write must reach disk and stay there."""
+    def setUp(self):
+        self.disk = _Disk(chronicle_url='http://old', api_key='OLD')
+        self.dialog = mock.MagicMock()
+        for target, new in (('Dialog', mock.Mock(return_value=self.dialog)),):
+            p = mock.patch.object(connection_ui.xbmcgui, target, new)
+            p.start()
+            self.addCleanup(p.stop)
+        q = mock.patch.object(connection_ui, 'find_shared_chronicle_url', return_value=None)
+        q.start()
+        self.addCleanup(q.stop)
+        self.client = mock.MagicMock()
+        self.client.get_current_user.return_value = {'displayName': 'Ada'}
+        self.device_auth = mock.MagicMock()
+        self.device_auth.run.side_effect = self._approve
+        # made before anything runs, like default.py's module-level ADDON
+        self.ui = ConnectionUi(self.disk.addon(), _Log(), lambda: self.client, lambda url: self.device_auth,
+                               addon_factory=self.disk.addon)
+
+    def _approve(self):
+        self.disk.addon().setSetting('api_key', 'NEW')   # what DeviceAuthManager does
+        return True
+
+    def test_reconnect_leaves_the_new_key_on_disk_and_reopens_settings_with_it(self):
+        self.ui.connect()
+        self.assertEqual(self.disk.settings['api_key'], 'NEW')
+        self.assertEqual(len(self.disk.shown), 1)
+        self.assertEqual((self.disk.shown[0]['api_key'], self.disk.shown[0]['auth_status']), ('NEW', 'Connected as Ada'))
+
+    def test_change_url_leaves_the_new_url_and_key_on_disk_and_opens_settings_once(self):
+        self.dialog.yesno.return_value = True
+        self.dialog.input.return_value = 'http://new:1'
+        self.ui.change_url()
+        self.assertEqual((self.disk.settings['chronicle_url'], self.disk.settings['api_key']), ('http://new:1', 'NEW'))
+        self.assertEqual(len(self.disk.shown), 1)
+
+    def test_a_cancelled_flow_keeps_the_old_key_and_reopens_settings(self):
+        self.device_auth.run.side_effect = None
+        self.device_auth.run.return_value = False
+        self.ui.connect()
+        self.assertEqual(self.disk.settings['api_key'], 'OLD')
+        self.assertEqual(len(self.disk.shown), 1)
+
+    def test_declining_change_url_reopens_settings(self):
+        self.dialog.yesno.return_value = False
+        self.ui.change_url()
+        self.assertEqual((self.disk.settings['chronicle_url'], self.disk.settings['api_key']), ('http://old', 'OLD'))
+        self.assertEqual(len(self.disk.shown), 1)
 
 
 class TestParseScriptArgs(unittest.TestCase):

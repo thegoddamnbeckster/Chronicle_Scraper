@@ -9,8 +9,11 @@ Why the URL is entered here and nowhere else: Settings' own chronicle_url text f
 that field was confirmed live (2026-08-27) not to land reliably in the underlying setting, so this flow is the one place the address is
 ever typed. An already-connected reconnect skips the prompt and goes straight to the QR window: a working URL is never asked for twice.
 
-The resolved URL is handed straight to DeviceAuthManager rather than re-read from settings: a different xbmcaddon.Addon() instance's
-setSetting() is not reliably visible to another instance's getSetting() in the same process, even one line later.
+Settings are saved the moment they change. Edit Connection and Change URL close the Settings window before they run (option="close" in
+each settings.xml) and open it again when they finish: while the window is open, Kodi keeps a script's setSetting() in the window and
+writes it to disk only on OK, so a Test Connection run straight after reconnecting read the old key. Every read and write here also
+goes through a new xbmcaddon.Addon(): Kodi saves an add-on object's whole copy of the settings on each write, so an object made before
+the new key was saved would put the old one back.
 
 String ids used (the same in every add-on's strings.po): 32000 add-on name, 32002 "Chronicle URL", 32012 "Test Connection",
 32020 "Connection successful!", 32021 "Connection failed:", 32060 "Connect", 32081 "Connected", 32082 "Not connected",
@@ -19,6 +22,7 @@ String ids used (the same in every add-on's strings.po): 32000 add-on name, 3200
 
 import traceback
 
+import xbmcaddon
 import xbmcgui
 
 from lib.connection_health import UNAUTHORIZED
@@ -32,20 +36,28 @@ STRING_IDS = (32000, 32002, 32012, 32020, 32021, 32060, 32081, 32082, 32083, 321
 
 
 class ConnectionUi:
-    def __init__(self, addon, log, client_factory, device_auth_factory, on_connected=None, health=None):
-        """addon: the add-on's xbmcaddon.Addon. client_factory(): a ChronicleClient. device_auth_factory(base_url): a
+    def __init__(self, addon, log, client_factory, device_auth_factory, on_connected=None, health=None, addon_factory=None):
+        """addon: the add-on's xbmcaddon.Addon, for its id and strings. client_factory(): a ChronicleClient. device_auth_factory(base_url): a
         DeviceAuthManager whose run() returns True once an API key was saved. on_connected(): optional, called after a successful
         connect (the movie scraper registers the device with Chronicle). health: the add-on's ConnectionHealth, so the status line can
-        say the key was rejected instead of showing the last name that worked."""
+        say the key was rejected instead of showing the last name that worked. addon_factory(): a new xbmcaddon.Addon(), used for every
+        settings read and write."""
         self._addon = addon
         self._log = log
         self._client_factory = client_factory
         self._device_auth_factory = device_auth_factory
         self._on_connected = on_connected
         self._health = health
+        self._addon_factory = addon_factory or xbmcaddon.Addon
 
     def _text(self, string_id):
         return self._addon.getLocalizedString(string_id)
+
+    def _get(self, key):
+        return self._addon_factory().getSetting(key)
+
+    def _set(self, key, value):
+        self._addon_factory().setSetting(key, value)
 
     # ── status ──────────────────────────────────────────────────────────────────
 
@@ -57,24 +69,23 @@ class ConnectionUi:
         feels stuck) so the status reads "Connected as {name}"; connected_display_name (a hidden setting) keeps the last name that
         worked so a network blip does not regress it to the bare fallback. A key revoked on the server shows up here too.
         """
-        addon = self._addon
-        if not (addon.getSetting('chronicle_url') and addon.getSetting('api_key')):
-            addon.setSetting('auth_status', self._text(32082))
+        if not (self._get('chronicle_url') and self._get('api_key')):
+            self._set('auth_status', self._text(32082))
             return
 
         user = self._client_factory().get_current_user()
         if self._health is not None and self._health.current_problem() == UNAUTHORIZED:
-            addon.setSetting('auth_status', REJECTED_STATUS)
+            self._set('auth_status', REJECTED_STATUS)
             return
         name = None
         if user:
             name = user.get('displayName') or user.get('username')
             if name:
-                addon.setSetting('connected_display_name', name)
+                self._set('connected_display_name', name)
         if not name:
-            name = addon.getSetting('connected_display_name')
+            name = self._get('connected_display_name')
 
-        addon.setSetting('auth_status', self._text(32120).format(name) if name else self._text(32081))
+        self._set('auth_status', self._text(32120).format(name) if name else self._text(32081))
 
     # ── actions ─────────────────────────────────────────────────────────────────
 
@@ -95,20 +106,29 @@ class ConnectionUi:
             return True
         keep = xbmcgui.Dialog().yesno(self._text(32000), self._text(32083))
         if not keep:
-            self._addon.setSetting('chronicle_url', '')
+            self._set('chronicle_url', '')
         return keep
+
+    def show_settings(self):
+        """Opens the add-on's Settings window with an up-to-date status line and what is saved now."""
+        self.refresh_auth_status()
+        self._addon_factory().openSettings()
 
     def connect(self, ask_url=False, prefill=None):
         """"Edit Connection": prompts for the URL when none is saved (or always, with ask_url), then runs the QR device-auth flow to
-        obtain an API key. prefill: the address the prompt starts with (Change URL passes the old one, so a typo is a quick fix)."""
-        addon, log = self._addon, self._log
-        # ask_url never re-reads the setting: Change URL has just cleared it, and Kodi can hand back the old value right after a
-        # setSetting (seen live 2026-11-26 on the Shield) -- which used to reconnect to the old address and leave the URL blank on disk.
-        current = '' if ask_url else addon.getSetting('chronicle_url')
+        obtain an API key. prefill: the address the prompt starts with (Change URL passes the old one, so a typo is a quick fix).
+        The Settings window is opened again afterwards, however the flow ended."""
+        self._connect(ask_url, prefill)
+        self.show_settings()
+
+    def _connect(self, ask_url, prefill):
+        log = self._log
+        # ask_url never re-reads the setting: Change URL has just cleared it and wants the address typed.
+        current = '' if ask_url else self._get('chronicle_url')
         log.info('connect: invoked; chronicle_url on disk = {0!r}, ask_url = {1}'.format(current, ask_url))
 
         if not current:
-            shared_url = prefill or find_shared_chronicle_url(addon.getAddonInfo('id'), log)
+            shared_url = prefill or find_shared_chronicle_url(self._addon.getAddonInfo('id'), log)
             if shared_url:
                 log.info('connect: pre-filling the URL prompt with {0!r}'.format(shared_url))
             entered = (xbmcgui.Dialog().input(self._text(32002), defaultt=shared_url or '') or '').strip()
@@ -120,7 +140,7 @@ class ConnectionUi:
             if not url:
                 xbmcgui.Dialog().ok(self._text(32060), 'That is not a valid http:// or https:// address: {0}'.format(entered))
                 return
-            addon.setSetting('chronicle_url', url)
+            self._set('chronicle_url', url)
             log.info('connect: saved new URL {0!r}'.format(url))
             if not self.warn_if_localhost(url):
                 log.info('connect: user declined a loopback URL -- aborting')
@@ -138,24 +158,20 @@ class ConnectionUi:
 
         if connected:
             # The address the key was issued by is saved again with it, so a key can never be left on disk without its URL.
-            addon.setSetting('chronicle_url', current)
+            self._set('chronicle_url', current)
             if self._on_connected:
                 self._on_connected()
-        else:
-            # A successful run already wrote auth_status through its OWN Addon() instance; re-deriving it here would read through this
-            # one, which may not see that write yet. Only a failed run has nothing just written to race with.
-            self.refresh_auth_status()
 
     def change_url(self):
         """The one way to correct a saved-but-wrong URL (server moved, a typo): confirms first, since the old API key belongs to the
         old server and is cleared with it, then connects again."""
-        addon = self._addon
-        current = addon.getSetting('chronicle_url')
+        current = self._get('chronicle_url')
         if current:
             if not xbmcgui.Dialog().yesno(self._text(32000), self._text(32111).format(current)):
+                self.show_settings()
                 return
-            addon.setSetting('chronicle_url', '')
-            addon.setSetting('api_key', '')
+            self._set('chronicle_url', '')
+            self._set('api_key', '')
             self._log.info('change_url: cleared saved URL {0!r} and the API key'.format(current))
         self.connect(ask_url=True, prefill=current or None)
 

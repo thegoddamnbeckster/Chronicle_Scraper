@@ -39,17 +39,9 @@ class DeviceAuthManager:
 
     def __init__(self, base_url=None):
         """base_url, when given, is used as-is instead of re-reading
-        chronicle_url from settings here. Confirmed live (2026-08-27): a
-        DIFFERENT xbmcaddon.Addon() instance's setSetting('chronicle_url', ...)
-        -- default.py's own module-level ADDON, right after saving a freshly
-        entered URL -- is not reliably visible to THIS module's own
-        module-level ADDON's very next getSetting('chronicle_url'), even
-        though it's the same process, same addon, same settings.xml, and
-        happens on the literal next line. Kodi's Addon() binding apparently
-        doesn't guarantee cross-instance read-your-own-write consistency.
-        Rather than chase that further, the caller that JUST resolved (or
-        prompted for and saved) the URL now hands it over directly instead of
-        asking this object to go re-discover it independently.
+        chronicle_url from settings here: ADDON below was made when this module
+        was imported and does not see what another Addon() object saved since,
+        so the caller that just resolved the URL hands it over directly.
         """
         self._base_url   = base_url
         # Set by _initiate() whenever it returns None, so run() can show the
@@ -131,8 +123,11 @@ class DeviceAuthManager:
         # ── 5. Save API key if approved ─────────────────────────────────────
         api_key = api_key_holder[0]
         if api_key:
-            ADDON.setSetting('api_key', api_key)
-            ADDON.setSetting('auth_status', ADDON.getLocalizedString(32081))  # "Connected"
+            # A new object: ADDON's copy of the settings is as old as this
+            # module, and Kodi saves the whole copy on every write.
+            addon = xbmcaddon.Addon()
+            addon.setSetting('api_key', api_key)
+            addon.setSetting('auth_status', ADDON.getLocalizedString(32081))  # "Connected"
             log.info('API key saved successfully')
             xbmcgui.Dialog().ok(
                 ADDON.getLocalizedString(32060),
